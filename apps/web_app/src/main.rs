@@ -51,6 +51,7 @@ mod history_advice_browser_tests;
 mod history_answer_source;
 #[cfg(test)]
 mod history_answer_source_browser_tests;
+mod history_batch;
 #[cfg(all(test, windows))]
 mod history_pipeline_tests;
 mod history_record_choice;
@@ -290,6 +291,10 @@ fn interrupt_session(
     reason: &str,
 ) -> Result<(), String> {
     if let Some(current) = session.as_mut() {
+        history_advice::TASK.invalidate_session(
+            &current.id,
+            "The review session changed; request new history suggestions",
+        )?;
         ws.mark_manual_review(
             &current.job_id,
             "Application review session interrupted",
@@ -1249,8 +1254,13 @@ fn history_inputs(
     if Sha256Digest::of(&profile.to_string()) != session.profile_digest {
         return Err("Profile changed; inspect the form again".into());
     }
-    if selectors.is_empty() || selectors.len() > 20 {
-        return Err("Select from one to twenty fields".into());
+    let limit = if entry == "all" {
+        suggestions::MAX_FIELDS
+    } else {
+        20
+    };
+    if selectors.is_empty() || selectors.len() > limit {
+        return Err(format!("Select from one to {limit} fields"));
     }
     let mut fields = Vec::new();
     for selector in selectors {
@@ -1266,11 +1276,21 @@ fn history_inputs(
         }
         fields.push(field.clone());
     }
-    history_advice::validate_scope(&fields)?;
+    if entry == "all" {
+        history_batch::validate_fields(&fields)?;
+    } else {
+        history_advice::validate_scope(&fields)?;
+    }
     let raw = profile["career_history"]
         .as_str()
         .ok_or("Add checked career history first")?;
-    let source = if entry == "auto" {
+    let source = if entry == "all" {
+        let records = candidate_history::reviewed(raw)?;
+        if records.is_empty() {
+            return Err("Add checked career history first".into());
+        }
+        history_advice::HistorySource::AllFields(records)
+    } else if entry == "auto" {
         history_record_choice::validate_section(&fields)?;
         let records = candidate_history::reviewed(raw)?;
         if records.is_empty() {
@@ -1280,7 +1300,7 @@ fn history_inputs(
     } else {
         history_advice::HistorySource::Selected(candidate_history::selected(raw, entry)?)
     };
-    let digest=Sha256Digest::of(&json!({"version":2,"session":session.id,"job":job,"url":session.url,"profile":session.profile_digest.as_str(),"schema":session.preview.schema.schema_hash_input(),"source":source,"history_month":if entry == "auto" {history_record_choice::current_utc_month()} else {None},"selectors":selectors}).to_string()).as_str().to_owned();
+    let digest=Sha256Digest::of(&json!({"version":2,"session":session.id,"job":job,"url":session.url,"profile":session.profile_digest.as_str(),"schema":session.preview.schema.schema_hash_input(),"source":source,"history_month":if matches!(entry,"auto"|"all") {history_record_choice::current_utc_month()} else {None},"selectors":selectors}).to_string()).as_str().to_owned();
     Ok((history_advice::Inputs { source, fields }, digest))
 }
 
@@ -1290,7 +1310,7 @@ fn history_advice_status(
     id: &str,
 ) -> Result<Value, String> {
     let mut result = history_advice::TASK.poll(id)?;
-    if result["status"] == "complete" {
+    if result["status"] == "complete" || result["status"] == "running" {
         let binding = result["binding"].clone();
         let fresh = (|| -> Result<String, String> {
             let current = session
@@ -1310,9 +1330,22 @@ fn history_advice_status(
             .map(|(_, digest)| digest)
         })();
         if fresh.as_ref().ok().map(String::as_str) != binding["digest"].as_str() {
-            result = json!({"status":"failed","binding":binding,"error":"History, job or inspected form changed; inspect and request suggestions again"});
+            if result["status"] == "running" {
+                history_advice::TASK.invalidate_session(
+                    binding["session_id"].as_str().unwrap_or(""),
+                    "History, job or inspected form changed; request new suggestions",
+                )?;
+                result = history_advice::TASK.poll(id)?;
+                result["cancel_requested"] = json!(true);
+            } else {
+                result = json!({"status":"failed","binding":binding,"error":"History, job or inspected form changed; inspect and request suggestions again"});
+            }
         }
     }
+    result["expires_in_seconds"] = session
+        .as_ref()
+        .map(|current| remaining_session_seconds(current.ttl, current.created.elapsed()))
+        .map_or(Value::Null, |value| json!(value));
     if result["status"] != "running" {
         result = history_advice::TASK.complete(id, result)?;
     }
@@ -7576,13 +7609,50 @@ fn serve(
             let (input, digest) = history_inputs(ws, current, entry, &selectors)?;
             let model = resident_model()?.ok_or("No eligible resident local model is available")?;
             let task = random_id()?;
-            history_advice::TASK.start(
-                task.clone(),
-                json!({"session_id":id,"entry_id":entry,"selectors":selectors,"digest":digest}),
-                model,
-                move |model| history_advice::propose(model, &input),
-            )?;
-            json_reply(stream, "200 OK", json!({"task_id":task}));
+            let binding =
+                json!({"session_id":id,"entry_id":entry,"selectors":selectors,"digest":digest});
+            if entry == "all" {
+                history_advice::TASK.start_controlled(
+                    task.clone(),
+                    binding,
+                    model,
+                    move |model, control| {
+                        let history_advice::HistorySource::AllFields(records) = &input.source
+                        else {
+                            return Err("History planning mode changed".into());
+                        };
+                        history_batch::propose(model, &input.fields, records, control)
+                    },
+                )?;
+                if let Some(current) = session.as_mut().filter(|session| session.id == id) {
+                    current.created = Instant::now();
+                    current.ttl = current.ttl.max(Duration::from_secs(600));
+                }
+            } else {
+                history_advice::TASK.start(task.clone(), binding, model, move |model| {
+                    history_advice::propose(model, &input)
+                })?;
+            }
+            let expires = session
+                .as_ref()
+                .map(|current| remaining_session_seconds(current.ttl, current.created.elapsed()));
+            json_reply(
+                stream,
+                "200 OK",
+                json!({"task_id":task,"expires_in_seconds":expires}),
+            );
+        }
+        "/api/form/history-advice-cancel" => {
+            let id = body["task_id"].as_str().ok_or("Missing history task")?;
+            let session_id = body["session_id"].as_str().ok_or("Missing form session")?;
+            let pending = history_advice::TASK.pending()?;
+            if pending["task_id"].as_str() != Some(id)
+                || pending["binding"]["session_id"].as_str() != Some(session_id)
+            {
+                return Err("The history task does not belong to this review".into());
+            }
+            history_advice::TASK.cancel(id)?;
+            json_reply(stream, "200 OK", json!({"cancel_requested":true}));
         }
         "/api/form/history-advice-status" => {
             let id = body["task_id"]
@@ -8828,6 +8898,7 @@ fn serve(
                     current.inspection_pending_revision,
                 )?;
             }
+            history_advice::TASK.invalidate_session(requested, "Review session closed")?;
             *session = None;
             json_reply(stream, "200 OK", json!({"ok":true}));
         }

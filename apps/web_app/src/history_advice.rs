@@ -10,6 +10,7 @@ pub static TASK: crate::local_advice::Slot = crate::local_advice::Slot::new();
 pub enum HistorySource {
     Selected(crate::candidate_history::SelectedRecord),
     Automatic(Vec<crate::candidate_history::SelectedRecord>),
+    AllFields(Vec<crate::candidate_history::SelectedRecord>),
 }
 #[derive(Clone)]
 pub struct Inputs {
@@ -98,9 +99,18 @@ pub(crate) fn value_for(field: &FormField, component: &str, value: &str) -> Opti
     }
 }
 pub fn propose(model: &mut dyn Inference, input: &Inputs) -> Result<Value, String> {
+    if let HistorySource::AllFields(records) = &input.source {
+        return crate::history_batch::propose(
+            model,
+            &input.fields,
+            records,
+            &crate::local_advice::Control::default(),
+        );
+    }
     validate_scope(&input.fields)?;
     let (record, selection) = match &input.source {
         HistorySource::Selected(record) => (record, None),
+        HistorySource::AllFields(_) => unreachable!("handled form-wide advice above"),
         HistorySource::Automatic(records) => {
             let (record, proof) =
                 crate::history_record_choice::choose(model, &input.fields, records)?;
@@ -113,6 +123,19 @@ pub fn propose(model: &mut dyn Inference, input: &Inputs) -> Result<Value, Strin
     }
     Ok(result)
 }
+pub(crate) fn grounded_proposal(
+    field: &FormField,
+    record: &crate::candidate_history::SelectedRecord,
+    component: &str,
+) -> Option<Value> {
+    let saved = record.values.get(component)?;
+    let value = value_for(field, component, saved)?;
+    let digest = crate::history_answer_source::source_digest(record, component)?;
+    Some(
+        json!({"selector":field.selector,"label":field.label,"component":component,"value":value,"entry_id":record.id,"entry_label":record.label,"source_sha256":digest.as_str()}),
+    )
+}
+
 fn propose_selected(
     model: &mut dyn Inference,
     record: &crate::candidate_history::SelectedRecord,
@@ -197,12 +220,12 @@ fn propose_selected(
         if reason != "matched" {
             return Err("Contradictory history mapping decision".into());
         }
-        let value = record
+        record
             .values
             .get(component)
             .ok_or("Model selected an unavailable history component")?;
-        if let Some(typed) = value_for(field, component, value) {
-            proposals.push(json!({"selector":field.selector,"label":field.label,"component":component,"value":typed,"entry_id":record.id,"source_sha256":crate::history_answer_source::source_digest(record, component).ok_or("History component disappeared")?.as_str()}));
+        if let Some(proposed) = grounded_proposal(field, record, component) {
+            proposals.push(proposed);
         } else {
             let reason = if crate::suggestions::names_other_person(&field.label) {
                 "wrong_subject"

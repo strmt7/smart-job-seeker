@@ -229,3 +229,9 @@ html[data-motion="reduced"] button:active:not(:disabled) { transform: none; }
 .answer-history .answer-history-entry { margin-top: 12px; padding: 16px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); }
 .answer-history-entry>strong { display: block; margin-bottom: 8px; color: var(--ink); font-size: 14px; }
 .answer-history-entry>p { margin: 8px 0; }
+
+.history-mapping-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.history-mapping-actions>button { flex: 1 1 180px; }
+button.secondary-button { background: var(--surface); color: var(--accent); border: 1px solid var(--line); }
+.history-proposals { max-height: 420px; overflow: auto; min-width: 0; }
+.history-proposal-source { flex-basis: 100%; padding-left: 24px; color: var(--muted); }

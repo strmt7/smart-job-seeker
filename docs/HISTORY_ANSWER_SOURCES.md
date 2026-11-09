@@ -24,9 +24,10 @@ a fill or clear a review block; the existing one-use approval remains required.
 
 Each answer keeps its own source. A shared DOM container can ask about current
 and previous roles, so it does not establish that every answer must use one
-record. An automatic advice request still selects one complete record for its
-own scoped fields. That distinction avoids imposing a layout assumption on
-explicit user selections.
+record. A scoped automatic advice request selects one complete record for its own fields.
+[Whole-form advice](WHOLE_FORM_HISTORY.md) classifies each question separately,
+then resolves its checked record and checks the proposed answer. That distinction
+avoids imposing a layout assumption on either explicit or whole-form selections.
 
 ## Application records
 

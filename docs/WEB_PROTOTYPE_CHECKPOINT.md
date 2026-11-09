@@ -1,5 +1,10 @@
 # Browser-interface prototype checkpoint
 
+Latest whole-form history checkpoint, 2026-11-09: one blank-field request now
+prepares question-level, source-linked history suggestions with a second semantic
+check, progress, cancellation and explicit review selection. See
+[scope and qualification](WHOLE_FORM_HISTORY.md).
+
 Latest answer-source checkpoint, 2026-11-09: checked history values now retain
 source links through reviewed filling and application records. Source changes
 are shown without rewriting saved answers; large records have bounded, advancing

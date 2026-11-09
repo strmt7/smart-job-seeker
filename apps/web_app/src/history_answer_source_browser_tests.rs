@@ -109,6 +109,36 @@ fn history_sources_survive_reviewed_fill_and_archive_without_stale_reuse() {
         last_visual_freshness_key: None,
         record: None,
     });
+    let selectors = vec!["#organization".into(), "#month".into()];
+    let (batch_input, batch_digest) =
+        history_inputs(&ws, session.as_ref().unwrap(), "all", &selectors).unwrap();
+    assert!(
+        matches!(batch_input.source,history_advice::HistorySource::AllFields(ref records) if records.len()==2)
+    );
+    assert!(history_inputs(
+        &ws,
+        session.as_ref().unwrap(),
+        "all",
+        &["#organization".into(), "#organization".into()]
+    )
+    .is_err());
+    history_advice::TASK.set_completed_fixture("fictional-batch-binding",json!({"session_id":"fictional-history-answer-session","entry_id":"all","selectors":selectors,"digest":batch_digest}),json!({"mode":"form","proposals":[],"manual_review":[]}));
+    assert_eq!(
+        history_advice_status(&ws, session.as_ref(), "fictional-batch-binding").unwrap()["status"],
+        "complete"
+    );
+    ws.save_candidate_profile(&json!({"career_history":""}).to_string())
+        .unwrap();
+    assert_eq!(
+        history_advice_status(&ws, session.as_ref(), "fictional-batch-binding").unwrap()["status"],
+        "failed"
+    );
+    ws.save_candidate_profile(&profile.to_string()).unwrap();
+    assert_eq!(
+        history_advice_status(&ws, session.as_ref(), "fictional-batch-binding").unwrap()["status"],
+        "failed",
+        "reverting profile data must not restore stale advice"
+    );
     let record = candidate_history::selected(&raw, &"a".repeat(32)).unwrap();
     let answer = |selector: &str, component: &str| json!({"selector":selector,"value":record.values[component],"history_source":{"entry_id":record.id,"component":component,"source_sha256":history_answer_source::source_digest(&record,component).unwrap().as_str()}});
     let good = json!({"session_id":"fictional-history-answer-session","reviewed":true,"selectors":[],"answers":[answer("#organization","employer"),answer("#month","start_year_month")]});

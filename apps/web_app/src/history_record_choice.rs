@@ -150,6 +150,16 @@ fn resolve_at<'a>(
     selected.ok_or_else(|| "Saved history does not identify one entry for this section. Select an entry yourself; no answer was guessed".into())
 }
 
+pub(crate) fn resolve_classification<'a>(
+    records: &'a [SelectedRecord],
+    kind: &str,
+    basis: &str,
+) -> Result<&'a SelectedRecord, String> {
+    let intent: Intent = serde_json::from_value(json!({"kind":kind,"basis":basis,"evidence":""}))
+        .map_err(|_| "Unknown history selection rule")?;
+    resolve(records, &intent)
+}
+
 pub fn choose<'a>(
     model: &mut dyn Inference,
     fields: &[FormField],

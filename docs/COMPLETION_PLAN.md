@@ -197,7 +197,10 @@ build and configuration.
    still need implementation and local-model evaluation; do not infer them from
    the editor or its workflow tests. The [answer-source checkpoint](HISTORY_ANSWER_SOURCES.md)
    now binds checked history values to reviewed answers and immutable historical
-   snapshots, with current-source annotations. Per-record field pagination still
+   snapshots, with current-source annotations. [Whole-form history advice](WHOLE_FORM_HISTORY.md)
+   now classifies questions independently, resolves checked records and checks each
+   proposed answer in bounded, cancellable background work. Generic repeated-row
+   assignment and broader model/visual reliability remain open. Per-record field pagination still
    needs implementation beyond the viewer's explicit first-100-field limit.
    The [integrated history qualification](HISTORY_PIPELINE_2026-11-09.md) now
    covers contact/history separation and seven visually checked fills on two

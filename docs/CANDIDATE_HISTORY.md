@@ -1,5 +1,9 @@
 # Career history
 
+[Whole-form history advice](WHOLE_FORM_HISTORY.md) now prepares reviewed suggestions
+across blank compatible fields. Specific-field and explicit-entry selection remain
+available; source/fill checks and manual-review blocks still apply.
+
 Implemented in the local web prototype on 2026-11-09. The Profile editor supports
 up to 20 employment and 20 education entries, with independent identities,
 ordering, descriptions, dates, ongoing status and a checked-details flag.

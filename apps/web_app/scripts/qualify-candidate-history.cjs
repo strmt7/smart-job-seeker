@@ -8,9 +8,9 @@ if(os.freemem()<6*1024**3)throw Error('Not enough available RAM for qualificatio
 const folder=fs.mkdtempSync(path.join(repo,'target/candidate-history-'));
 const executable=options.executable||path.join(repo,'target/debug/waypoint_web.exe');
 const browserExecutable=options.browser||'C:/Program Files/Google/Chrome/Application/chrome.exe';
-const sources=['apps/web_app/src/main.rs','apps/web_app/src/candidate_history.rs','apps/web_app/src/history_advice.rs','apps/web_app/src/history_answer_source.rs','apps/web_app/src/attempt_record.rs','apps/web_app/src/history_record_choice.rs','apps/web_app/web/history-mapping.js','apps/web_app/web/app.js','apps/web_app/web/index.html','apps/web_app/web/workspace-theme.css','apps/web_app/web/candidate-history.js','apps/web_app/scripts/qualify-candidate-history.cjs'];
+const sources=['apps/web_app/src/main.rs','apps/web_app/src/candidate_history.rs','apps/web_app/src/history_advice.rs','apps/web_app/src/history_batch.rs','apps/web_app/src/local_advice.rs','apps/web_app/src/history_answer_source.rs','apps/web_app/src/attempt_record.rs','apps/web_app/src/history_record_choice.rs','apps/web_app/web/history-mapping.js','apps/web_app/web/app.js','apps/web_app/web/index.html','apps/web_app/web/workspace-theme.css','apps/web_app/web/candidate-history.js','apps/web_app/scripts/qualify-candidate-history.cjs'];
 const digest=file=>crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
-const evidence={complete:false,sources:Object.fromEntries(sources.map(file=>[file,digest(path.join(repo,file))])),executable_sha256:digest(executable),cases:[],errors:[],scope:'fictional profile, section advice interactions and actual browser zoom; no employer forms or model calls'};
+const evidence={complete:false,sources:Object.fromEntries(sources.map(file=>[file,digest(path.join(repo,file))])),executable_sha256:digest(executable),cases:[],errors:[],scope:'fictional profile, scoped and whole-form advice interactions and actual browser zoom; no employer forms or model calls'};
 const child=spawn(executable,[],{windowsHide:true,env:{...process.env,APPDATA:path.join(folder,'appdata'),WAYPOINT_WORKSPACE_DIR:path.join(folder,'workspace'),WAYPOINT_NO_BROWSER:'1',WAYPOINT_NO_TRAY:'1'},stdio:['ignore','pipe','pipe']});
 let browser,context;
 async function bounded(promise,label,ms=15000){let timer;try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error(label+' timed out')),ms);})]);}finally{clearTimeout(timer);}}
@@ -119,6 +119,11 @@ const started=Date.now();
   await page.route('**/api/form/history-advice-*',async route=>{
    const name=new URL(route.request().url()).pathname;historyCalls.push(name);if(name.endsWith('-start'))historyStarts.push(route.request().postDataJSON());
    const response=name.endsWith('-start')?{task_id:'fictional-layout'}:{status:'complete',advice:{entry_label:'Engineer at Fictional Co',selection:{basis:'current',evidence:'Current employment'},proposals:[{selector:'#history-employer',label:'Employer',value:{text:'Fictional Co'},entry_id:'c'.repeat(32),component:'employer',source_sha256:'d'.repeat(64)},{selector:'#history-month',label:'Start month',value:{date:'2020-06'},entry_id:'c'.repeat(32),component:'start_year_month',source_sha256:'e'.repeat(64)}],manual_review:[]}};
+   if(!name.endsWith('-start')&&historyStarts.at(-1)?.entry_id==='all'){
+    response.advice.mode='form';response.advice.entry_label='saved career history';delete response.advice.selection;
+    response.advice.proposals[0].entry_label='Engineer at Fictional Co';response.advice.proposals[1].entry_label='Engineer at Fictional Co';
+    response.advice.manual_review=[];
+   }
    await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(response)});
   });
   await page.evaluate(()=>{
@@ -130,7 +135,8 @@ const started=Date.now();
    document.querySelector('#workspace-pane').append(host);
   });
   const advice=page.locator('#history-advice-qualification');
-  await advice.locator('summary').click();
+  await advice.locator('summary').first().click();
+  await advice.getByText('Choose fields or a particular entry',{exact:true}).click();
   assert.equal(await advice.getByLabel('History entry',{exact:true}).inputValue(),'auto');
   await advice.getByLabel('Form section',{exact:true}).selectOption('current');
   assert.equal(await advice.locator('fieldset input:checked').count(),2);
@@ -201,6 +207,26 @@ const started=Date.now();
   assert.match(await advice.locator('.history-mapping-result').innerText(),/Confirmed current entry/);
   assert.ok(historyCalls.every(name=>name.endsWith('-start')||name.endsWith('-status')));
   evidence.cases.push('automatic choice, section picker, duplicate-label distinction and unchecked proposals update only local answer editors; no fill request');
+  await advice.locator('#history-employer').fill('');await advice.locator('#history-month').fill('');await advice.locator('#history-other').fill('Keep existing answer');
+  await advice.getByRole('button',{name:'Suggest history answers for blank fields',exact:true}).click();
+  await advice.getByText('Prepared 2 history suggestions. Check each answer and its source entry.',{exact:true}).waitFor();
+  assert.equal(historyStarts.at(-1).entry_id,'all');assert.deepEqual(historyStarts.at(-1).selectors,['#history-employer','#history-month']);
+  assert.equal(await advice.locator('.history-proposal input:checked').count(),0);
+  assert.equal(await advice.locator('.history-proposal-source').count(),2);
+  assert.equal(await advice.locator('#history-other').inputValue(),'Keep existing answer');
+  for(const width of [320,390,768,1440,1920]){
+   await page.setViewportSize({width,height:1000});await advice.locator('.history-mapping-result').scrollIntoViewIfNeeded();
+   assert.equal(await advice.evaluate(host=>host.scrollWidth>host.clientWidth+1||document.documentElement.scrollWidth>innerWidth+1),false,`whole-form suggestions overflow at ${width}px`);
+   evidence.cases.push(`whole-form history sources and review controls at ${width}px`);
+   if(width===390||width===1440)await page.screenshot({path:path.join(folder,`history-batch-${width}.png`)});
+  }
+  await page.setViewportSize({width:1440,height:1000});
+  await advice.getByLabel('Select all shown suggestions',{exact:true}).check();
+  await advice.getByRole('button',{name:'Use selected suggestions',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('#history-employer').value==='Fictional Co');
+  assert.equal(await advice.locator('#history-other').inputValue(),'Keep existing answer');
+  evidence.cases.push('whole-form blank-field action preserves existing answers and requires explicit review selection');
+
   await page.evaluate(()=>CandidateHistory.load({version:2}));
   assert.equal(await page.locator('#career-history-value').inputValue(),'{"version":2}');
   assert.match(await page.locator('#candidate-history').innerText(),/could not be read/);
