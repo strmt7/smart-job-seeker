@@ -1,6 +1,6 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const source=fs.readFileSync('apps/web_app/web/app.js','utf8');
-const start=source.indexOf("extract.addEventListener('click',async()=>{"),end=source.indexOf('item.append(identity,extract,button)',start);
+const start=source.indexOf("extract.addEventListener('click',async()=>{"),end=source.indexOf('item.append(identity);',start);
 assert.ok(start>=0&&end>start);
 let generation=0,shown=[],messages=[],resolveStatus;
 const status=new Promise(resolve=>resolveStatus=resolve),handlers=[];

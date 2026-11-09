@@ -1,3 +1,8 @@
+## Document library preparation and filters — 2026-11-09
+
+- Document rendering is now separate from workspace-state refresh. The library supports filename search, PDF and convertible-format filters, and a selected-templates filter based on the saved CV and cover-letter template IDs. Each row distinguishes PDF format (review still required), formats with a conversion action, and formats without that action. Unsupported extraction formats retain download access without an unusable Review text button. No file is declared ready merely because its extension is PDF.
+- All 152 JavaScript UI check scripts passed after correcting a listener-placement error found during refactoring and updating the extraction-race harness boundary. The Windows app built successfully. A headless isolated-app check with mocked fictional DOCX, PDF and ZIP metadata exercised selected-template badges, filtering, no-match results, filter preservation after refresh and unsupported-format actions. Desktop and mobile screenshots were reviewed, with a spacing refinement; no script errors or horizontal overflow were observed. This did not run extraction, conversion, PDF visual review or employer-form attachment and does not establish job-specific document readiness.
+
 ## Narrow-screen work-area navigation — 2026-11-09
 
 - Added a mobile Jobs/Workspace dock that scrolls and focuses the relevant region without changing the active workspace section or URL hash. The dock has keyboard-operable buttons, explicit region associations, safe-area spacing and an offset for notifications. Workspace tabs use four equal columns on narrow screens.

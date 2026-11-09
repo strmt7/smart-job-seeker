@@ -35,7 +35,8 @@ paths. No employer application pages were contacted during this design work.
 ## Next design and implementation rounds
 
 1. Simplify search/filter density and preserve filter state across workspaces.
-2. Give document preparation a focused role-specific review layout, including
+2. Extend the searchable document library and selected-template badges into a
+   focused role-specific review layout, including
    PDF preview, factual review, revisions and outstanding checks.
 3. Reorganize local-tool setup around actual detected states and distinct actions;
    avoid implying a dependency is installed before checking it.

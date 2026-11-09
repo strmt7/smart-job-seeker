@@ -13,7 +13,7 @@ const context = {
   stateRefreshIssued:0,stateRefreshApplied:0,state:{},jobObservationSnapshotAt:0,profileEditBaseline:{first_name:'old draft base'},profileEditRevision:'a'.repeat(64),
   selectedJobs:new Set(),reviewSelectedJobs:new Set(),selectionReconciled:false,profileLoaded:true,
   api:()=>new Promise((resolve,reject)=>deferred.push({resolve,reject})),
-  resetReviewedOrder(){},renderProfileSummary(){},reconcileJobSelection(){},updateReviewSelection(){},renderJobs(){},renderReviewQueue(){},scheduleAutomaticFit(){},
+  resetReviewedOrder(){},renderProfileSummary(){},reconcileJobSelection(){},updateReviewSelection(){},renderJobs(){},renderReviewQueue(){},renderDocuments(){},scheduleAutomaticFit(){},
   element:node,Option:function(label,value){this.label=label;this.value=value;},FormData:function(form){return [['first_name',form.elements.first_name.value]];},
   document:{querySelector(selector){if(selector==='#profile-form')return form;if(!nodes.has(selector))nodes.set(selector,node());return nodes.get(selector);}},
 };

@@ -54,6 +54,12 @@ aside>section,.settings-content>section,.settings-content .local-tools { border-
 .settings-content h2 { font-size: 19px; color: var(--ink); }
 dialog { border-radius: 12px; border-color: var(--line); }
 .mobile-workspace-switch { display: none; }
+.document-library-filters { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 12px; margin: 14px 0 20px; padding: 0 16px; }
+.document-library-filters label { min-width: 0; }
+.document-library-filters input,.document-library-filters select { min-width: 0; }
+.document-name .document-status { color: var(--muted); margin-top: 5px; font-size: 12px; }
+.document-name .document-template { color: var(--accent); margin-top: 4px; font-weight: 600; font-size: 12px; }
+@media(max-width:420px) { .document-library-filters { grid-template-columns: 1fr; gap: 10px; } }
 @media(min-width:851px) { main { height: calc(100dvh - var(--header-height)); min-height: 0; } }
 @media(max-width:1100px) and (min-width:851px) { main { grid-template-columns: minmax(320px,36%) minmax(0,1fr); } .settings-layout { grid-template-columns: 1fr; } .settings-nav { position: static; flex-direction: row; flex-wrap: wrap; } }
 @media(max-width:850px) { main { grid-template-columns: 1fr; } header { padding: 0 18px; } .jobs { padding-top: 20px; } aside { padding: 22px 20px; } .settings-nav { position: static; } }
