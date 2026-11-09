@@ -34,6 +34,10 @@ class WorkerError(RuntimeError):
     """Messages are fixed diagnostics, never browser payloads or applicant text."""
 
 
+class RecoveryBusy(WorkerError):
+    """An original owned process is still active; do not admit another job."""
+
+
 def relative_path(value):
     if not isinstance(value, str) or not value or len(value) > 240:
         raise WorkerError('invalid_relative_path')
@@ -227,6 +231,8 @@ class Windows:
             ('advapi', 'OpenProcessToken', wt.BOOL, [wt.HANDLE, wt.DWORD, ct.POINTER(wt.HANDLE)]),
             ('advapi', 'GetTokenInformation', wt.BOOL, [wt.HANDLE, wt.DWORD, P, wt.DWORD, ct.POINTER(wt.DWORD)]),
             ('advapi', 'EqualSid', wt.BOOL, [P, P]),
+            ('advapi', 'GetSecurityDescriptorDacl', wt.BOOL, [P, ct.POINTER(wt.BOOL), ct.POINTER(P), ct.POINTER(wt.BOOL)]),
+            ('advapi', 'SetNamedSecurityInfoW', wt.DWORD, [wt.LPWSTR, ct.c_int, wt.DWORD, P, P, P, P]),
             ('kernel', 'InitializeProcThreadAttributeList', wt.BOOL, [P, wt.DWORD, wt.DWORD, ct.POINTER(SIZE)]),
             ('kernel', 'UpdateProcThreadAttribute', wt.BOOL, [P, wt.DWORD, SIZE, P, SIZE, P, P]),
             ('kernel', 'DeleteProcThreadAttributeList', None, [P]),
@@ -239,11 +245,16 @@ class Windows:
             ('kernel', 'WaitForSingleObject', wt.DWORD, [wt.HANDLE, wt.DWORD]),
             ('kernel', 'TerminateProcess', wt.BOOL, [wt.HANDLE, wt.UINT]),
             ('kernel', 'CreateJobObjectW', wt.HANDLE, [P, wt.LPCWSTR]),
+            ('kernel', 'OpenJobObjectW', wt.HANDLE, [wt.DWORD, wt.BOOL, wt.LPCWSTR]),
             ('kernel', 'SetInformationJobObject', wt.BOOL, [wt.HANDLE, ct.c_int, P, wt.DWORD]),
             ('kernel', 'QueryInformationJobObject', wt.BOOL, [wt.HANDLE, ct.c_int, P, wt.DWORD, P]),
-            ('kernel', 'AssignProcessToJobObject', wt.BOOL, [wt.HANDLE, wt.HANDLE]),
             ('kernel', 'TerminateJobObject', wt.BOOL, [wt.HANDLE, wt.UINT]),
             ('kernel', 'OpenProcess', wt.HANDLE, [wt.DWORD, wt.BOOL, wt.DWORD]),
+            ('kernel', 'GetCurrentProcess', wt.HANDLE, []),
+            ('kernel', 'GetProcessId', wt.DWORD, [wt.HANDLE]),
+            ('kernel', 'GetProcessTimes', wt.BOOL, [wt.HANDLE, ct.POINTER(wt.FILETIME), ct.POINTER(wt.FILETIME), ct.POINTER(wt.FILETIME), ct.POINTER(wt.FILETIME)]),
+            ('kernel', 'CreateDirectoryW', wt.BOOL, [wt.LPCWSTR, ct.POINTER(SecurityAttributes)]),
+            ('kernel', 'MoveFileExW', wt.BOOL, [wt.LPCWSTR, wt.LPCWSTR, wt.DWORD]),
             ('kernel', 'IsProcessInJob', wt.BOOL, [wt.HANDLE, wt.HANDLE, ct.POINTER(wt.BOOL)]),
             ('kernel', 'LocalFree', P, [P]),
             ('kernel', 'GlobalMemoryStatusEx', wt.BOOL, [ct.POINTER(MemoryStatus)]),
@@ -255,6 +266,18 @@ class Windows:
             function = getattr(getattr(self, library), name)
             function.restype, function.argtypes = result, arguments
             setattr(self, name, function)
+        token = wt.HANDLE()
+        self.check(self.OpenProcessToken(self.GetCurrentProcess(), 8, ct.byref(token)), 'user_token_open_failed')
+        try:
+            used = wt.DWORD()
+            self.GetTokenInformation(token, 1, None, 0, ct.byref(used))
+            if not ct.sizeof(P) <= used.value <= 65536:
+                raise WorkerError('user_token_size_invalid')
+            buffer = ct.create_string_buffer(used.value)
+            self.check(self.GetTokenInformation(token, 1, buffer, used, ct.byref(used)), 'user_token_query_failed')
+            self.user_sid = self.sid_text(ct.cast(buffer, ct.POINTER(P)).contents.value)
+        finally:
+            self.CloseHandle(token)
 
     @staticmethod
     def check(value, diagnostic):
@@ -283,11 +306,265 @@ class Windows:
         finally:
             self.CloseHandle(token)
 
+    def sid_text(self, sid):
+        raw = P()
+        self.check(self.ConvertSidToStringSidW(sid, ct.byref(raw)), 'sid_string_failed')
+        try:
+            return ct.wstring_at(raw)
+        finally:
+            self.LocalFree(raw)
+
+    def identity(self, process):
+        created, exited, kernel, user = (wt.FILETIME() for _ in range(4))
+        self.check(self.GetProcessTimes(process, ct.byref(created), ct.byref(exited), ct.byref(kernel), ct.byref(user)), 'process_time_query_failed')
+        pid = self.GetProcessId(process)
+        self.check(pid, 'process_identity_failed')
+        return {'pid': pid, 'created': str((created.dwHighDateTime << 32) | created.dwLowDateTime)}
+
+    def identity_alive(self, identity):
+        handle = self.OpenProcess(0x100000 | 0x1000, False, identity['pid'])
+        if not handle:
+            if ct.get_last_error() == 87:  # ERROR_INVALID_PARAMETER: no such PID.
+                return False
+            raise WorkerError('recovery_process_identity_unavailable')
+        try:
+            if self.identity(handle) != identity:
+                return False  # Reused PID; never touch its new owner.
+            result = self.WaitForSingleObject(handle, 0)
+            if result not in (0, 258):
+                raise WorkerError('recovery_process_wait_failed')
+            return result == 258
+        finally:
+            self.CloseHandle(handle)
+
+    def acquire_admission(self):
+        handle = self.CreateMutexW(None, False, 'Global\\SmartJobseeker.RehearsalAdmission.' + self.user_sid)
+        self.check(handle, 'rehearsal_admission_failed')
+        # An abandoned mutex is acquired normally after its owning thread dies.
+        result = self.WaitForSingleObject(handle, 0)
+        if result not in (0, 0x80):
+            self.CloseHandle(handle)
+            raise WorkerError('another_rehearsal_is_active' if result == 258 else 'rehearsal_admission_failed')
+        return handle
+
     def available_ram(self):
         status = MemoryStatus()
         status.length = ct.sizeof(status)
         self.check(self.GlobalMemoryStatusEx(ct.byref(status)), 'memory_inspection_failed')
         return status.available_physical
+
+
+def profile_id(name):
+    if not isinstance(name, str) or not re.fullmatch(re.escape(PREFIX) + '[a-f0-9]{32}', name):
+        raise WorkerError('invalid_recovery_profile')
+    return name[len(PREFIX):]
+
+
+def job_name(user_sid, name):
+    return 'Global\\SmartJobseeker.RehearsalJob.' + user_sid + '.' + profile_id(name)
+
+
+def validate_identity(value):
+    if (not isinstance(value, dict) or set(value) != {'pid', 'created'} or
+            type(value['pid']) is not int or not 0 < value['pid'] <= 0xffffffff or
+            not isinstance(value['created'], str) or not re.fullmatch('[1-9][0-9]{0,19}', value['created']) or
+            int(value['created']) > 0xffffffffffffffff):
+        raise WorkerError('invalid_recovery_identity')
+    return value
+
+
+def validate_receipt(value, user_sid):
+    keys = {'schema', 'mechanism', 'profile', 'user_sid', 'worker', 'browser', 'job'}
+    if (not isinstance(value, dict) or set(value) != keys or type(value['schema']) is not int or
+            value['schema'] != 1 or value['mechanism'] != 'windows-job-list-v1' or
+            value['user_sid'] != user_sid):
+        raise WorkerError('invalid_recovery_receipt')
+    profile_id(value['profile'])
+    validate_identity(value['worker'])
+    if value['browser'] is not None:
+        validate_identity(value['browser'])
+    if value['job'] != job_name(user_sid, value['profile']):
+        raise WorkerError('invalid_recovery_job')
+    return value
+
+
+def reject_reparse(path):
+    if path.is_symlink() or getattr(path.lstat(), 'st_file_attributes', 0) & 0x400:
+        raise WorkerError('recovery_reparse_point')
+
+
+def bounded_entries(root):
+    result = []
+    for entry in root.iterdir():
+        if len(result) >= 256:
+            raise WorkerError('recovery_inventory_budget_exceeded')
+        result.append(entry)
+    return result
+
+
+def profile_usage(root, max_entries=10000, max_bytes=1024**3):
+    """Bounded metadata-only walk; never follow a reparse point."""
+    pending = [root]
+    count = total = 0
+    while pending:
+        folder = pending.pop()
+        try:
+            reject_reparse(folder)
+            with os.scandir(folder) as entries:
+                for entry in entries:
+                    count += 1
+                    if count > max_entries:
+                        raise WorkerError('profile_storage_entry_budget_exceeded')
+                    try:
+                        info = entry.stat(follow_symlinks=False)
+                    except FileNotFoundError:
+                        continue  # Browser temporary files may disappear.
+                    if stat.S_ISLNK(info.st_mode) or getattr(info, 'st_file_attributes', 0) & 0x400:
+                        raise WorkerError('profile_storage_reparse_point')
+                    if stat.S_ISDIR(info.st_mode):
+                        pending.append(Path(entry.path))
+                    elif stat.S_ISREG(info.st_mode):
+                        total += info.st_size
+                        if total > max_bytes:
+                            raise WorkerError('profile_storage_byte_budget_exceeded')
+                    else:
+                        raise WorkerError('unsupported_profile_storage_entry')
+        except FileNotFoundError:
+            if folder == root:
+                raise WorkerError('profile_storage_unavailable') from None
+    return total
+
+
+class RecoveryState:
+    """Private write-ahead ownership records. Never store applicant data here.
+
+    Every caller must hold the per-user global admission mutex. Recovery can
+    query old jobs/processes, but has no API that terminates a process by PID.
+    """
+    def __init__(self, api):
+        self.api = api
+        local = Path(os.environ['LOCALAPPDATA'])
+        if not local.is_absolute() or not local.is_dir():
+            raise WorkerError('recovery_local_appdata_unavailable')
+        self.local = local.resolve(strict=True)
+        parent = self.local / 'SmartJobseeker'
+        parent.mkdir(exist_ok=True)
+        reject_reparse(parent)
+        self.root = parent / 'rehearsal-state-v1'
+        descriptor = P()
+        api.check(api.ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            'D:P(A;OICI;FA;;;' + api.user_sid + ')(A;OICI;FA;;;SY)',
+            1, ct.byref(descriptor), None), 'recovery_security_descriptor_failed')
+        try:
+            security = SecurityAttributes(ct.sizeof(SecurityAttributes), descriptor, False)
+            if not api.CreateDirectoryW(str(self.root), ct.byref(security)) and ct.get_last_error() != 183:
+                raise WorkerError('recovery_directory_create_failed')
+            reject_reparse(self.root)
+            present, defaulted, dacl = wt.BOOL(), wt.BOOL(), P()
+            api.check(api.GetSecurityDescriptorDacl(descriptor, ct.byref(present), ct.byref(dacl), ct.byref(defaulted)), 'recovery_dacl_failed')
+            if not present.value or not dacl:
+                raise WorkerError('recovery_dacl_missing')
+            # Protect this one application-owned directory, not the surrounding
+            # user profile or unrelated application's data.
+            if api.SetNamedSecurityInfoW(str(self.root), 1, 4 | 0x80000000, None, None, dacl, None):
+                raise WorkerError('recovery_directory_protection_failed')
+        finally:
+            api.LocalFree(descriptor)
+
+    def path(self, name):
+        return self.root / (profile_id(name) + '.json')
+
+    def save(self, value):
+        validate_receipt(value, self.api.user_sid)
+        if len(bounded_entries(self.root)) >= 256:
+            raise WorkerError('recovery_inventory_budget_exceeded')
+        path = self.path(value['profile'])
+        if path.exists():
+            reject_reparse(path)
+        temporary = self.root / (profile_id(value['profile']) + '.' + uuid.uuid4().hex + '.tmp')
+        raw = json.dumps(value, separators=(',', ':')).encode('utf-8')
+        if len(raw) > 4096:
+            raise WorkerError('recovery_record_budget_exceeded')
+        with temporary.open('xb') as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        self.api.check(self.api.MoveFileExW(str(temporary), str(path), 1 | 8), 'recovery_record_commit_failed')
+
+    def forget(self, name):
+        path = self.path(name)
+        if path.exists():
+            reject_reparse(path)
+            path.unlink()
+
+    def job_active(self, name):
+        handle = self.api.OpenJobObjectW(4, False, name)  # JOB_OBJECT_QUERY only.
+        if not handle:
+            if ct.get_last_error() == 2:
+                return False
+            raise WorkerError('recovery_job_unavailable')
+        try:
+            accounting = Accounting()
+            self.api.check(self.api.QueryInformationJobObject(handle, 1, ct.byref(accounting), ct.sizeof(accounting), None), 'recovery_job_query_failed')
+            return accounting.active != 0
+        finally:
+            self.api.CloseHandle(handle)
+
+    def remove_profile(self, name):
+        # Derive the only permitted location; receipt data never supplies paths.
+        package = self.local / 'Packages' / name
+        if package.exists():
+            reject_reparse(package)
+            scanned = 0
+            for path in package.rglob('*'):
+                reject_reparse(path)
+                scanned += 1
+                if scanned > 10000:
+                    raise WorkerError('recovery_profile_inventory_budget_exceeded')
+        result = self.api.DeleteAppContainerProfile(name)
+        # ERROR_FILE_NOT_FOUND is an idempotent result for an uncreated profile.
+        if result < 0 and (result & 0xffffffff) != 0x80070002:
+            raise WorkerError('recovery_profile_delete_failed')
+        if (package / 'AC').exists():
+            raise WorkerError('recovery_profile_files_retained')
+
+    def recover(self):
+        entries = bounded_entries(self.root)
+        recovered = retained = 0
+        deadline = time.monotonic() + 10
+        for path in sorted(entries):
+            if time.monotonic() >= deadline:
+                raise WorkerError('recovery_time_budget_exceeded')
+            try:
+                reject_reparse(path)
+                if re.fullmatch('[a-f0-9]{32}\\.[a-f0-9]{32}\\.tmp', path.name) and path.is_file():
+                    # Uncommitted staging files cannot precede profile creation.
+                    # With the admission mutex held no other writer is active.
+                    path.unlink()
+                    continue
+                if not re.fullmatch('[a-f0-9]{32}\\.json', path.name) or not path.is_file():
+                    raise WorkerError('unknown_recovery_entry')
+                with path.open('rb') as stream:
+                    value = validate_receipt(parse_json(stream.read(4097), 4096), self.api.user_sid)
+                if path != self.path(value['profile']):
+                    raise WorkerError('recovery_record_name_mismatch')
+                if self.api.identity_alive(value['worker']):
+                    raise RecoveryBusy('recovery_worker_still_active')
+                wait_until = min(deadline, time.monotonic() + 3)
+                while self.job_active(value['job']) or (value['browser'] is not None and self.api.identity_alive(value['browser'])):
+                    if time.monotonic() >= wait_until:
+                        raise RecoveryBusy('recovery_browser_still_active')
+                    time.sleep(.02)
+                self.remove_profile(value['profile'])
+                self.forget(value['profile'])
+                recovered += 1
+            except RecoveryBusy:
+                raise
+            except (WorkerError, OSError, ValueError):
+                # Unknown/corrupt ownership never authorizes deletion. Surface
+                # the pending denominator without blocking independent work.
+                retained += 1
+        return {'recovered': recovered, 'retained': retained}
 
 
 class Container:
@@ -300,19 +577,25 @@ class Container:
         self.created = False
         self.admission = None
         self.checked_pids = set()
+        self.state = None
+        self.receipt = None
+        self.recovery = {'recovered': 0, 'retained': 0}
+        self.peak_commit = None
 
     def prepare(self, config):
         api = self.api
-        ct.set_last_error(0)
-        admission = api.CreateMutexW(None, True, 'Local\\SmartJobseeker.RehearsalAdmission')
-        api.check(admission, 'rehearsal_admission_failed')
-        if ct.get_last_error() == 183:
-            api.CloseHandle(admission)
-            raise WorkerError('another_rehearsal_is_active')
-        self.admission = admission
+        self.admission = api.acquire_admission()
+        self.state = RecoveryState(api)
+        self.recovery = self.state.recover()
         if api.available_ram() < 6 * 1024**3:
             raise WorkerError('rehearsal_requires_6_gib_available_ram')
+        self.receipt = {'schema': 1, 'mechanism': 'windows-job-list-v1', 'profile': self.name,
+                        'user_sid': api.user_sid, 'worker': api.identity(api.GetCurrentProcess()),
+                        'browser': None, 'job': job_name(api.user_sid, self.name)}
+        self.state.save(self.receipt)
         if api.CreateAppContainerProfile(self.name, 'Smart Jobseeker rehearsal', 'Private offline browser rehearsal', None, 0, ct.byref(self.sid)) < 0:
+            self.state.forget(self.name)
+            self.receipt = None
             raise WorkerError('profile_create_failed')
         self.created = True
         raw = P()
@@ -379,14 +662,30 @@ class Container:
         self.child_fds.append(stderr)
         os.set_handle_inheritable(api.msvcrt.get_osfhandle(stderr), True)
         handles = (wt.HANDLE * 3)(*(api.msvcrt.get_osfhandle(fd) for fd in self.child_fds))
+        ct.set_last_error(0)
+        job = api.CreateJobObjectW(None, self.receipt['job'])
+        api.check(job, 'job_create_failed')
+        if ct.get_last_error() == 183:
+            api.CloseHandle(job)
+            raise WorkerError('job_identity_already_exists')
+        self.job = job
+        limits = Limits()
+        limits.basic.flags, limits.basic.processLimit = 0x2000 | 0x200 | 0x8 | 0x20, 16
+        limits.basic.priority = 0x4000
+        limits.jobMemory = 2 * 1024**3
+        api.check(api.SetInformationJobObject(self.job, 9, ct.byref(limits), ct.sizeof(limits)), 'job_limits_failed')
         length = SIZE()
-        api.InitializeProcThreadAttributeList(None, 2, 0, ct.byref(length))
+        api.InitializeProcThreadAttributeList(None, 3, 0, ct.byref(length))
         attributes = ct.create_string_buffer(length.value)
-        api.check(api.InitializeProcThreadAttributeList(attributes, 2, 0, ct.byref(length)), 'attributes_initialize_failed')
+        api.check(api.InitializeProcThreadAttributeList(attributes, 3, 0, ct.byref(length)), 'attributes_initialize_failed')
         try:
             capabilities = Capabilities(self.sid, None, 0, 0)
             api.check(api.UpdateProcThreadAttribute(attributes, 0, 0x20009, ct.byref(capabilities), ct.sizeof(capabilities), None, None), 'security_attribute_failed')
             api.check(api.UpdateProcThreadAttribute(attributes, 0, 0x20002, handles, ct.sizeof(handles), None, None), 'handle_attribute_failed')
+            jobs = (wt.HANDLE * 1)(self.job)
+            # PROC_THREAD_ATTRIBUTE_JOB_LIST: membership is established by
+            # CreateProcess itself, eliminating the later-assignment crash gap.
+            api.check(api.UpdateProcThreadAttribute(attributes, 0, 0x2000d, jobs, ct.sizeof(jobs), None, None), 'atomic_job_attribute_failed')
             startup = Extended()
             startup.startup.cb, startup.startup.flags = ct.sizeof(startup), 0x101
             startup.startup.stdin, startup.startup.stdout, startup.startup.stderr = handles
@@ -407,14 +706,12 @@ class Container:
             api.check(api.CreateProcessW(str(binary), command, None, None, True,
                 0x08000000 | 0x80000 | 4 | 0x400 | 0x4000, block, str(binary.parent),
                 ct.byref(startup), ct.byref(self.process)), 'browser_create_failed')
-            self.job = api.CreateJobObjectW(None, None)
-            api.check(self.job, 'job_create_failed')
-            limits = Limits()
-            limits.basic.flags, limits.basic.processLimit = 0x2000 | 0x200 | 0x8 | 0x20, 16
-            limits.basic.priority = 0x4000
-            limits.jobMemory = 2 * 1024**3
-            api.check(api.SetInformationJobObject(self.job, 9, ct.byref(limits), ct.sizeof(limits)), 'job_limits_failed')
-            api.check(api.AssignProcessToJobObject(self.job, self.process.process), 'job_assignment_failed')
+            owned = wt.BOOL()
+            api.check(api.IsProcessInJob(self.process.process, self.job, ct.byref(owned)), 'job_membership_failed')
+            if not owned.value:
+                raise WorkerError('browser_not_in_atomic_job')
+            self.receipt['browser'] = api.identity(self.process.process)
+            self.state.save(self.receipt)
             api.token(self.process.process, self.sid)
             if api.ResumeThread(self.process.thread) == 0xffffffff:
                 raise WorkerError('browser_resume_failed')
@@ -479,6 +776,9 @@ class Container:
                 time.sleep(.02)
             else:
                 errors.append('job_shutdown_incomplete')
+            observed_limits = Limits()
+            if api.QueryInformationJobObject(self.job, 9, ct.byref(observed_limits), ct.sizeof(observed_limits), None):
+                self.peak_commit = int(observed_limits.peakJob)
             api.CloseHandle(self.job)
             self.job = None
         if self.process.process:
@@ -497,12 +797,16 @@ class Container:
                 errors.append('pipe_close_failed')
         self.fds = []
         if self.created:
-            result = api.DeleteAppContainerProfile(self.name)
-            if result < 0:
-                errors.append('profile_cleanup_failed')
-            elif self.folder is not None and self.folder.exists():
-                errors.append('profile_files_retained')
-            self.created = False
+            if not errors:
+                try:
+                    self.state.remove_profile(self.name)
+                    self.state.forget(self.name)
+                    self.receipt = None
+                    self.created = False
+                except (WorkerError, OSError):
+                    errors.append('profile_cleanup_incomplete')
+            else:
+                errors.append('profile_recovery_pending')
         if self.sid:
             api.FreeSid(self.sid)
             self.sid = P()
@@ -537,6 +841,8 @@ def run():
     owner = Container(api)
     outcome = None
     cleanup = []
+    min_available = None
+    max_profile_bytes = 0
     try:
         binary, content, sid_text = owner.prepare(config)
         owner.launch(binary, sid_text)
@@ -547,11 +853,13 @@ def run():
               'pid': owner.process.pid, 'content_root': str(content), 'entry': config['entry'],
               'entry_url': (content / config['entry']).as_uri(),
               'profile_name': owner.name,
-              'job_memory_limit': 2 * 1024**3})
+              'job_memory_limit': 2 * 1024**3,
+              'recovered_profiles': owner.recovery['recovered'],
+              'recovery_pending': owner.recovery['retained']})
         host_fd = sys.stdin.fileno()
         host, browser = bytearray(), bytearray()
         deadline = time.monotonic() + config['seconds']
-        audit_at = resource_at = 0
+        audit_at = resource_at = storage_at = 0
         closing = False
         while not closing:
             if time.monotonic() >= deadline:
@@ -560,11 +868,18 @@ def run():
                 owner.audit_children()
                 audit_at = time.monotonic() + .1
             if time.monotonic() >= resource_at:
-                if api.available_ram() < 2 * 1024**3:
+                available_ram = api.available_ram()
+                min_available = available_ram if min_available is None else min(min_available, available_ram)
+                if available_ram < 2 * 1024**3:
                     raise WorkerError('host_memory_pressure')
                 if (owner.folder / 'browser-errors.log').stat().st_size > 2 * 1024**2:
                     raise WorkerError('browser_diagnostic_budget_exceeded')
                 resource_at = time.monotonic() + .5
+            if time.monotonic() >= storage_at:
+                max_profile_bytes = max(max_profile_bytes, profile_usage(owner.folder))
+                if shutil.disk_usage(owner.folder).free < 512 * 1024**2:
+                    raise WorkerError('host_disk_pressure')
+                storage_at = time.monotonic() + 2
             for fd, pending, separator, is_host in [
                 (host_fd, host, b'\n', True), (owner.read_fd, browser, b'\0', False)
             ]:
@@ -601,7 +916,10 @@ def run():
         if cleanup:
             emit({'type': 'worker_error', 'code': 'cleanup_incomplete', 'details': cleanup})
         elif outcome is None:
-            emit({'type': 'closed', 'cleanup_complete': True, 'audited_processes': len(owner.checked_pids)})
+            emit({'type': 'closed', 'cleanup_complete': True, 'audited_processes': len(owner.checked_pids),
+                  'peak_job_commit_bytes': owner.peak_commit,
+                  'maximum_sampled_profile_bytes': max_profile_bytes,
+                  'minimum_sampled_available_ram_bytes': min_available})
     if cleanup:
         raise WorkerError('cleanup_incomplete')
 
@@ -609,7 +927,18 @@ def run():
 if __name__ == '__main__':
     sys.setrecursionlimit(4096)
     try:
-        run()
+        if sys.argv[1:] == ['--recover']:
+            api = Windows()
+            admission = api.acquire_admission()
+            try:
+                emit({'type': 'recovery', 'schema': 1, **RecoveryState(api).recover()})
+            finally:
+                api.ReleaseMutex(admission)
+                api.CloseHandle(admission)
+        elif sys.argv[1:]:
+            raise WorkerError('unsupported_worker_arguments')
+        else:
+            run()
     except (WorkerError, OSError, KeyError, TypeError, ValueError) as error:
         code = str(error) if isinstance(error, WorkerError) else type(error).__name__
         try:

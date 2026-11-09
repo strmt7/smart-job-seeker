@@ -7,7 +7,7 @@
 //! browser, not only against a scripted driver.
 
 #[path = "support/loopback.rs"]
-mod loopback;
+pub mod loopback;
 
 use std::path::PathBuf;
 

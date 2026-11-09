@@ -34,6 +34,8 @@ pub struct RehearsalReady {
     pub profile_name: String,
     pub entry_url: String,
     pub job_memory_limit: u64,
+    pub recovered_profiles: u32,
+    pub recovery_pending: u32,
 }
 
 impl RehearsalReady {
@@ -45,6 +47,8 @@ impl RehearsalReady {
             || self.capabilities != 0
             || self.pid == 0
             || self.job_memory_limit != 2 * 1024 * 1024 * 1024
+            || self.recovered_profiles > 256
+            || self.recovery_pending > 256
             || !self.content_root.is_absolute()
             || !self.entry_url.starts_with("file:///")
             || !name.is_some_and(|id| id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit()))
@@ -61,7 +65,9 @@ impl RehearsalReady {
 mod windows {
     use super::*;
     use crate::cdp::CdpError;
-    use processkit::{Command, OutputBufferPolicy, ProcessGroup, ProcessGroupOptions, StdioMode};
+    use processkit::{
+        Command, OutputBufferPolicy, ProcessGroup, ProcessGroupOptions, Stdin, StdioMode,
+    };
     use std::sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc::{self, Receiver, SyncSender, TryRecvError},
@@ -92,7 +98,6 @@ mod windows {
 
     pub struct RehearsalOwner {
         commands: Option<SyncSender<OwnerCommand>>,
-        folder: PathBuf,
     }
 
     pub struct PipeTransport {
@@ -106,6 +111,42 @@ mod windows {
         if let Ok(mut slot) = state.lock() {
             slot.get_or_insert(message.into());
         }
+    }
+
+    fn recover_after_failure(
+        python: &std::path::Path,
+        script: &std::path::Path,
+    ) -> Result<(), String> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| e.to_string())?;
+        let group = ProcessGroup::with_options(
+            ProcessGroupOptions::default().max_memory(256 * 1024 * 1024),
+        )
+        .map_err(|e| e.to_string())?;
+        let command = Command::new(python)
+            .args(["-I", "-B", "-u"])
+            .arg(script)
+            .arg("--recover")
+            .create_no_window()
+            .stdin(Stdin::empty())
+            .stderr(StdioMode::Null)
+            .timeout(Duration::from_secs(15))
+            .output_buffer(OutputBufferPolicy::fail_loud(4).with_max_bytes(8192));
+        let output = runtime.block_on(async {
+            let process = group.start(&command).await.map_err(|e| e.to_string())?;
+            process.output_string().await.map_err(|e| e.to_string())
+        })?;
+        if output.code() != Some(0) {
+            return Err("Automatic profile recovery failed".into());
+        }
+        let report: serde_json::Value = serde_json::from_str(output.stdout())
+            .map_err(|_| "Invalid automatic recovery report")?;
+        if report["type"] != "recovery" || report["schema"] != 1 || report["retained"] != 0 {
+            return Err("Automatic profile recovery has pending records".into());
+        }
+        Ok(())
     }
 
     impl RehearsalOwner {
@@ -177,9 +218,9 @@ mod windows {
                             ProcessGroupOptions::default().max_memory(3 * 1024 * 1024 * 1024),
                         )
                         .map_err(|e| e.to_string())?;
-                        let command = Command::new(python)
+                        let command = Command::new(&python)
                             .args(["-I", "-B", "-u"])
-                            .arg(script)
+                            .arg(&script)
                             .create_no_window()
                             .keep_stdin_open()
                             .stderr(StdioMode::Null)
@@ -335,11 +376,17 @@ mod windows {
                                                     "Rehearsal event byte budget exhausted".into(),
                                                 );
                                             }
-                                            if events.try_send(line).is_err() {
+                                            if let Err(error) = events.try_send(line) {
                                                 worker_bytes.fetch_sub(size, Ordering::AcqRel);
-                                                return Err(
-                                                    "Rehearsal event budget exhausted".into()
-                                                );
+                                                return Err(match error {
+                                                    mpsc::TrySendError::Full(_) => {
+                                                        "Rehearsal event budget exhausted"
+                                                    }
+                                                    mpsc::TrySendError::Disconnected(_) => {
+                                                        "Rehearsal event consumer disconnected"
+                                                    }
+                                                }
+                                                .into());
                                             }
                                         }
                                     }
@@ -368,6 +415,17 @@ mod windows {
                     if let Err(error) = work() {
                         failure(&worker_state, error.clone());
                         let _ = ready.try_send(Err(error));
+                        // The old process group has already dropped and closed
+                        // its owned tree. A fresh bounded worker queries durable
+                        // identities; it never kills by an old PID.
+                        if let Err(recovery) = recover_after_failure(&python, &script) {
+                            if let Ok(mut slot) = worker_state.lock() {
+                                if let Some(error) = slot.as_mut() {
+                                    error.push_str("; ");
+                                    error.push_str(&recovery);
+                                }
+                            }
+                        }
                     }
                     // Only this newly created controller directory is removed here.
                     // The worker owns its separate AppContainer profile lifecycle.
@@ -381,7 +439,6 @@ mod windows {
             }
             let mut owner = Self {
                 commands: Some(commands.clone()),
-                folder,
             };
             let evidence = match startup.recv_timeout(Duration::from_secs(65)) {
                 Ok(Ok(evidence)) => evidence,
@@ -423,8 +480,8 @@ mod windows {
             if let Err(error) = self.shutdown() {
                 eprintln!("Isolated browser cleanup: {error}");
             }
-            let _ = std::fs::remove_file(self.folder.join("rehearsal_worker.py"));
-            let _ = std::fs::remove_dir(&self.folder);
+            // The owner thread alone removes its controller after recovery.
+            // Removing the embedded script here could race that operation.
         }
     }
 
@@ -470,6 +527,84 @@ mod windows {
             }
         }
     }
+
+    #[cfg(test)]
+    mod qualification {
+        use super::*;
+
+        #[test]
+        #[ignore = "requires an explicitly supplied headless engine and fictional snapshot"]
+        fn consumer_failure_recovers_the_profile_before_releasing_admission() {
+            let root = std::fs::canonicalize(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target"),
+            )
+            .unwrap();
+            let file = std::fs::canonicalize(
+                std::env::var_os("WAYPOINT_REHEARSAL_CONFIG")
+                    .expect("explicit fictional configuration"),
+            )
+            .unwrap();
+            assert!(file.starts_with(root));
+            let bytes = std::fs::read(file).unwrap();
+            assert!(bytes.len() <= 1024 * 1024);
+            assert_eq!(
+                waypoint_domain::sha256_hex(&bytes),
+                std::env::var("WAYPOINT_REHEARSAL_CONFIG_SHA256").unwrap()
+            );
+            let config: RehearsalConfig = serde_json::from_slice(&bytes).unwrap();
+            let python = PathBuf::from(
+                std::env::var_os("WAYPOINT_REHEARSAL_PYTHON").expect("explicit Python"),
+            );
+            let (mut owner, pipe, ready) = RehearsalOwner::start(&python, config).unwrap();
+            let folder = ready.content_root.parent().unwrap().to_owned();
+            let receipt = PathBuf::from(std::env::var_os("LOCALAPPDATA").unwrap())
+                .join("SmartJobseeker/rehearsal-state-v1")
+                .join(format!(
+                    "{}.json",
+                    ready
+                        .profile_name
+                        .strip_prefix("SmartJobseeker.Rehearsal.")
+                        .unwrap()
+                ));
+            assert!(
+                folder.is_dir() && receipt.is_file(),
+                "missing live cleanup baseline"
+            );
+            let failure = pipe.failure.clone();
+            let commands = pipe.commands.clone();
+            drop(pipe.events);
+            owner.commands.take(); // Simulate losing the consumer, not normal Close.
+            let (reply, acknowledged) = mpsc::sync_channel(1);
+            commands
+                .try_send(OwnerCommand::Send(
+                    r#"{"id":1,"method":"Browser.getVersion","params":{}}"#.into(),
+                    reply,
+                ))
+                .unwrap();
+            acknowledged
+                .recv_timeout(Duration::from_secs(3))
+                .unwrap()
+                .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(22);
+            while ACTIVE.load(Ordering::Acquire) && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            assert!(
+                !ACTIVE.load(Ordering::Acquire),
+                "failure recovery did not finish"
+            );
+            let failure = failure.lock().unwrap().clone().unwrap();
+            assert!(failure.contains("consumer disconnected"), "{failure}");
+            assert!(
+                !failure.contains("recovery failed") && !failure.contains("pending records"),
+                "{failure}"
+            );
+            assert!(
+                !folder.exists() && !receipt.exists(),
+                "failure retained owned profile data"
+            );
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -482,7 +617,8 @@ mod tests {
     fn readiness_rejects_capabilities_and_unrelated_profile_identities() {
         let good = serde_json::json!({"type":"ready","schema":1,"appcontainer":true,"capabilities":0,
             "pid":1,"content_root":std::env::temp_dir(),"entry":"index.html","entry_url":"file:///fictional/index.html",
-            "profile_name":"SmartJobseeker.Rehearsal.0123456789abcdef0123456789abcdef","job_memory_limit":2147483648u64});
+            "profile_name":"SmartJobseeker.Rehearsal.0123456789abcdef0123456789abcdef","job_memory_limit":2147483648u64,
+            "recovered_profiles":0,"recovery_pending":0});
         assert!(serde_json::from_value::<RehearsalReady>(good.clone())
             .unwrap()
             .validate()

@@ -9,6 +9,8 @@ use std::sync::{
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+type RequestObserver = Arc<dyn Fn(&str) -> io::Result<()> + Send + Sync>;
+
 pub struct HttpFixture {
     pub origin: String,
     posts: Arc<AtomicUsize>,
@@ -18,10 +20,20 @@ pub struct HttpFixture {
 
 impl HttpFixture {
     pub fn start(body: impl Into<String>) -> Self {
+        Self::start_inner(body.into(), None)
+    }
+
+    pub fn start_observing(
+        observer: impl Fn(&str) -> io::Result<()> + Send + Sync + 'static,
+    ) -> Self {
+        Self::start_inner(String::new(), Some(Arc::new(observer)))
+    }
+
+    fn start_inner(body: String, observer: Option<RequestObserver>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let origin = format!("http://{}", listener.local_addr().unwrap());
-        let body = Arc::new(body.into());
+        let body = Arc::new(body);
         assert!(body.len() <= 64 * 1024, "fixture response too large");
         let stop = Arc::new(AtomicBool::new(false));
         let posts = Arc::new(AtomicUsize::new(0));
@@ -52,7 +64,10 @@ impl HttpFixture {
                         }
                         let (stop, posts, body) =
                             (worker_stop.clone(), worker_posts.clone(), body.clone());
-                        clients.push(thread::spawn(move || serve(stream, &stop, &posts, &body)));
+                        let observer = observer.clone();
+                        clients.push(thread::spawn(move || {
+                            serve(stream, &stop, &posts, &body, observer.as_ref())
+                        }));
                     }
                     Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                         thread::sleep(Duration::from_millis(5));
@@ -118,6 +133,7 @@ fn serve(
     stop: &AtomicBool,
     posts: &AtomicUsize,
     body: &str,
+    observer: Option<&RequestObserver>,
 ) -> io::Result<()> {
     stream.set_nonblocking(false)?;
     stream.set_read_timeout(Some(Duration::from_millis(100)))?;
@@ -193,9 +209,28 @@ fn serve(
         }
     }
     let is_post = bytes.starts_with(b"POST ");
+    if let Some(observer) = observer {
+        let line_end = bytes
+            .windows(2)
+            .position(|v| v == b"\r\n")
+            .ok_or_else(|| io::Error::other("missing fixture request line"))?;
+        let line = std::str::from_utf8(&bytes[..line_end])
+            .map_err(|_| io::Error::other("invalid fixture request line"))?;
+        let path = line
+            .split_whitespace()
+            .nth(1)
+            .filter(|path| path.len() <= 256)
+            .ok_or_else(|| io::Error::other("missing or oversized fixture request path"))?;
+        observer(path)?;
+    }
     if is_post {
         posts.fetch_add(1, Ordering::Relaxed);
     }
-    let response = if is_post { "" } else { body };
-    write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", response.len(), response)
+    if observer.is_some() {
+        // Observed channels measure arrival; 204 terminates SSE without retries.
+        stream.write_all(b"HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Private-Network: true\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+    } else {
+        let response = if is_post { "" } else { body };
+        write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", response.len(), response)
+    }
 }

@@ -10,6 +10,9 @@ use waypoint_browser::{rehearsal::RehearsalConfig, CdpDriver};
 #[path = "support/rehearsal_network.rs"]
 mod network;
 
+#[path = "support/loopback.rs"]
+pub mod loopback;
+
 fn setup() -> (PathBuf, RehearsalConfig, PathBuf) {
     let python =
         PathBuf::from(std::env::var_os("WAYPOINT_REHEARSAL_PYTHON").expect("explicit Python"));
@@ -81,6 +84,28 @@ fn isolated_driver_fills_navigates_captures_and_removes_profile() {
     driver
         .verify_text_value("#email", "fictional@example.invalid")
         .unwrap();
+    // The debugger cannot make the contained browser read a host-only file.
+    // This is fictional data in the newly protected recovery directory.
+    let private = local
+        .join("SmartJobseeker/rehearsal-state-v1")
+        .join(format!("privacy-probe-{}.pdf", std::process::id()));
+    struct PrivateProbe(PathBuf);
+    impl Drop for PrivateProbe {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+    let mut probe = std::fs::File::create_new(&private).unwrap();
+    let _private = PrivateProbe(private.clone());
+    use std::io::Write;
+    probe
+        .write_all(&std::fs::read(evidence.content_root.join("fictional.pdf")).unwrap())
+        .unwrap();
+    drop(probe);
+    assert!(
+        driver.attach_local_file("#resume", &private).is_err(),
+        "contained browser read a host-only private file"
+    );
     assert!(driver
         .execute(&BrowserCommand::UploadFile {
             selector: "#resume".into(),
@@ -120,6 +145,14 @@ fn isolated_driver_fills_navigates_captures_and_removes_profile() {
 #[ignore = "requires an explicitly supplied engine; fictional loopback traffic only"]
 fn isolated_scripted_channels_have_a_matching_unrestricted_baseline() {
     let (python, mut config, local) = setup();
+    assert_eq!(
+        std::fs::canonicalize(
+            std::env::var_os("WAYPOINT_BROWSER").expect("explicit matched headless engine")
+        )
+        .unwrap(),
+        std::fs::canonicalize(config.engine_root.join("chrome-headless-shell.exe")).unwrap(),
+        "control must use the same engine as the isolated session"
+    );
     let server = network::Receiver::start();
     let folder = config.content_root.parent().unwrap().join(format!(
         "channel-snapshot-{}-{}",
@@ -142,6 +175,7 @@ fn isolated_scripted_channels_have_a_matching_unrestricted_baseline() {
     // Exact same scripts and URL endpoints must transmit in the ordinary
     // headless browser. Otherwise a broken fixture could look like isolation.
     let mut normal = CdpDriver::launch(vec![]).unwrap();
+    let control_version = normal.browser_version().unwrap();
     let path = folder.to_string_lossy();
     let path = path
         .strip_prefix(r"\\?\")
@@ -166,6 +200,11 @@ fn isolated_scripted_channels_have_a_matching_unrestricted_baseline() {
     let before = server.counts();
 
     let (mut driver, evidence) = CdpDriver::launch_rehearsal(&python, config).unwrap();
+    assert_eq!(
+        control_version,
+        driver.browser_version().unwrap(),
+        "control and isolated engines differ"
+    );
     driver.open(&evidence.entry_url).unwrap();
     // Observing an attempted POST can itself stop filling. Delivery and
     // observation are different: only the receiving server decides this check.
@@ -179,6 +218,14 @@ fn isolated_scripted_channels_have_a_matching_unrestricted_baseline() {
             .unwrap()
             .as_deref(),
         Some("true")
+    );
+    assert_eq!(
+        driver
+            .read_attribute("#status", "data-completed")
+            .unwrap()
+            .as_deref(),
+        Some("true"),
+        "isolated fixture did not attempt every scripted channel"
     );
     std::thread::sleep(std::time::Duration::from_millis(1500));
     driver.execute(&BrowserCommand::Close).unwrap();

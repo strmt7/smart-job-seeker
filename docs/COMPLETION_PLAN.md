@@ -119,9 +119,12 @@ build and configuration.
    separate stderr/protocol handles and document readiness checks. An experimental
    driver transport now passes local Chrome 157 field, section, screenshot, nine
    loopback channel-baseline and selected lifecycle checks; see
-   [isolated rehearsal](ISOLATED_REHEARSAL.md). Automatic profile recovery after
-   forced death, interrupted startup, additional egress/broker channels and
-   installation remain open. There is no interface exposure or unrestricted
+   [isolated rehearsal](ISOLATED_REHEARSAL.md). Durable ownership, atomic Windows
+   job assignment and recovery now cover selected startup/crash/control failures,
+   including an abandoned mutex. Broader failure schedules, power loss,
+   additional egress/broker channels and installation remain open. The nine-channel
+   control now requires the same engine bytes and the shared concurrent receiver.
+   There is no interface exposure or unrestricted
    fallback. Real-site interaction is not enabled. Network-disabled replay also needs a
    bounded way to capture/replay permitted assets and explicit handling of
    server-dependent validation and missing steps. No live-form interaction is

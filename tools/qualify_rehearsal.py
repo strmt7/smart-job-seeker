@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -103,6 +104,26 @@ def run(command: list[str], environment: dict[str, str], log: Path, seconds: int
     return result
 
 
+def test_denominator(text: str, kind: str, expected: int) -> dict[str, int]:
+    """A zero exit code or a renamed filter must never count as live coverage."""
+    text = re.sub(r'\x1b\[[0-9;]*m', '', text)
+    if kind == 'rust':
+        rows = re.findall(r'test result: ok\. (\d+) passed; (\d+) failed; (\d+) ignored;', text)
+        if len(rows) != 1:
+            raise RuntimeError('Missing or ambiguous Rust test denominator')
+        passed, failed, ignored = map(int, rows[0])
+        if passed != expected or failed or ignored:
+            raise RuntimeError('Unexpected Rust test denominator')
+    elif kind == 'python':
+        rows = re.findall(r'Ran (\d+) tests? in ', text)
+        if len(rows) != 1 or int(rows[0]) != expected or not re.search(r'(?m)^OK\s*$', text):
+            raise RuntimeError('Missing, skipped or unexpected Python test denominator')
+        passed, ignored = expected, 0
+    else:
+        raise ValueError('Unknown qualification runner')
+    return {'executed_tests': passed, 'ignored_tests': ignored}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--engine', type=Path, required=True)
@@ -131,10 +152,12 @@ def main() -> int:
     path.write_text(json.dumps(config), encoding='utf-8')
     environment = os.environ.copy()
     environment.update(WAYPOINT_REHEARSAL_CONFIG=str(path), WAYPOINT_REHEARSAL_CONFIG_SHA256=digest(path),
-                       WAYPOINT_REHEARSAL_PYTHON=str(args.python), PYTHONUTF8='1', CARGO_BUILD_JOBS='2')
+                       WAYPOINT_REHEARSAL_PYTHON=str(args.python), PYTHONUTF8='1', CARGO_BUILD_JOBS='2',
+                       WAYPOINT_BROWSER=str(args.engine / 'chrome-headless-shell.exe'))
     sources = [REPO / 'crates/waypoint_browser' / item for item in [
         'Cargo.toml', 'src/cdp.rs', 'src/lib.rs', 'src/rehearsal.rs', 'src/rehearsal_worker.py',
-        'tests/rehearsal_live.rs', 'tests/test_rehearsal_windows.py', 'tests/support/rehearsal_network.rs']]
+        'tests/rehearsal_live.rs', 'tests/test_rehearsal_windows.py', 'tests/support/rehearsal_network.rs',
+        'tests/support/loopback.rs']]
     sources += [Path(__file__), REPO / 'Cargo.lock', REPO / 'tools/owned_process.py']
     evidence = {'schema': 1, 'source_sha256': {p.relative_to(REPO).as_posix(): digest(p) for p in sources},
                 'started_at': datetime.now(timezone.utc).isoformat(),
@@ -143,18 +166,34 @@ def main() -> int:
     receipt = folder / 'result.private.json'
     try:
         commands = [
-            [cargo, 'test', '-p', 'waypoint_browser', '--test', 'rehearsal_live', '--', '--ignored', '--test-threads=1'],
-            [str(args.python), '-X', 'utf8', '-B', str(REPO / 'crates/waypoint_browser/tests/test_rehearsal_windows.py'), '-v'],
+            ('rust', 2, [cargo, 'test', '-p', 'waypoint_browser', '--test', 'rehearsal_live', '--', '--ignored', '--test-threads=1']),
+            ('rust', 1, [cargo, 'test', '-p', 'waypoint_browser', '--lib', 'consumer_failure_recovers_the_profile_before_releasing_admission', '--', '--ignored', '--test-threads=1']),
+            ('python', 6, [str(args.python), '-X', 'utf8', '-B', str(REPO / 'crates/waypoint_browser/tests/test_rehearsal_windows.py'), '-v']),
         ]
-        for index, command in enumerate(commands):
+        for index, (kind, expected, command) in enumerate(commands):
             log = folder / f'check-{index}.private.log'
             result = run(command, environment, log)
             evidence['results'].append(result)
             if result['exit_code']:
                 raise RuntimeError('Qualification failed; inspect the private log: ' + str(log))
+            result.update(test_denominator(log.read_text(encoding='utf-8'), kind, expected))
         encoded = (folder / 'driver-screenshot.base64').read_text(encoding='ascii')
         screenshot = folder / 'driver-screenshot.png'
         screenshot.write_bytes(base64.b64decode(encoded, validate=True))
+        resources = folder / 'worker-resources.private.json'
+        resource_bytes = resources.read_bytes()
+        if len(resource_bytes) > 16 * 1024:
+            raise RuntimeError('Resource observations exceed their budget')
+        sessions = json.loads(resource_bytes)['closed_sessions']
+        if len(sessions) < 3:
+            raise RuntimeError('Missing normal-close resource denominator')
+        evidence['worker_resources'] = {
+            'scope': 'browser-job commit peaks and periodic samples for normal closes; not full host/GPU peaks',
+            'sessions': len(sessions), 'sha256': digest(resources),
+            'maximum_job_peak_commit_bytes': max(s['peak_job_commit_bytes'] for s in sessions),
+            'minimum_sampled_available_ram_bytes': min(s['minimum_sampled_available_ram_bytes'] for s in sessions),
+            'maximum_sampled_profile_bytes': max(s['maximum_sampled_profile_bytes'] for s in sessions),
+        }
         if evidence['source_sha256'] != {p.relative_to(REPO).as_posix(): digest(p) for p in sources}:
             raise RuntimeError('Qualification source changed during execution')
         evidence.update(complete=True, screenshot_sha256=digest(screenshot))
