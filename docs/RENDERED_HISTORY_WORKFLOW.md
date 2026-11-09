@@ -81,3 +81,7 @@ The standalone JavaScript suite passed 162 scripts. Broad live-site no-write
 qualification, unseen-form model accuracy, clean-Windows installation and
 document fidelity remain open. Narrow-screen capture magnification is also a
 remaining usability improvement.
+
+Subsequent update, 2026-11-10: the [shared image viewer](design/2026-11-smart-jobseeker/IMAGE_VIEWER.md)
+now provides full-size zoom and mouse panning for these captures. Its separate
+qualification records bounds, cleanup and native browser-zoom checks.

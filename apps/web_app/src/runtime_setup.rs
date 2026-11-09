@@ -1,10 +1,16 @@
 //! Recover missing tools into immutable per-user versions; never install globally.
 use serde_json::{json, Value};
+#[cfg(any(windows, test))]
+use std::io::Write;
 use std::{
-    io::{Read, Write},
+    io::Read,
     path::{Path, PathBuf},
     sync::Mutex,
 };
+
+#[cfg(all(test, windows))]
+#[path = "runtime_setup_qualification.rs"]
+mod qualification;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Tool {

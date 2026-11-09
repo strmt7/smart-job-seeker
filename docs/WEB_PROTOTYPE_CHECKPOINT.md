@@ -1,5 +1,13 @@
 # Browser-interface prototype checkpoint
 
+Latest checkpoint, 2026-11-10: actual private LibreOffice/Ollama repair passed
+conversion and model-free server checks; the first-use PDF lease handoff was
+corrected. See [runtime qualification](RUNTIME_REPAIR_QUALIFICATION.md). The shared
+[image viewer](design/2026-11-smart-jobseeker/IMAGE_VIEWER.md) now supports mouse
+zoom, pan and corner resizing, with compiled narrow-layout/native-zoom evidence.
+Clean-Windows, broader document/model quality and no-write live-form gates remain
+open. No release or real application submission occurred.
+
 Latest dependency checkpoint, 2026-11-09: Settings can install missing tools or
 repair private runtimes, and default missing tools can be installed when needed.
 Downloads, readback, activation, memory/disk admission and prior-version

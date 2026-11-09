@@ -69,12 +69,23 @@ def verify_inventory(output, hashes):
 
 
 def probe(binary, tool, stage):
+    environment = os.environ.copy()
+    profile = stage / 'probe-profile'
+    for name, relative in {'USERPROFILE':'user', 'APPDATA':'roaming', 'LOCALAPPDATA':'local',
+                           'TEMP':'temp', 'TMP':'temp'}.items():
+        directory = profile / relative
+        directory.mkdir(parents=True, exist_ok=True)
+        environment[name] = str(directory)
+    if tool == 'ollama':
+        # A version check must not contact the user's running Ollama service.
+        environment['OLLAMA_HOST'] = '127.0.0.1:0'
     args = [str(binary), '--version']
     if tool == 'office':
         args = [str(binary), '-env:UserInstallation=' + (stage / 'office-profile').as_uri(),
                 '--headless', '--version']
     completed = subprocess.run(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                stderr=subprocess.STDOUT, timeout=30,
+                               env=environment,
                                creationflags=subprocess.CREATE_NO_WINDOW, check=False)
     if completed.returncode or not completed.stdout or len(completed.stdout) > 16000:
         raise ValueError('The private runtime did not pass its version check')

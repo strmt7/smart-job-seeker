@@ -1,5 +1,10 @@
 # Smart Jobseeker interface refinement — 2026-11-09
 
+The subsequent [shared image inspection](IMAGE_VIEWER.md) adds an original
+generated reference and a working viewer with mouse zoom, pan and native corner
+resizing. Its compiled headless checks include narrow layouts and actual browser
+zoom through 400%; the design note records scope, prompt and evidence.
+
 The subsequent [career-history pass](../../CANDIDATE_HISTORY.md) adds an original
 `career-history-reference.png`, a responsive employment/education editor and
 populated-state workflow, resize and actual-browser-zoom checks. That reference

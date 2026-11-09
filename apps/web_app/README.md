@@ -1,5 +1,9 @@
 # Smart Jobseeker local web prototype
 
+Document-page and captured-form images open in a shared full-size viewer. Use
+mouse-wheel zoom, drag to pan, or the corner grip to resize it. The original
+image and application-review state remain unchanged.
+
 On Windows, build the prototype from the repository root with:
 
 ```powershell

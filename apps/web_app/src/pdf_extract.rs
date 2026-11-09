@@ -8,6 +8,8 @@ use std::{
 use std::{path::PathBuf, process::Command};
 
 pub(crate) const PDF_MAX_PAGES: usize = 50;
+#[cfg(test)]
+pub(crate) static TEST_WORKER_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn is_store_alias_directory(path: &std::path::Path, local_app_data: &std::path::Path) -> bool {
     let normalize = |value: &std::path::Path| {
@@ -565,6 +567,7 @@ mod tests {
     }
     #[test]
     fn only_one_pdf_operation_can_hold_the_worker_lease() {
+        let _guard = super::TEST_WORKER_LOCK.lock().unwrap();
         let lease = super::acquire().unwrap();
         assert!(super::acquire().is_err());
         drop(lease);

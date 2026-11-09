@@ -22,6 +22,15 @@ package = load('runtime_package', 'package-windows.py')
 
 
 class RepairTests(unittest.TestCase):
+    def test_version_probe_uses_private_profiles_and_never_the_user_service(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            with patch.object(worker.subprocess,'run',return_value=types.SimpleNamespace(returncode=0,stdout=b'client 1.2.3')) as invoke:
+                self.assertEqual(worker.probe(root/'fictional.exe','ollama',root),'client 1.2.3')
+            environment=invoke.call_args.kwargs['env']
+            self.assertEqual(environment['OLLAMA_HOST'],'127.0.0.1:0')
+            for name in ['USERPROFILE','APPDATA','LOCALAPPDATA','TEMP','TMP']:
+                self.assertTrue(Path(environment[name]).is_relative_to(root))
     def test_real_ollama_archive_checks_and_vcrt_inventory_share_sink(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

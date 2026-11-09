@@ -1,4 +1,24 @@
 /* Workspace refinement: shared visual tokens and layout rhythm. */
+.inspectable-image { cursor: zoom-in; }
+.inspectable-image:hover,.inspectable-image:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+dialog.image-viewer { width: min(1000px,calc(100vw - 24px)); height: min(720px,calc(100dvh - 24px)); min-width: min(320px,calc(100vw - 16px)); min-height: min(280px,calc(100dvh - 16px)); max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); padding: 0; overflow: auto; resize: both; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
+dialog.image-viewer[open] { display: grid; grid-template-rows: auto auto minmax(64px,1fr) auto; }
+.image-viewer::backdrop { background: rgb(24 42 43 / 35%); }
+.image-viewer::after { content: ''; position: absolute; right: 4px; bottom: 4px; width: 12px; height: 12px; pointer-events: none; background: linear-gradient(135deg,transparent 45%,var(--muted) 46%,var(--muted) 51%,transparent 52%,transparent 68%,var(--muted) 69%,var(--muted) 74%,transparent 75%); }
+.image-viewer-heading { display: flex; align-items: flex-start; gap: 12px; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--line); min-width: 0; }
+.image-viewer-heading h2 { font-size: 20px; line-height: 1.35; margin: 4px 0; overflow-wrap: anywhere; min-width: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.image-viewer-heading button { flex: 0 0 auto; min-height: 40px; }
+.image-viewer-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 12px 20px; min-width: 0; }
+.image-viewer-tools button { padding: 8px 12px; min-width: 40px; min-height: 38px; }
+.image-viewer-tools button[aria-pressed=true] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.image-viewer-tools output { min-width: 52px; padding: 8px 4px; border-radius: 6px; text-align: center; font-size: 13px; background: var(--accent-soft); color: var(--ink); }
+.image-viewer-stage { position: relative; overflow: hidden; min-width: 0; min-height: 0; margin: 0 16px; border-radius: 9px; background: var(--accent-soft); touch-action: none; user-select: none; }
+.image-viewer-stage.is-pannable { cursor: grab; }
+.image-viewer-stage.is-panning { cursor: grabbing; }
+.image-viewer-stage>img { position: absolute; left: 0; top: 0; max-width: none; max-height: none; border: 0; margin: 0; padding: 0; transform-origin: 0 0; pointer-events: none; }
+.image-viewer-stage>img[hidden] { display: none; }
+.image-viewer-status { text-align: center; margin: 0; padding: 12px 20px 16px; color: var(--muted); font-size: 12px; line-height: 1.4; }
+@media(max-width:480px) { .image-viewer-heading { padding: 12px; }.image-viewer-heading h2 { font-size: 16px; }.image-viewer-tools { padding: 10px 12px; gap: 6px; }.image-viewer-tools button { padding: 8px 10px; }.image-viewer-stage { margin: 0 10px; } }
 /* Career entries use the same controls, focus ring and motion as the profile. */
 #candidate-history { min-width: 0; border-top: 1px solid var(--line); padding-top: 20px; scroll-margin-top: 120px; }
 #candidate-history h3 { margin: 0 0 8px; }

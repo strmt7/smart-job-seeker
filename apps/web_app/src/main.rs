@@ -2490,6 +2490,15 @@ fn serve(
         );
         return Ok(());
     }
+    if path == "/image-viewer.js" && method == "GET" {
+        reply(
+            stream,
+            "200 OK",
+            "text/javascript; charset=utf-8",
+            include_str!("../web/image-viewer.js"),
+        );
+        return Ok(());
+    }
     if path == "/runtime-setup.js" && method == "GET" {
         reply(
             stream,

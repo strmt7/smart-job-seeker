@@ -1,0 +1,17 @@
+'use strict';
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
+const context={};vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../web/image-viewer.js'),'utf8'),context);
+const viewer=context.SmartJobseekerImageViewer;
+for(const source of ['https://example.invalid/image.png','javascript:alert(1)','data:image/svg+xml;base64,PHN2Zz4=','data:text/html;base64,QQ==','data:image/png;base64,QQ==\n','data:image/png;base64,<script>'])assert.equal(viewer.safeSource(source),false);
+assert.equal(viewer.safeSource('data:image/png;base64,iVBORw0KGgo='),true);
+assert.equal(viewer.safeSource('data:image/jpeg;base64,QQ=='),true);
+assert.equal(viewer.validSize(0,10),false);assert.equal(viewer.validSize(1.5,100),false);assert.equal(viewer.validSize(9000,9000),false);assert.equal(viewer.validSize(Infinity,12),false);assert.equal(viewer.validSize(1200,1600),true);
+assert.equal(viewer.fit(1200,1600,600,600),.375);assert.equal(viewer.fit(100,100,800,600),1);assert.equal(viewer.fit(1200,1600,0,600),null);
+assert.equal(viewer.position(1000,320,640),0);assert.equal(viewer.position(-1000,320,640),-320);assert.equal(viewer.position(10,320,100),110);
+const state={width:1200,height:1600,vw:600,vh:600,scale:.375,x:75,y:0};
+const zoomed=viewer.zoom(state,.75,300,300);assert.equal(zoomed.scale,.75);assert.equal(zoomed.x,-150);assert.equal(zoomed.y,-300);
+assert.equal((300-state.x)/state.scale,(300-zoomed.x)/zoomed.scale);assert.equal((300-state.y)/state.scale,(300-zoomed.y)/zoomed.scale);
+assert.equal(viewer.zoom(state,100,300,300).scale,8);assert.equal(viewer.zoom(state,.00001,300,300).scale,.1);assert.equal(viewer.zoom(state,NaN,0,0),null);assert.equal(viewer.zoom({...state,scale:0},1,0,0),null);
+const tall={width:1000,height:30000,vw:300,vh:200,scale:200/30000,x:0,y:0};assert.ok(viewer.zoom(tall,.000001,150,100).scale<=tall.scale);assert.ok(viewer.fit(1000,30000,300,200)<.01);
+const html=fs.readFileSync(path.join(__dirname,'../web/index.html'),'utf8');assert.ok(html.includes('/image-viewer.js'));
+console.log('Image source boundaries, fit, anchored zoom, bounds and asset wiring passed.');

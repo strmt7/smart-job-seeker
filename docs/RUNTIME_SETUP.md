@@ -1,6 +1,6 @@
 # Windows runtime setup
 
-Updated 2026-11-09. These mechanisms are implemented in the prototype; a clean
+Updated 2026-11-10. These mechanisms are implemented in the prototype; a clean
 Windows virtual-machine installation is still an acceptance gate.
 
 ## Default installation
@@ -146,11 +146,12 @@ pointer traversal, incomplete versions, prior-pointer preservation, missing
 files, RAM boundaries and retryable status. Ordinary Rust tests cannot implicitly
 download a missing dependency. The existing package checks also passed.
 
-Actual new-path LibreOffice/Ollama downloads, clean-Windows installation,
-installer-service failure schedules, restart cleanup and updater servicing remain
-open acceptance gates. The implementation shares the existing verified package
-provisioners; offline tests are not live installation evidence for those two
-components. Rust/MSVC development-toolchain installation remains separate.
+Subsequent [live converter/Ollama qualification](RUNTIME_REPAIR_QUALIFICATION.md)
+passed actual private downloads, DOCX/PDF conversion and a model-free private
+server. It also fixed a first-use worker-lease conflict and isolated version-probe
+profiles. Clean-Windows installation, installer-service failure schedules,
+restart cleanup, updater servicing and full application first-use recovery
+remain open. Rust/MSVC development-toolchain installation remains separate.
 
 `--no-ollama`, `--no-libreoffice` and `--no-chromium` deliberately produce minimal
 development bundles with missing capabilities. They are not the default

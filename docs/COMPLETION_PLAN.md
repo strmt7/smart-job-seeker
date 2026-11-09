@@ -1,6 +1,6 @@
 # Smart Jobseeker completion plan
 
-Status: active development, updated 2026-11-09. This plan translates the requested
+Status: active development, updated 2026-11-10. This plan translates the requested
 product into implementation and evidence gates. It supplements, rather than
 replaces, the repository's handoff and `AGENTS.md` invariants. There is no
 defensible completion percentage or delivery date yet: the unmeasured work is
@@ -40,8 +40,10 @@ acceptance gates. Do not create a release as part of this plan.
   are not established. Do not generalize a single fixture or site to all forms.
 - Automatic [runtime provisioning](RUNTIME_SETUP.md) now covers the default
   package, native PDF bootstrap and private missing-tool setup/repair without
-  host Python. Actual browser/PDF repair and rendered setup have local evidence;
-  the new LibreOffice/Ollama repair paths still need live qualification. Clean-Windows
+  host Python. Actual browser/PDF repair, rendered setup and subsequent
+  [converter/Ollama smoke checks](RUNTIME_REPAIR_QUALIFICATION.md) have local
+  evidence. The [shared image viewer](design/2026-11-smart-jobseeker/IMAGE_VIEWER.md)
+  also closes the narrow-screen capture-magnification gap. Clean-Windows
   installation, browser servicing and recovery across machines remain unproven.
   The existing prototype bundle
   is unsigned and is not a distribution-ready package.

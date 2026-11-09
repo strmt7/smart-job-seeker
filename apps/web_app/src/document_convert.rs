@@ -244,7 +244,42 @@ pub fn text_to_pdf(bytes: &[u8]) -> Result<Vec<u8>, String> {
     office_to_pdf(bytes, true).map(|(pdf, _)| pdf)
 }
 
+fn provision_missing_office() -> Result<PathBuf, String> {
+    let control = crate::storage_settings::control_dir()?;
+    if std::env::var_os("WAYPOINT_SOFFICE").is_some() || stored_office_path(&control)?.is_some() {
+        return Err("The configured LibreOffice executable is unavailable; correct its path in Settings. Existing installations were left unchanged.".into());
+    }
+    #[cfg(windows)]
+    {
+        crate::runtime_setup::ensure(crate::runtime_setup::Tool::Office)
+    }
+    #[cfg(not(windows))]
+    {
+        return Err("Automatic LibreOffice setup supports Windows x64 only".into());
+    }
+}
+
 fn office_to_pdf(bytes: &[u8], text: bool) -> Result<(Vec<u8>, bool), String> {
+    office_to_pdf_using(bytes, text, office_path, provision_missing_office)
+}
+
+#[cfg(all(test, windows))]
+pub(crate) fn docx_to_pdf_using_runtime(bytes: &[u8], office: &Path) -> Result<Vec<u8>, String> {
+    office_to_pdf_using(
+        bytes,
+        false,
+        || Some(office.to_path_buf()),
+        || Err("Explicit fixture runtime unavailable".into()),
+    )
+    .map(|(pdf, _)| pdf)
+}
+
+fn office_to_pdf_using(
+    bytes: &[u8],
+    text: bool,
+    discover: impl FnOnce() -> Option<PathBuf>,
+    provision: impl FnOnce() -> Result<PathBuf, String>,
+) -> Result<(Vec<u8>, bool), String> {
     CONVERT_BUSY
         .compare_exchange(
             false,
@@ -254,7 +289,7 @@ fn office_to_pdf(bytes: &[u8], text: bool) -> Result<(Vec<u8>, bool), String> {
         )
         .map_err(|_| "A document conversion is already running")?;
     let _lease = ConvertLease;
-    let _document_lease = crate::pdf_extract::acquire()?;
+    let mut document_lease = crate::pdf_extract::acquire()?;
     if bytes.is_empty() || bytes.len() > 10 * 1024 * 1024 {
         return Err("Document size is outside the permitted range".into());
     }
@@ -267,23 +302,16 @@ fn office_to_pdf(bytes: &[u8], text: bool) -> Result<(Vec<u8>, bool), String> {
     if !text {
         reject_removed_revisions(conversion_bytes)?;
     }
-    let office = match office_path() {
+    let office = match discover() {
         Some(path) => path,
         None => {
-            let control = crate::storage_settings::control_dir()?;
-            if std::env::var_os("WAYPOINT_SOFFICE").is_some()
-                || stored_office_path(&control)?.is_some()
-            {
-                return Err("The configured LibreOffice executable is unavailable; correct its path in Settings. Existing installations were left unchanged.".into());
-            }
-            #[cfg(windows)]
-            {
-                crate::runtime_setup::ensure(crate::runtime_setup::Tool::Office)?
-            }
-            #[cfg(not(windows))]
-            {
-                return Err("Automatic LibreOffice setup supports Windows x64 only".into());
-            }
+            // The private installer uses the PDF worker lease for bootstrap.
+            // Keep the conversion lease, release only the document worker, and
+            // reacquire it before executing LibreOffice.
+            drop(document_lease);
+            let office = provision()?;
+            document_lease = crate::pdf_extract::acquire()?;
+            office
         }
     };
     let temp = tempfile::Builder::new()
@@ -352,7 +380,7 @@ fn office_to_pdf(bytes: &[u8], text: bool) -> Result<(Vec<u8>, bool), String> {
         }
     }
     let pdf = read_pdf(&output.join("source.pdf"))?;
-    drop(_document_lease);
+    drop(document_lease);
     if prepared.is_some() {
         let check = crate::convert_task::compare_docx_to_pdf(bytes, &pdf);
         if check["status"] != "matches" {
@@ -523,10 +551,47 @@ mod tests {
 
     #[test]
     fn conversion_does_not_overlap_another_pdf_operation() {
+        let _guard = crate::pdf_extract::TEST_WORKER_LOCK.lock().unwrap();
         let lease = crate::pdf_extract::acquire().unwrap();
         let error = super::docx_to_pdf(b"fictional").unwrap_err();
         assert!(error.contains("PDF operation is already running"));
         drop(lease);
+    }
+    #[test]
+    fn missing_converter_can_bootstrap_the_private_pdf_worker() {
+        let _guard = crate::pdf_extract::TEST_WORKER_LOCK.lock().unwrap();
+        let error = super::office_to_pdf_using(
+            b"Fictional conversion",
+            true,
+            || None,
+            || {
+                let _bootstrap_lease = crate::pdf_extract::acquire()?;
+                Err("fixture stopped after bootstrap lease acquisition".into())
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error, "fixture stopped after bootstrap lease acquisition");
+        assert!(crate::pdf_extract::acquire().is_ok());
+    }
+    #[test]
+    fn conversion_rechecks_worker_ownership_after_installation() {
+        let _guard = crate::pdf_extract::TEST_WORKER_LOCK.lock().unwrap();
+        let holder = std::cell::RefCell::new(None);
+        let error = super::office_to_pdf_using(
+            b"Fictional conversion",
+            true,
+            || None,
+            || {
+                holder.replace(Some(crate::pdf_extract::acquire()?));
+                Ok(std::path::PathBuf::from(
+                    "fictional converter must never execute",
+                ))
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("PDF operation is already running"));
+        drop(holder);
+        assert!(crate::pdf_extract::acquire().is_ok());
     }
     #[test]
     #[ignore = "runs an installed LibreOffice against an explicit local fixture"]
