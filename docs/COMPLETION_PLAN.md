@@ -199,7 +199,9 @@ build and configuration.
    now binds checked history values to reviewed answers and immutable historical
    snapshots, with current-source annotations. [Whole-form history advice](WHOLE_FORM_HISTORY.md)
    now classifies questions independently, resolves checked records and checks each
-   proposed answer in bounded, cancellable background work. Generic repeated-row
+   proposed answer in bounded, cancellable background work. [Focused visual follow-up](VISUAL_FOLLOWUP.md)
+   now handles up to three clear transcription differences with archived close-ups,
+   conservative freshness and typed-display checks; broad reliability remains open. Generic repeated-row
    assignment and broader model/visual reliability remain open. Per-record field pagination still
    needs implementation beyond the viewer's explicit first-100-field limit.
    The [integrated history qualification](HISTORY_PIPELINE_2026-11-09.md) now

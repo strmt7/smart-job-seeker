@@ -270,7 +270,7 @@ fn resource_gated_history_pipeline_keeps_subjects_separate() {
             ]);
         }
         assert_eq!(preview.suggestions.len(), expected.len());
-        let mut ws = Workspace::in_memory().unwrap();
+        let mut ws = Workspace::open(&directory.join("workspace")).unwrap();
         let job_id = JobIdentityId::new("fictional-career-pipeline").unwrap();
         ws.import_job(waypoint_store::StoredJob {
             id: job_id.clone(),
@@ -336,6 +336,21 @@ fn resource_gated_history_pipeline_keeps_subjects_separate() {
             "#salary",
         ] {
             browser.verify_text_value(selector, "").unwrap();
+        }
+        if std::env::var("WAYPOINT_HISTORY_VISUAL_ENDPOINTS").as_deref() == Ok("1") {
+            qualify_visual_endpoints(
+                &directory,
+                &mut ws,
+                EndpointFixture {
+                    job_id,
+                    url,
+                    profile,
+                    preview,
+                    driver: browser,
+                },
+                &expected,
+            );
+            return;
         }
         let image = browser.screenshot_base64().unwrap();
         std::fs::write(
@@ -590,4 +605,207 @@ fn resource_gated_whole_form_history_rejects_unsupported_answers() {
             assert_eq!(outcome["actual"], outcome["expected"], "{outcome}");
         }
     });
+}
+
+struct EndpointFixture {
+    job_id: JobIdentityId,
+    url: String,
+    profile: Value,
+    preview: form_preview::FormPreview,
+    driver: waypoint_browser::CdpDriver,
+}
+fn qualify_visual_endpoints(
+    directory: &Path,
+    ws: &mut Workspace,
+    fixture: EndpointFixture,
+    expected: &[(&str, &str)],
+) {
+    let EndpointFixture {
+        job_id,
+        url,
+        profile,
+        preview,
+        driver,
+    } = fixture;
+    let _lock = visual_review::TEST_TASK_LOCK.lock().unwrap();
+    let session_id = "fictional-history-visual-endpoints";
+    let completed_selectors = expected
+        .iter()
+        .map(|(selector, _)| (*selector).to_owned())
+        .collect();
+    let record =
+        attempt_record::AttemptRecord::start(ws, &job_id, "fictional-visual-endpoints", now())
+            .unwrap();
+    assert!(record.is_some());
+    let pending =
+        form_task::begin_pending(ws, &job_id, "fictional-visual-inspection", now()).unwrap();
+    let mut session = Some(ReviewSession {
+        id: session_id.into(),
+        job_id: job_id.clone(),
+        inspection_task_id: "fictional-visual-inspection".into(),
+        inspection_pending_revision: pending,
+        experience_revisions: vec![],
+        url,
+        route_binding: None,
+        profile_digest: Sha256Digest::of(&profile.to_string()),
+        preview,
+        driver,
+        created: Instant::now(),
+        ttl: Duration::from_secs(600),
+        filled: true,
+        fill_attempted: true,
+        completed_selectors,
+        prior_sections: vec![],
+        prior_sections_omitted: false,
+        selected_choices: vec![],
+        answer_drafts: Default::default(),
+        visible: false,
+        staged_files: vec![],
+        attachments: vec![],
+        pending_choice_visual: None,
+        last_visual_freshness_key: None,
+        record,
+    });
+    let full = visual_endpoint_run(
+        ws,
+        &mut session,
+        &json!({"session_id":session_id,"segment":0}),
+    );
+    std::fs::write(
+        directory.join("endpoint-first.private.json"),
+        full.to_string(),
+    )
+    .unwrap();
+    assert_eq!(full["visual_freshness"], "same");
+    assert_eq!(full["record_saved"], true);
+    assert_eq!(full["freshness_record_status"], "saved");
+    let comparisons = full["visual_review"]["comparisons"].as_array().unwrap();
+    assert_eq!(comparisons.len(), expected.len());
+    let initial_verified = comparisons
+        .iter()
+        .filter(|item| item["status"] == "matches_transcription" && item["dom_status"] == "matches")
+        .count();
+    let fields = &session.as_ref().unwrap().preview.schema.fields;
+    let mut targets: Vec<_> = comparisons
+        .iter()
+        .filter(|item| item["status"] != "matches_transcription")
+        .map(|item| {
+            let matches: Vec<_> = fields
+                .iter()
+                .filter(|field| Some(field.label.as_str()) == item["label"].as_str())
+                .collect();
+            assert_eq!(matches.len(), 1);
+            matches[0].selector.clone()
+        })
+        .collect();
+    assert!(targets.len() <= 3, "bounded automatic close-up capacity");
+    let (result, rechecked) = history_answer_source_browser_tests::call_path(
+        ws,
+        &mut session,
+        &json!({"task_id":full["task_id"]}),
+        "/api/form/visual-review-status",
+    );
+    result.unwrap();
+    assert_eq!(rechecked["visual_freshness"], "same");
+    assert_eq!(rechecked["freshness_record_status"], "already_saved");
+    assert_eq!(rechecked["freshness_record_saved"], false);
+    let mut results = Vec::new();
+    let mismatched = targets.len();
+    // Also qualify one native month through the formerly text-only target API.
+    if expected
+        .iter()
+        .any(|(selector, _)| *selector == "#work-month")
+        && !targets.iter().any(|selector| selector == "#work-month")
+    {
+        targets.push("#work-month".into());
+    }
+    let mut resolved = 0;
+    for selector in targets {
+        let (result, focused) = history_answer_source_browser_tests::call_path(
+            ws,
+            &mut session,
+            &json!({"session_id":session_id,"selector":selector}),
+            "/api/form/visual-focus",
+        );
+        result.unwrap();
+        assert_eq!(focused["value_retained"], true);
+        assert_eq!(focused["record_saved"], true);
+        assert_eq!(focused["unverified_count"], 0);
+        assert!(focused["failed_fields"].as_array().unwrap().is_empty());
+        let observed = visual_endpoint_run(
+            ws,
+            &mut session,
+            &json!({"session_id":session_id,"segment":0,"target_selector":selector}),
+        );
+        assert_eq!(observed["visual_freshness"], "same");
+        assert_eq!(observed["record_saved"], true);
+        let check = observed["visual_review"]["comparisons"].as_array().unwrap();
+        assert_eq!(check.len(), 1);
+        assert_eq!(check[0]["status"], "matches_transcription", "{observed}");
+        assert_eq!(check[0]["dom_status"], "matches");
+        if comparisons.iter().any(|item| {
+            item["label"] == check[0]["label"] && item["status"] != "matches_transcription"
+        }) {
+            resolved += 1;
+        }
+        results.push(json!({"selector":selector,"focus":focused,"review":observed}));
+    }
+    let current = session.as_mut().unwrap();
+    for (selector, value) in expected {
+        current.driver.verify_text_value(selector, value).unwrap();
+    }
+    for selector in [
+        "#referee-name",
+        "#referee-company",
+        "#office-address",
+        "#salary",
+    ] {
+        current.driver.verify_text_value(selector, "").unwrap();
+    }
+    assert!(current
+        .driver
+        .trace
+        .iter()
+        .all(|entry| !entry.contains("submitted")));
+    let qualification = json!({"app_js_sha256":waypoint_domain::sha256_hex(include_str!("../web/app.js").as_bytes()),"main_sha256":waypoint_domain::sha256_hex(include_str!("main.rs").as_bytes()),"initial_verified":initial_verified,"mismatched":mismatched,"resolved":resolved,"final_verified":initial_verified+resolved,"expected":expected.len(),"restricted_blank":4,"full":full,"focused":results,"submitted":false});
+    std::fs::write(
+        directory.join("endpoint-qualification.private.json"),
+        qualification.to_string(),
+    )
+    .unwrap();
+    assert_eq!(initial_verified + resolved, expected.len());
+}
+fn visual_endpoint_run(
+    ws: &mut Workspace,
+    session: &mut Option<ReviewSession>,
+    request: &Value,
+) -> Value {
+    let (result, started) = history_answer_source_browser_tests::call_path(
+        ws,
+        session,
+        request,
+        "/api/form/visual-review-start",
+    );
+    result.unwrap();
+    let task = started["task_id"].as_str().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(180);
+    loop {
+        assert!(
+            Instant::now() < deadline,
+            "bounded actual endpoint qualification"
+        );
+        let (result, mut observed) = history_answer_source_browser_tests::call_path(
+            ws,
+            session,
+            &json!({"task_id":task}),
+            "/api/form/visual-review-status",
+        );
+        result.unwrap();
+        if observed["status"] != "running" {
+            assert_eq!(observed["status"], "complete", "{observed}");
+            observed["task_id"] = json!(task);
+            return observed;
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
 }

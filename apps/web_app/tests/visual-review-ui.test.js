@@ -10,7 +10,7 @@ const end = source.indexOf('function showAutomaticFit(', start);
 assert.ok(start >= 0 && end > start, 'UI comparison helper must be present');
 const status = vm.runInNewContext(`${source.slice(start, end)}; visualComparisonStatus`);
 const needsRefresh = vm.runInNewContext(`${source.slice(start, end)}; visualReviewNeedsQueueRefresh`);
-const autoRetry = vm.runInNewContext(`${source.slice(start, end)}; visualAutoRetryCandidate`);
+const autoRetry = vm.runInNewContext(`${source.slice(start, end)}; visualAutoRetryCandidates`);
 assert.equal(needsRefresh({comparisons:[{status:'differs_from_transcription'}]}), true);
 assert.equal(needsRefresh({comparisons:[{status:'unobserved',dom_status:'unconfirmed'}]}), true);
 assert.equal(needsRefresh({comparisons:[{status:'unobserved'}]}), false);
@@ -51,11 +51,20 @@ assert.equal(status(international, [international], [translated, {label: 'Préno
 console.log('Visual comparison UI checks passed.');
 
 const twoExpected=[{label:'Applicant — Email',expected:'candidate@example.invalid',dom_status:'matches'},{label:'Reference — Email',expected:'referee@example.invalid',dom_status:'matches'}],twoObserved=[{label:'Applicant — Email',visible_value:'candidate@example.invalid'},{label:'Reference — Email',visible_value:'referee@example invalid'}],fields=[{label:'Applicant — Email',selector:'#a'},{label:'Reference — Email',selector:'#b'}],available=[{value:'#a'},{value:'#b'}];
-assert.equal(autoRetry(twoExpected,twoObserved,true,true,[],fields,available),'#b');
-assert.equal(autoRetry(twoExpected,twoObserved,false,true,[],fields,available),null);
-assert.equal(autoRetry(twoExpected,twoObserved,true,false,[],fields,available),null);
-assert.equal(autoRetry(twoExpected,[twoObserved[1]],true,true,[],fields,available),null);
-assert.equal(autoRetry(twoExpected,[{...twoObserved[0],visible_value:'wrong'},twoObserved[1]],true,true,[],fields,available),null);
-assert.equal(autoRetry(twoExpected,twoObserved,true,true,[],[...fields,{label:'Reference — Email',selector:'#c'}],[...available,{value:'#c'}]),null);
-assert.equal(autoRetry(twoExpected,twoObserved,true,true,[{...twoExpected[1],dom_status:'unconfirmed'}],fields,available),null);
+assert.deepEqual(Array.from(autoRetry(twoExpected,twoObserved,true,true,[],fields,available).selectors),['#b']);
+assert.equal(autoRetry(twoExpected,twoObserved,false,true,[],fields,available).total,0);
+assert.equal(autoRetry(twoExpected,twoObserved,true,false,[],fields,available).total,0);
+assert.equal(autoRetry(twoExpected,[twoObserved[1]],true,true,[],fields,available).total,0);
+assert.deepEqual(Array.from(autoRetry(twoExpected,[{...twoObserved[0],visible_value:'wrong'},twoObserved[1]],true,true,[],fields,available).selectors),['#a','#b']);
+assert.equal(autoRetry(twoExpected,twoObserved,true,true,[],[...fields,{label:'Reference — Email',selector:'#c'}],[...available,{value:'#c'}]).total,0);
+assert.equal(autoRetry(twoExpected,twoObserved,true,true,[{...twoExpected[1],dom_status:'unconfirmed'}],fields,available).total,0);
 console.log('Automatic visual retry eligibility checks passed.');
+
+const month={label:'Start month',expected:'2020-06',status:'matches_transcription',dom_status:'matches',normalization:{method:'native_display',field_type:'month',visible_value:'June 2020',canonical_value:'2020-06'}},monthObserved=[{label:'Start month',visible_value:'June 2020'}];
+assert.equal(status(month,[month],monthObserved,true),'transcription and live value match reviewed answer');
+assert.equal(status({...month,dom_status:'unconfirmed'},[month],monthObserved,true),'live field value not confirmed');
+assert.equal(status(month,[month],[{label:'Start month',visible_value:'June 2021'}],true),'transcription differs from reviewed answer');
+assert.equal(status({...month,normalization:{...month.normalization,canonical_value:'2020-07'}},[month],monthObserved,true),'transcription differs from reviewed answer');
+assert.equal(status({...month,normalization:{...month.normalization,field_type:'text'}},[month],monthObserved,true),'transcription differs from reviewed answer');
+assert.equal(status(month,[month],monthObserved,false),'capture changed or freshness could not be confirmed');
+console.log('Typed native-display comparison requires exact source observation, canonical value, type and live verification.');

@@ -72,8 +72,9 @@ stray component keys to abstentions and invalidated otherwise valid answers;
 per-question abstentions now discard those keys. Full-page casing mismatches
 persisted after explicit transcription instructions; focused captures resolved
 them without case folding, expected-value prompts or dropping the warnings.
-The follow-up qualification exercises the existing focused review path; this
-checkpoint does **not** add automatic focused retries to the application interface.
+The follow-up qualification exercised the existing focused review path. A
+subsequent [visual follow-up checkpoint](VISUAL_FOLLOWUP.md) extends the earlier
+single-mismatch retry to a bounded queue in the interface.
 
 Final model evidence: `target/history-pipeline-qNUcJt/` (flat),
 `target/history-pipeline-ogdVET/` (grouped), and

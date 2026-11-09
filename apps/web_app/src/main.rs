@@ -7218,19 +7218,7 @@ fn serve(
                         .iter()
                         .find(|field| &field.selector == selector)
                         .ok_or("Field is no longer present")?;
-                    if !matches!(
-                        field.field_type,
-                        waypoint_applications::form_mapping::FormFieldType::Text
-                            | waypoint_applications::form_mapping::FormFieldType::Number { .. }
-                            | waypoint_applications::form_mapping::FormFieldType::Email
-                            | waypoint_applications::form_mapping::FormFieldType::TextArea
-                            | waypoint_applications::form_mapping::FormFieldType::Select { .. }
-                    ) {
-                        return Err("Focused visual transcription currently supports text and single-select fields; inspect this field manually".into());
-                    }
-                    if field.label.trim().is_empty() || field.label.len() > 500 {
-                        return Err("Field has no usable label for visual review".into());
-                    }
+                    visual_review::validate_target_field(field)?;
                     Some((selector.clone(), field.label.clone()))
                 }
                 _ => return Err("Invalid targeted visual review".into()),
@@ -7550,9 +7538,12 @@ fn serve(
                             current.last_visual_freshness_key = Some(freshness_key);
                         }
                         result["freshness_record_saved"] = json!(saved);
+                        result["freshness_record_status"] =
+                            json!(if saved { "saved" } else { "failed" });
                     } else {
                         // The same task, status and image were already recorded.
                         result["freshness_record_saved"] = json!(false);
+                        result["freshness_record_status"] = json!("already_saved");
                     }
                     if let Some(revision) = result["pending_revision"].as_i64() {
                         visual_review::finish_pending_review(ws, &current.job_id, id, revision)?;

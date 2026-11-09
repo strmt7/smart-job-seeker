@@ -76,6 +76,26 @@ pub fn set_failed_fixture(id: &str, session: &str, job_id: &str, revision: i64) 
     });
 }
 
+/// Only already-filled typed values can be compared. Attachments have their
+/// own byte verification; a filename visible on screen is not that proof.
+pub fn validate_target_field(
+    field: &waypoint_applications::form_mapping::FormField,
+) -> Result<(), String> {
+    if matches!(
+        field.field_type,
+        waypoint_applications::form_mapping::FormFieldType::File
+    ) {
+        return Err(
+            "File inputs need attachment verification rather than focused text transcription"
+                .into(),
+        );
+    }
+    if field.label.trim().is_empty() || field.label.len() > 500 {
+        return Err("Field has no usable label for visual review".into());
+    }
+    Ok(())
+}
+
 pub fn page_signature(url: &str, width: f64, height: f64) -> waypoint_domain::Sha256Digest {
     waypoint_domain::Sha256Digest::of(&json!({"url":url,"width":width,"height":height}).to_string())
 }
@@ -495,6 +515,7 @@ fn reconcile_temporal_transcriptions(
         if normalized.as_deref() == Some(expected.as_str()) {
             item["status"] = json!("matches_transcription");
             item["comparison_note"] = json!("Unambiguous display normalized to the native value");
+            item["normalization"] = json!({"method":"native_display","field_type":field.field_type,"visible_value":observation["visible_value"],"canonical_value":expected});
         }
     }
 }
@@ -1131,6 +1152,46 @@ pub fn poll(id: &str) -> Result<Value, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn targeted_review_accepts_typed_controls_but_never_attachment_names_or_empty_labels() {
+        use waypoint_applications::form_mapping::FormFieldType;
+        let mut field:waypoint_applications::form_mapping::FormField=serde_json::from_value(serde_json::json!({"selector":"#example","label":"Fictional field","field_type":"text","required":false,"sensitive":false})).unwrap();
+        for kind in [
+            FormFieldType::Text,
+            FormFieldType::TextArea,
+            FormFieldType::Email,
+            FormFieldType::Number {
+                min: None,
+                max: None,
+                step: None,
+            },
+            FormFieldType::Date,
+            FormFieldType::Month,
+            FormFieldType::Time,
+            FormFieldType::DateTimeLocal,
+            FormFieldType::Checkbox,
+            FormFieldType::Select {
+                options: vec!["Fictional".into()],
+            },
+            FormFieldType::MultiSelect {
+                options: vec!["Fictional".into()],
+            },
+            FormFieldType::Radio {
+                options: vec!["Fictional".into()],
+            },
+        ] {
+            field.field_type = kind;
+            assert!(super::validate_target_field(&field).is_ok());
+        }
+        field.field_type = FormFieldType::File;
+        assert!(super::validate_target_field(&field).is_err());
+        field.field_type = FormFieldType::Text;
+        for label in ["".to_owned(), " ".to_owned(), "é".repeat(251)] {
+            field.label = label;
+            assert!(super::validate_target_field(&field).is_err());
+        }
+    }
+
     #[test]
     fn focused_review_accepts_only_the_selected_comparison() {
         assert!(

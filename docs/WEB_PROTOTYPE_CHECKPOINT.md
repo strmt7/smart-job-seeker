@@ -1,5 +1,9 @@
 # Browser-interface prototype checkpoint
 
+Latest visual follow-up checkpoint, 2026-11-09: the earlier single-field retry
+now supports a bounded close-up queue, explicit stop/review results, caret-stable
+captures and typed native-display comparison. See [scope and evidence](VISUAL_FOLLOWUP.md).
+
 Latest whole-form history checkpoint, 2026-11-09: one blank-field request now
 prepares question-level, source-linked history suggestions with a second semantic
 check, progress, cancellation and explicit review selection. See

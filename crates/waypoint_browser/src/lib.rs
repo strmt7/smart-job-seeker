@@ -16,7 +16,7 @@
 //!   from the element's box model.
 //! - The driver exposes no model-generated script execution. Trusted, fixed
 //!   Runtime functions support DOM inspection and value checks alongside the
-//!   DOM, Input, Page, Network and Browser protocol methods.
+//!   DOM, Input, Page, Network, CSS and Browser protocol methods.
 //! - Captchas and login walls are reported as walls. Nothing tries to climb
 //!   them.
 
@@ -409,6 +409,8 @@ pub struct CdpDriver {
     pointer_position: Option<(f64, f64)>,
     // Status belongs to one browser frame and loader, never to an origin alone.
     document_status: Option<(String, String, u64)>,
+    // One owned inspector sheet per main-frame document, empty outside captures.
+    capture_sheet: Option<(String, String, String)>,
 }
 
 impl CdpDriver {
@@ -1612,6 +1614,7 @@ impl CdpDriver {
             load_wait: Duration::from_secs(10),
             pointer_position: None,
             document_status: None,
+            capture_sheet: None,
         };
         driver.cdp.call("Page.enable", json!({})).map_err(derr)?;
         driver.cdp.call("DOM.enable", json!({})).map_err(derr)?;
@@ -1652,12 +1655,82 @@ impl CdpDriver {
         Ok(())
     }
 
+    /// Stabilize the editing caret only. No focus, field value, DOM node or
+    /// animation is changed, and all pixels are still compared exactly. The
+    /// inspector sheet is owned by this driver; restoration is checked after every attempt.
+    /// A caret inside a separately styled shadow root or another frame can
+    /// remain visible; freshness then stays conservative rather than masking it.
+    fn capture_png(&mut self, parameters: Value) -> Result<Value, DriverError> {
+        let tree = self
+            .cdp
+            .call("Page.getFrameTree", json!({}))
+            .map_err(derr)?;
+        let frame = tree
+            .pointer("/frameTree/frame")
+            .ok_or_else(|| DriverError("Capture document unavailable".into()))?;
+        let frame_id = frame["id"]
+            .as_str()
+            .ok_or_else(|| DriverError("Capture frame unavailable".into()))?
+            .to_owned();
+        let loader = frame["loaderId"].as_str().unwrap_or("").to_owned();
+        if self
+            .capture_sheet
+            .as_ref()
+            .is_none_or(|(id, document, _)| *id != frame_id || *document != loader)
+        {
+            self.cdp.call("CSS.enable", json!({})).map_err(derr)?;
+            let sheet = self
+                .cdp
+                .call(
+                    "CSS.createStyleSheet",
+                    json!({"frameId":frame_id,"force":true}),
+                )
+                .map_err(derr)?;
+            let id = sheet["styleSheetId"]
+                .as_str()
+                .ok_or_else(|| DriverError("Capture stylesheet unavailable".into()))?
+                .to_owned();
+            self.capture_sheet = Some((frame_id, loader, id));
+        }
+        let sheet = self
+            .capture_sheet
+            .as_ref()
+            .ok_or_else(|| DriverError("Capture stylesheet unavailable".into()))?
+            .2
+            .clone();
+        let applied = self
+            .cdp
+            .call(
+                "CSS.setStyleSheetText",
+                json!({"styleSheetId":sheet,"text":"* { caret-color: transparent !important; }"}),
+            )
+            .map_err(derr);
+        // Attempt restoration even if applying or capturing reports an error.
+        let captured = applied.and_then(|_| {
+            self.cdp
+                .call("Page.captureScreenshot", parameters)
+                .map_err(derr)
+        });
+        let restored = self
+            .cdp
+            .call(
+                "CSS.setStyleSheetText",
+                json!({"styleSheetId":sheet,"text":""}),
+            )
+            .map_err(derr);
+        if let Err(error) = restored {
+            // Retain ownership of the sheet; never abandon a possibly active
+            // rule or replace an unrelated inspector stylesheet on recovery.
+            return Err(DriverError(format!(
+                "Capture caret rendering could not be restored: {error}"
+            )));
+        }
+        captured
+    }
+
     /// Capture the current viewport for the candidate's review.
     pub fn screenshot_base64(&mut self) -> Result<String, DriverError> {
-        let result = self
-            .cdp
-            .call("Page.captureScreenshot", json!({"format":"png"}))
-            .map_err(derr)?;
+        let result = self.capture_png(json!({"format":"png"}))?;
         let data = result
             .get("data")
             .and_then(Value::as_str)
@@ -2021,7 +2094,7 @@ impl CdpDriver {
         if !left.is_finite() || !top.is_finite() || width <= 0.0 || height <= 0.0 {
             return Err(DriverError("Field capture is outside the page".into()));
         }
-        let captured = self.cdp.call("Page.captureScreenshot", json!({"format":"png","captureBeyondViewport":true,"clip":{"x":left,"y":top,"width":width,"height":height,"scale":scale}})).map_err(derr)?;
+        let captured = self.capture_png(json!({"format":"png","captureBeyondViewport":true,"clip":{"x":left,"y":top,"width":width,"height":height,"scale":scale}}))?;
         let data = captured
             .get("data")
             .and_then(Value::as_str)
@@ -2306,7 +2379,7 @@ impl CdpDriver {
                 "Screenshot segment exceeds capture limits".into(),
             ));
         }
-        let result = self.cdp.call("Page.captureScreenshot", json!({"format":"png","captureBeyondViewport":true,"clip":{"x":x,"y":y,"width":width,"height":height,"scale":1}})).map_err(derr)?;
+        let result = self.capture_png(json!({"format":"png","captureBeyondViewport":true,"clip":{"x":x,"y":y,"width":width,"height":height,"scale":1}}))?;
         let data = result
             .get("data")
             .and_then(Value::as_str)
@@ -7212,6 +7285,109 @@ fn origin_of(url: &str) -> String {
 
 #[cfg(test)]
 mod traversal_tests {
+    #[test]
+    #[ignore = "one owned headless browser and fictional file fixture; stable captures without field or DOM mutation"]
+    fn native_caret_capture_is_stable_restored_and_does_not_hide_text_changes() {
+        use std::io::Write;
+        fn probe(driver: &mut CdpDriver) -> Value {
+            let response=driver.cdp.call("Runtime.evaluate",json!({"expression":"({events:window.captureEvents,mutations:window.captureMutations,focused:document.activeElement.id,value:document.querySelector('input').value,caret:getComputedStyle(document.querySelector('input')).caretColor})","returnByValue":true})).unwrap();
+            assert!(response.get("exceptionDetails").is_none());
+            response["result"]["value"].clone()
+        }
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target")
+            .join(format!("caret-capture-{}-{stamp}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let fixture = root.join("fictional.html");
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&fixture)
+            .unwrap();
+        file.write_all(br#"<!doctype html><meta charset='utf-8'><style>input{font:20px Arial;caret-color:rgb(10,20,30)}</style><label>Fictional name<input id='fictional'></label><script>window.captureEvents=0;window.captureMutations=0;for(const type of ['input','change','focus','blur'])document.addEventListener(type,()=>window.captureEvents++,true);new MutationObserver(items=>window.captureMutations+=items.length).observe(document,{subtree:true,attributes:true,childList:true,characterData:true});</script>"#).unwrap();
+        drop(file);
+        let url = format!(
+            "file:///{}",
+            fixture.display().to_string().replace('\\', "/")
+        );
+        let mut driver = CdpDriver::launch(vec![]).unwrap();
+        let schema = driver.open(&url).unwrap().schema;
+        driver
+            .execute(&BrowserCommand::Fill {
+                selector: "#fictional".into(),
+                value: PacketValue::Text("Fictional Candidate".into()),
+            })
+            .unwrap();
+        driver
+            .cdp
+            .call(
+                "Runtime.evaluate",
+                json!({"expression":"window.captureEvents=0;window.captureMutations=0"}),
+            )
+            .unwrap();
+        let original = probe(&mut driver);
+        assert_eq!(original["focused"], "fictional");
+        let first = driver.screenshot_base64().unwrap();
+        driver.cdp.pump(Duration::from_millis(750));
+        let second = driver.screenshot_base64().unwrap();
+        assert_eq!(
+            first, second,
+            "caret blink must not produce a false page change"
+        );
+        let (width, height) = driver.page_dimensions().unwrap();
+        let tile = driver.screenshot_tile(0.0, 0.0, width, height).unwrap();
+        driver.cdp.pump(Duration::from_millis(650));
+        assert_eq!(
+            tile,
+            driver.screenshot_tile(0.0, 0.0, width, height).unwrap()
+        );
+        let crop = driver.screenshot_field_context("#fictional").unwrap();
+        driver.cdp.pump(Duration::from_millis(650));
+        assert_eq!(crop, driver.screenshot_field_context("#fictional").unwrap());
+        assert_eq!(
+            probe(&mut driver),
+            original,
+            "capture must restore caret styling without DOM mutations or focus/input/change events"
+        );
+        assert!(driver
+            .capture_png(
+                json!({"format":"png","clip":{"x":0,"y":0,"width":-1,"height":10,"scale":1}})
+            )
+            .is_err());
+        assert_eq!(
+            probe(&mut driver),
+            original,
+            "failed capture must still restore styling"
+        );
+        assert_eq!(driver.inspect_current().unwrap().schema, schema);
+        driver
+            .execute(&BrowserCommand::Fill {
+                selector: "#fictional".into(),
+                value: PacketValue::Text("Fictional Other".into()),
+            })
+            .unwrap();
+        assert_ne!(
+            first,
+            driver.screenshot_base64().unwrap(),
+            "actual field changes must remain visible"
+        );
+        driver.open(&url).unwrap();
+        driver
+            .execute(&BrowserCommand::Fill {
+                selector: "#fictional".into(),
+                value: PacketValue::Text("Fictional Candidate".into()),
+            })
+            .unwrap();
+        assert!(!driver.screenshot_base64().unwrap().is_empty());
+        assert_eq!(probe(&mut driver)["caret"], original["caret"]);
+        std::fs::write(root.join("qualification.private.json"),json!({"browser":driver.browser_version().unwrap(),"source_sha256":waypoint_domain::sha256_hex(include_str!("lib.rs").as_bytes()),"fixture_sha256":waypoint_domain::sha256_hex(&std::fs::read(&fixture).unwrap()),"viewport_stable":true,"tile_stable":true,"crop_stable":true,"restore_on_error":true,"dom_mutations":original["mutations"],"field_events":original["events"],"navigation_rebound":true,"text_change_visible":true}).to_string()).unwrap();
+        println!("Caret capture evidence: {}", root.display());
+    }
+
     use super::*;
 
     #[test]

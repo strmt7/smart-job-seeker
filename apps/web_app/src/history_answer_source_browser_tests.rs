@@ -9,7 +9,7 @@ fn call(
 ) -> (Result<(), String>, Value) {
     call_path(ws, session, body, "/api/form/fill")
 }
-fn call_path(
+pub(crate) fn call_path(
     ws: &mut Workspace,
     session: &mut Option<ReviewSession>,
     body: &Value,

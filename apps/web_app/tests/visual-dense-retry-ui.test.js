@@ -11,7 +11,7 @@ const context = {
   result:{session_id:'fictional'}, fillInProgress:false, fillCompleted:false,
   visualButton:{disabled:false}, fillButton:null, visualPanel:panel,
   sessionStorage:{getItem:k=>store.get(k),setItem:(k,v)=>store.set(k,v),removeItem:k=>store.delete(k)},
-  element:(_tag,text)=>({text}), document:{createElement:()=>({})}, refresh:async()=>{refreshes++;},
+  element:(_tag,text)=>({text,children:[],append(...items){this.children.push(...items)}}), document:{createElement:()=>({})}, refresh:async()=>{refreshes++;},
   setTimeout:fn=>fn(), visualComparisonStatus:()=>'', visualReviewNeedsQueueRefresh:()=>false,
   api:async(path, body)=>{
     if(path === '/api/form/visual-review-start'){

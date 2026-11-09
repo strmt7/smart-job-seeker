@@ -235,3 +235,16 @@ html[data-motion="reduced"] button:active:not(:disabled) { transform: none; }
 button.secondary-button { background: var(--surface); color: var(--accent); border: 1px solid var(--line); }
 .history-proposals { max-height: 420px; overflow: auto; min-width: 0; }
 .history-proposal-source { flex-basis: 100%; padding-left: 24px; color: var(--muted); }
+
+.visual-followups { margin-top: 20px; min-width: 0; }
+.visual-followups>h4 { margin: 0 0 12px; }
+.visual-followup-field { margin-top: 16px; padding: 16px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); min-width: 0; }
+.visual-followup-field>h5 { margin: 0 0 12px; color: var(--ink); font-size: 14px; overflow-wrap: anywhere; }
+.visual-followup-field img { display: block; max-width: 100%; height: auto; }
+
+.answer-draft img { display: block; max-width: 100%; height: auto; }
+
+.visual-field-match { color: var(--accent); font-weight: 600; overflow-wrap: anywhere; }
+
+.visual-initial-review { padding: 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--canvas); }
+.visual-initial-review>summary { cursor: pointer; color: var(--accent); font-weight: 600; }
