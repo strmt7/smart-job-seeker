@@ -164,12 +164,32 @@ fn autocomplete_profile_key(
         })
 }
 
+fn normalize_applicant_label(label: &str) -> String {
+    let lower = label.trim().to_lowercase();
+    let content = [
+        "applicant's",
+        "applicant’s",
+        "applicants",
+        "applicant",
+        "candidate's",
+        "candidate’s",
+        "candidates",
+        "candidate",
+        "your",
+    ]
+    .iter()
+    .find_map(|prefix| {
+        lower
+            .strip_prefix(prefix)
+            .filter(|rest| rest.chars().next().is_none_or(|c| !c.is_alphanumeric()))
+    })
+    .unwrap_or(&lower);
+    normalize_field_name(content)
+}
+
 fn hint_matches_applicant_label(label: &str, key: &str) -> bool {
-    let normalized = normalize_field_name(label);
-    let plain = ["applicants", "applicant", "candidates", "candidate", "your"]
-        .iter()
-        .find_map(|prefix| normalized.strip_prefix(prefix))
-        .unwrap_or(&normalized);
+    let normalized = normalize_applicant_label(label);
+    let plain = normalized.as_str();
     match key {
         "full_name" => matches!(plain, "name" | "fullname"),
         "preferred_name" => is_applicant_preferred_name_label(label),
@@ -347,11 +367,13 @@ pub fn suggest_exact(schema: &FormSchema, profile: &Value) -> Result<Vec<Propose
             .filter(|(key, value)| {
                 AUTOFILL_PROFILE_FIELDS.contains(&key.as_str())
                     && (normalize_field_name(key) == normalize_field_name(&field.label)
+                        || (matches!(
+                            key.as_str(),
+                            "full_name" | "first_name" | "last_name" | "preferred_name"
+                        ) && hint_matches_applicant_label(&field.label, key))
                         || (key.as_str() == "email"
                             && matches!(field.field_type, FormFieldType::Email)
-                            && hint_matches_applicant_label(&field.label, key))
-                        || (key.as_str() == "preferred_name"
-                            && is_applicant_preferred_name_label(&field.label)))
+                            && hint_matches_applicant_label(&field.label, key)))
                     && value.as_str().is_some_and(|text| {
                         !text.trim().is_empty() && text.len() <= MAX_PROFILE_VALUE
                     })
@@ -2135,6 +2157,75 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "headless local fictional name fields; no submission"]
+    fn browser_fills_familiar_applicant_names_and_leaves_other_people_untouched() {
+        use waypoint_applications::driver::BrowserDriver;
+        use waypoint_applications::form_mapping::BrowserCommand;
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/applicant_name_aliases.html");
+        let url = format!("file:///{}", path.display().to_string().replace('\\', "/"));
+        let mut driver = waypoint_browser::CdpDriver::launch(vec![]).unwrap();
+        let live = driver.open(&url).unwrap();
+        let mappings = suggest_exact(
+            &live.schema,
+            &json!({"first_name":"Avery", "last_name":"Example"}),
+        )
+        .unwrap();
+        assert_eq!(mappings.len(), 2);
+        for mapping in mappings {
+            assert!(matches!(
+                mapping.field_selector.as_str(),
+                "#given" | "#surname"
+            ));
+            driver
+                .execute(&BrowserCommand::Fill {
+                    selector: mapping.field_selector,
+                    value: mapping.value,
+                })
+                .unwrap();
+        }
+        for (selector, expected) in [
+            ("#given", "Avery"),
+            ("#surname", "Example"),
+            ("#referee", ""),
+            ("#conflict", ""),
+        ] {
+            driver.verify_text_value(selector, expected).unwrap();
+        }
+        assert!(driver
+            .trace
+            .iter()
+            .all(|entry| !entry.contains("submitted")));
+    }
+
+    #[test]
+    fn familiar_applicant_labels_do_not_map_other_people_or_conflicting_components() {
+        let mut schema = form();
+        schema.fields.truncate(1);
+        let profile = json!({"first_name":"Avery", "last_name":"Example"});
+        for (label, expected) in [
+            ("Your given name", Some("Avery")),
+            ("Candidate surname", Some("Example")),
+            ("Referee given name", None),
+            ("Emergency contact surname", None),
+        ] {
+            schema.fields[0].label = label.into();
+            schema.fields[0].autocomplete = None;
+            let mappings = suggest_exact(&schema, &profile).unwrap();
+            match expected {
+                Some(text) => {
+                    assert_eq!(mappings.len(), 1, "{label}");
+                    assert_eq!(mappings[0].value, PacketValue::Text(text.into()));
+                }
+                None => assert!(mappings.is_empty(), "{label}"),
+            }
+        }
+        schema.fields[0].label = "Your given name".into();
+        schema.fields[0].autocomplete = Some("family-name".into());
+        assert!(suggest_exact(&schema, &profile).unwrap().is_empty());
+    }
+
+    #[test]
     fn split_phone_warning_requires_international_phone_and_code_field() {
         let mut schema = form();
         schema.fields[0].label = "Country calling code".into();
@@ -2820,9 +2911,9 @@ mod tests {
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].field_selector, "#candidate");
         schema.fields[0].label = "Your given name".into();
-        assert!(suggest_exact(&schema, &json!({"first_name":"Example"}))
-            .unwrap()
-            .is_empty());
+        let familiar = suggest_exact(&schema, &json!({"first_name":"Example"})).unwrap();
+        assert_eq!(familiar.len(), 1);
+        assert_eq!(familiar[0].value, PacketValue::Text("Example".into()));
         schema.fields[0].autocomplete = Some("section-person given-name".into());
         schema.fields[1].autocomplete = Some("email".into());
         let matches = suggest_exact(

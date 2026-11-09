@@ -1,3 +1,8 @@
+## Familiar applicant-name labels — 2026-11-09
+
+- Offline suggestions now recognize the existing finite set of familiar applicant-name labels even when autocomplete is absent, including “Your given name” and “Candidate surname.” Applicant-prefix removal now checks a word boundary before normalization; previously the plural prefix could consume the first letter of “surname.” Ambiguous phone-component handling was preserved after the broader prototype change exposed test failures.
+- The suggestion suite passed 49 unit tests (21 live tests ignored at that run). A new headless local browser test filled and verified fictional given-name and surname values, while leaving a referee field and a conflicting autocomplete field empty. No local-model inference or employer-site completion was evaluated by these tests.
+
 ## Fractional viewport-edge inspection — 2026-11-09
 
 - The missing field in the inert captured-form fixture had its center at y=801.875 in an 802-pixel viewport. Chromium's hit test returned no element at that fractional edge point; after scrolling, all 20 controls were detected. Visibility inspection now samples an interior viewport pixel while requiring that point to remain inside the control. The same inert fixture then reported all 20 controls before scrolling and filled and verified one fictional text value. This establishes local structural behavior only; it does not validate the original employer site's dynamic flow or submission isolation.
