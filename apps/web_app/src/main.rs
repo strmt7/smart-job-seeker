@@ -55,6 +55,8 @@ mod history_batch;
 #[cfg(all(test, windows))]
 mod history_pipeline_tests;
 mod history_record_choice;
+#[cfg(all(test, windows))]
+mod history_ui_qualification;
 mod letter_export;
 mod link_rank;
 mod local_advice;
@@ -2053,7 +2055,7 @@ fn inference_memory_gate(available: u64, total: u64) -> Result<(), String> {
     if total == 0 || available > total {
         return Err("System memory could not be sampled reliably; local inference paused".into());
     }
-    let floor = (total / 4).clamp(4 * GIB, 10 * GIB);
+    let floor = (total / 4).clamp(4 * GIB, model_start::HOST_CONTINUATION_RESERVE_CAP_BYTES);
     if available < floor {
         return Err(format!("Local inference paused: {} MiB system memory available; at least {} MiB is required to continue. Close other work and retry.", available / (1024 * 1024), floor.div_ceil(1024 * 1024)));
     }
@@ -10724,14 +10726,24 @@ mod tests {
     #[test]
     fn inference_memory_gate_rejects_pressure_and_invalid_samples() {
         const GIB: u64 = 1024 * 1024 * 1024;
-        assert!(inference_memory_gate(10 * GIB, 64 * GIB).is_ok());
-        assert!(inference_memory_gate(10 * GIB - 1, 64 * GIB)
+        assert!(inference_memory_gate(8 * GIB, 64 * GIB).is_ok());
+        assert!(inference_memory_gate(10125 * 1024 * 1024, 64 * GIB).is_ok());
+        assert!(inference_memory_gate(8 * GIB - 1, 64 * GIB)
             .unwrap_err()
             .contains("paused"));
         assert!(inference_memory_gate(4 * GIB, 16 * GIB).is_ok());
         assert!(inference_memory_gate(4 * GIB - 1, 16 * GIB).is_err());
         assert!(inference_memory_gate(1, 0).is_err());
         assert!(inference_memory_gate(17 * GIB, 16 * GIB).is_err());
+        assert!(inference_memory_gate(6 * GIB, 24 * GIB).is_ok());
+        assert!(inference_memory_gate(6 * GIB - 1, 24 * GIB).is_err());
+        for capacity in [16, 24, 32, 64, 128] {
+            assert!(
+                inference_memory_gate(model_start::HOST_START_RESERVE_BYTES, capacity * GIB)
+                    .is_ok(),
+                "startup headroom must satisfy continuation at {capacity} GiB"
+            );
+        }
     }
 
     #[test]

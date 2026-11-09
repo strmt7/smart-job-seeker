@@ -67,8 +67,12 @@ build and configuration.
    checkpoint. Historical native-GUI gates and the earlier intermittent browser
    failures are documented in `IMPLEMENTATION_STATUS.md`; do not repeat resolved
    investigations without a new failure or material change.
-2. **Measure the local application agent.** Run a controlled, versioned corpus
-   of unseen forms and a diverse set of permitted live vacancies through
+2. **Measure the local application agent.** The
+   [rendered history workflow](RENDERED_HISTORY_WORKFLOW.md) now connects the
+   actual interface, handlers, local model and driver on two fictional cases;
+   this closes that narrow integration gap, not unseen-form or live-site coverage.
+   Run a controlled, versioned corpus of unseen forms and a diverse set of
+   permitted live vacancies through
    discovery, inspection, reviewed filling and final-step handoff. Measure
    incorrect and missed fields, navigation outcomes, manual-review reasons,
    repeated-run variation and peak resources. Include Workable and other shared

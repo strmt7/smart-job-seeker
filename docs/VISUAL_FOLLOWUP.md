@@ -1,5 +1,8 @@
 # Focused visual follow-up
 
+The subsequent [rendered workflow qualification](RENDERED_HISTORY_WORKFLOW.md)
+connects the real interface, APIs and local model without response substitution.
+
 Implemented and qualified on fictional forms on 2026-11-09. The local interface
 can now follow a page review with up to three targeted visual checks. This extends
 the earlier single-mismatch retry; it does not edit answers, approve filling,

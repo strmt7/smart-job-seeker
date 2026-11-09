@@ -49,6 +49,8 @@
    if(response.status!=='complete')throw Error(response.error||'History suggestions need manual review');
    const advice=response.advice;
    output.replaceChildren(node('p',advice.mode==='form'?`${advice.cancelled?'Stopped after preparing':'Prepared'} ${(advice.proposals||[]).length} history suggestions. Check each answer and its source entry.`:`Review suggestions for ${advice.entry_label}. Check that this is the right entry and that every answer is correct.`, 'review-label'));
+   const errors=[...new Set((Array.isArray(advice.issues)?advice.issues:[]).map(issue=>typeof issue?.error==='string'?issue.error.slice(0,240):'').filter(Boolean))].slice(0,3);
+   if(errors.length){const details=node('details');details.open=!(advice.proposals||[]).length;details.append(node('summary','Why some answers need review'));for(const error of errors)details.append(node('p',error,'footnote'));output.append(details);}
    const list=node('div',null,'history-proposals');output.append(list);
    if(advice.selection){const names={current:'Confirmed current entry',latest_completed:'Most recent completed entry',only_entry:'Only checked entry in this category'};output.append(node('p',`${names[advice.selection.basis]||'Suggested entry'} · ${advice.selection.evidence}`,'footnote'));}
    const proposals=[];

@@ -1,5 +1,10 @@
 # Browser-interface prototype checkpoint
 
+Latest connected-workflow checkpoint, 2026-11-09: the rendered history-selection,
+reviewed-fill and automatic vision flow passed with actual production handlers
+and the local 12B model on two fictional layouts/profiles. See [the measured
+scope, memory-policy correction and remaining gaps](RENDERED_HISTORY_WORKFLOW.md).
+
 Latest visual follow-up checkpoint, 2026-11-09: the earlier single-field retry
 now supports a bounded close-up queue, explicit stop/review results, caret-stable
 captures and typed native-display comparison. See [scope and evidence](VISUAL_FOLLOWUP.md).

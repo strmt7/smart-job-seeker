@@ -12,6 +12,12 @@ static COMPLETED: Mutex<Option<(String, Value)>> = Mutex::new(None);
 const GIB: u64 = 1024 * 1024 * 1024;
 #[cfg(any(windows, test))]
 const MAX_MODEL_BYTES: u64 = 16 * GIB;
+#[cfg(any(windows, test))]
+pub(crate) const HOST_START_RESERVE_BYTES: u64 = 9 * GIB;
+// Startup must leave more headroom than steady inference requires, allowing
+// the interface and a single owned browser session to finish opening.
+#[cfg(any(windows, test))]
+pub(crate) const HOST_CONTINUATION_RESERVE_CAP_BYTES: u64 = HOST_START_RESERVE_BYTES - GIB;
 
 #[cfg(any(windows, test))]
 pub(crate) fn resource_gate(size: u64, system_available: u64, gpu: &Value) -> Result<(), String> {
@@ -20,7 +26,9 @@ pub(crate) fn resource_gate(size: u64, system_available: u64, gpu: &Value) -> Re
     }
     // Leave additional headroom for other applications after allowing a full
     // model-sized host allocation. This remains a snapshot, not a reservation.
-    let needed_system = size.checked_add(9 * GIB).ok_or("Invalid model size")?;
+    let needed_system = size
+        .checked_add(HOST_START_RESERVE_BYTES)
+        .ok_or("Invalid model size")?;
     if system_available < needed_system {
         return Err(format!(
             "Not enough available system memory for the conservative startup estimate: {} MiB observed, at least {} MiB required. This is a snapshot, not a reservation.",

@@ -10,7 +10,7 @@ async function run(options={}){
  const context={element,Date:{now:()=>clock},visualPanel:root,visualButton:{disabled:false},fieldVisionButton:{disabled:false,click(){}},fieldFocusSelect:{value:'',options:fields.map(field=>({value:field.selector}))},result:{session_id:'fixture',fields},fillInProgress:false,fillButton:null,fillCompleted:true,refresh:async()=>{},recoverFormVision(){},setTimeout:fn=>fn(),document:{createElement:tag=>element(tag)},sessionStorage:{getItem:key=>storage.get(key)||null,setItem:(key,v)=>storage.set(key,v),removeItem:key=>storage.delete(key)},api:async(path,body)=>{
   calls.push([path,body]);
   if(path.endsWith('visual-focus')){focusedSelector=body.selector;return {value_retained:retained,unverified_count:0,failed_fields:[],record_saved:focusSaved,failed_attachments:0,unverified_attachments:0};}
-  if(path.endsWith('visual-review-start'))return {task_id:body.target_selector||'full',segments:1,segment:0,half:null,target_selector:body.target_selector,coverage_complete:coverage,page_signature:'fictional',screenshot:'fictional',record_saved:true};
+  if(path.endsWith('visual-review-start'))return {task_id:body.target_selector||'full',segments:1,segment:0,half:null,target_selector:body.target_selector,coverage_complete:body.target_selector?false:coverage,page_signature:'fictional',screenshot:'fictional',record_saved:true};
   if(path.endsWith('visual-review-status')){
    const full=body.task_id==='full',i=full?0:Number(focusedSelector.slice(2)),items=full?expected:[expected[i]];
    if(expire&&!full)clock=120001;
@@ -24,7 +24,7 @@ async function run(options={}){
  const outcome=await context.inspectVisual();return {calls,root,outcome,context,storage};
 }
 (async()=>{
- let x=await run();assert.equal(x.calls.length,11);assert.deepEqual(x.calls.filter(c=>c[0].endsWith('visual-focus')).map(c=>c[1].selector),['#f1','#f2','#f3']);assert.equal(x.outcome.followup.resolved,3);assert.equal(x.outcome.followup.remaining,0);assert.ok(walk(x.root).some(n=>n.text.includes('earlier page captures historical')));
+ let x=await run();assert.equal(x.calls.length,11);assert.deepEqual(x.calls.filter(c=>c[0].endsWith('visual-focus')).map(c=>c[1].selector),['#f1','#f2','#f3']);assert.equal(x.outcome.followup.resolved,3);assert.equal(x.outcome.followup.remaining,0);assert.ok(!walk(x.root).some(node=>node.text.includes('Full capture coverage is not established')));assert.ok(walk(x.root).some(n=>n.text.includes('earlier page captures historical')));
  x=await run({mismatches:5});assert.equal(x.outcome.followup.checked,3);assert.equal(x.outcome.followup.remaining,2);assert.ok(walk(x.root).some(n=>n.text.includes('limit was reached')));
  for(const options of [{coverage:false},{fresh:'changed'},{statusSaved:false},{unobserved:true},{duplicate:true},{domUnconfirmed:true}]){x=await run(options);assert.equal(x.calls.length,2,JSON.stringify(options));assert.equal(x.outcome.followup,undefined);}
  for(const options of [{retained:false},{focusSaved:false}]){x=await run(options);assert.equal(x.calls.length,3);assert.equal(x.outcome.followup.stopped,true);assert.equal(x.outcome.followup.remaining,2);}
