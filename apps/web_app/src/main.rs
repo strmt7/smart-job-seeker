@@ -13,6 +13,8 @@ mod control_rank;
 mod control_vision;
 mod convert_task;
 mod custom_choice_action;
+#[cfg(test)]
+mod db_compat_qualification;
 mod discovery_task;
 mod doc_suggest;
 mod document_convert;

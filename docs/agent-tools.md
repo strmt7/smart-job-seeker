@@ -22,6 +22,11 @@ indexing it, and never use private data or secrets in a query. Search refuses
 source changes until an explicit reindex. The returned paths are candidates;
 verify them in the current source.
 
+The application index excludes `third_party/` so upstream amalgamations do not
+dominate retrieval or embedding memory. This is an explicit coverage limit.
+Use exact paths for dependency inspection and `python tools/verify_sqlite_vendor.py`
+to check the reviewed SQLite binding, its file inventory and manifest patch.
+
 On Windows the adapter checks available RAM before launch and limits CPU math
 threads; this is admission control, not a hard memory limit on the index daemon.
 
@@ -113,3 +118,25 @@ version; CI retains JSON observations only. Local screenshots can include paths
 and must not be committed. Available-memory checks are admission checks, not
 reservations or peak measurements. All new repository tools follow the concise
 communication rules in `AGENTS.md`.
+
+## Native database dependency provenance
+
+The reviewed SQLite binding is vendored under `third_party/libsqlite3-sys/`.
+Its registry archive and original file-map digests are anchored in
+`tools/verify_sqlite_vendor.py`; only the normalized manifest changes package
+build metadata and advances the SQLCipher source pin. CI verifies those bytes.
+The original upstream license and source remain intact. The scoped license
+policy exception retains the full compound license expression of the pinned
+native-source package; it is not an advisory exemption.
+
+Windows bundles collect normal and build dependencies using Cargo metadata,
+including path dependencies outside the workspace and nested native notices.
+The bundle license denominator therefore differs from the embedded inventory's
+all-platform workspace graph. Do not classify a vendored dependency as an
+internal workspace package or omit a C source provider because it is a build
+dependency. Current engine-floor and unsigned-integer conversion tests run with
+both plain and encrypted store configurations. The three opt-in
+`db_compat_qualification` tests require an explicitly selected private directory
+inside ignored `target/`; preserve the old test executable before upgrading if
+checking backward readability. Those fixtures are fictional and are not user
+workspace migrations or a general compatibility guarantee.

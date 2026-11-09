@@ -45,6 +45,17 @@ class CocoIndexBoundaryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'outside'):
                 coco.home()
 
+    def test_vendor_sources_are_outside_application_index_scope(self):
+        vendor = self.repo / 'third_party' / 'fictional'
+        vendor.mkdir(parents=True)
+        (vendor / 'source.c').write_text('fictional upstream code', encoding='utf-8')
+        subprocess.run(['git', 'add', 'third_party'], cwd=self.repo, check=True)
+        self.assertEqual([name for name, _ in coco.tracked_files(self.repo)], ['source.rs'])
+        (vendor / '.env.local').write_text('fictional', encoding='utf-8')
+        subprocess.run(['git', 'add', '-f', 'third_party'], cwd=self.repo, check=True)
+        with self.assertRaisesRegex(ValueError, 'secret-like'):
+            coco.tracked_files(self.repo)
+
     def test_search_requires_current_index_and_retains_receipt(self):
         def run(args, **_kwargs):
             if args[1] == 'version':

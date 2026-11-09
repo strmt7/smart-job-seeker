@@ -86,6 +86,8 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Check locked dependency license inventory
         run: |
+          python tools/verify_sqlite_vendor.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python apps/web_app/tests/license-inventory.test.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python apps/web_app/scripts/update-license-inventory.py --check

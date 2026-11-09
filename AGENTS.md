@@ -18,6 +18,10 @@ repo up cold. Read this first, then `README.md`, then the references below.
   verified results and run checks appropriate to the actual changes. Avoid
   repetitive plans, status recaps, unchanged tests and incidental exploration.
   Brevity must not replace implementation, verification or honest reporting.
+- Prefer substantial local development batches and reviewable local commits.
+  Push tested, coherent checkpoints to `main` less frequently; avoid separate
+  pushes for routine status/documentation updates or every small edit unless
+  the user requests them. Do not publish a release.
 - Apply [caveman](.agents/skills/caveman/SKILL.md) on every task. Keep internal
   work bounded while preserving exact evidence and normal public communication.
 - Before broad or conceptual code navigation, use the source-bound

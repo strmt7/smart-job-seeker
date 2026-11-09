@@ -1,9 +1,8 @@
 //! Waypoint store (T010/T011, gate G2).
 //!
-//! SQLite store with transactional migrations and backup/restore. SQLCipher
-//! integration is deferred: the schema and API are encryption-ready (key label
-//! recorded in the header; caller supplies the path and an optional key slot),
-//! and the unencrypted-local default is explicitly recorded in Known limits.
+//! SQLite store with transactional migrations and backup/restore. The optional
+//! SQLCipher feature supplies explicit encrypted opens and non-destructive export;
+//! the Windows app enables it and obtains workspace keys from Windows DPAPI.
 
 use std::sync::Arc;
 
@@ -1213,6 +1212,32 @@ use rusqlite::OptionalExtension;
 mod tests {
     use super::*;
 
+    #[test]
+    fn database_engine_and_unsigned_boundaries_are_explicit() {
+        assert!(
+            rusqlite::version_number() >= 3_054_001,
+            "unexpected SQLite: {}",
+            rusqlite::version()
+        );
+        let store = Store::in_memory().unwrap();
+        let maximum = i64::MAX as u64;
+        assert_eq!(
+            store
+                .conn
+                .query_row("SELECT ?1", [maximum], |r| r.get::<_, u64>(0))
+                .unwrap(),
+            maximum
+        );
+        assert!(store
+            .conn
+            .query_row("SELECT ?1", [u64::MAX], |r| r.get::<_, u64>(0))
+            .is_err());
+        assert!(store
+            .conn
+            .query_row("SELECT -1", [], |r| r.get::<_, u64>(0))
+            .is_err());
+    }
+
     fn finish_duplicate_rechecks(store: &Store) {
         let mut cursor = String::new();
         for _ in 0..512 {
@@ -1802,9 +1827,10 @@ mod tests {
             .collect::<rusqlite::Result<Vec<_>>>()
             .unwrap();
         assert!(
-            steps
-                .iter()
-                .any(|step| step.contains("SEARCH j USING INDEX jobs_requisition_lookup")),
+            steps.iter().any(|step| {
+                step.contains("SEARCH j USING INDEX jobs_requisition_lookup")
+                    || step.contains("SEARCH j USING COVERING INDEX jobs_requisition_lookup")
+            }),
             "requisition lookup must use the indexed key: {steps:?}"
         );
     }

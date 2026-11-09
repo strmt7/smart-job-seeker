@@ -17,6 +17,7 @@ members = [
   "crates/waypoint_lifecycle",
   "apps/web_app",
 ]
+exclude = ["third_party/libsqlite3-sys"]
 resolver = "2"
 
 [workspace.package]
@@ -24,9 +25,16 @@ edition = "2021"
 license = "MIT"
 version = "0.1.0"
 
+[workspace.dependencies]
+rusqlite = { version = "=0.41.1", features = ["bundled", "fallible_uint"] }
+
 [workspace.lints.rust]
 # Denied everywhere, with exactly one visible exception: the DPAPI FFI in
 # `waypoint_seal`, which carries a scoped #[allow(unsafe_code)] and a comment.
 # `deny` (not `forbid`) is what makes a single reviewed exception possible while
 # still failing the build on any other unsafe code.
 unsafe_code = "deny"
+
+[patch.crates-io]
+# Reviewed upstream sources; only the SQLCipher source pin is advanced.
+libsqlite3-sys = { path = "third_party/libsqlite3-sys" }

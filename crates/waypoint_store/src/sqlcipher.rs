@@ -69,6 +69,30 @@ impl Store {
 mod tests {
     use super::*;
     #[test]
+    fn encrypted_engine_uses_the_reviewed_patch_baseline() {
+        let store = Store::in_memory().unwrap();
+        let cipher: String = store
+            .conn
+            .query_row("PRAGMA cipher_version", [], |r| r.get(0))
+            .unwrap();
+        let version: Vec<u32> = cipher
+            .split_whitespace()
+            .next()
+            .unwrap()
+            .split('.')
+            .map(|part| part.parse().unwrap())
+            .collect();
+        assert!(
+            version.as_slice() >= [4, 20, 0].as_slice(),
+            "unexpected SQLCipher: {cipher}"
+        );
+        assert!(
+            rusqlite::version_number() >= 3_054_001,
+            "unexpected encrypted SQLite: {}",
+            rusqlite::version()
+        );
+    }
+    #[test]
     fn encrypted_workspace_opens_and_rejects_incorrect_key() {
         let dir = std::env::temp_dir().join(format!(
             "waypoint-encrypted-store-{}-{}",

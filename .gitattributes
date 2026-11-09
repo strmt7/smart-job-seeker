@@ -1,1 +1,2 @@
 *.pdf binary
+third_party/libsqlite3-sys/** -text

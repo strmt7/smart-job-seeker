@@ -216,6 +216,11 @@ def tracked_files(repo: Path) -> list[tuple[str, Path]]:
         if (rel.parts[0].lower() == "secrets" or rel.name.lower().startswith('.env') or
                 rel.name.lower().endswith((".env", ".pem", ".key", ".p12", ".pfx"))):
             raise ValueError(f"refusing to mirror secret-like path: {name}")
+        # Upstream amalgamations overwhelm application retrieval and embedding
+        # memory. Their exact provenance is verified separately; no semantic
+        # coverage of vendored dependencies is claimed by this index.
+        if rel.parts[0] == "third_party":
+            continue
         if rel.suffix.lower() not in INDEX_SUFFIXES:
             continue
         source = repo.joinpath(*rel.parts)

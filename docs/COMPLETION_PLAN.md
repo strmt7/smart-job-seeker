@@ -53,31 +53,18 @@ a defensible percentage or date. The following order reflects current evidence;
 each item remains open until its stated evidence is recorded against the exact
 build and configuration.
 
-1. **Restore a trustworthy integration baseline.** The latest `89407eb8` hosted
-   browser and build checks passed, but its audit now reports
-   `RUSTSEC-2026-0459` for the locked SQLite binding. Review and repair both the
-   plain SQLite and SQLCipher paths: the nominal patched binding version still
-   pins an affected SQLCipher source. Verify the real engine versions, encrypted
-   reopen/migration behavior and inventory after a dependency change; do not
-   suppress the finding or infer safety from package versions alone.
-   Confirm the current hosted
-   test and coverage results after the local fixture fixes. Investigate the
-   hosted browser termination failure using the bounded survivor diagnostics;
-   do not assume a local pass explains it. Resolve the three denied unmaintained
-   dependency notices through an appropriate dependency or architecture change,
-   not an unexplained suppression. Re-run the affected checks on the final SHA.
-   The separate native GUI packages have now been retired in favor of the
-   requested web/tray entrypoint. Local audit passed on the resulting 353-package
-   graph without ignores, and hosted supply-chain checks passed for `12fc1504`.
-   Its actual browser log reports 133 passes and three failures: late-field
-   review-state timing, WebSocket fixture navigation and disconnect-probe baseline
-   evaluation. The previous single-failure description was incomplete. Local
-   repairs now cover fixture ownership/parsing, startup-independent fixture
-   lifetime and document readiness, while loading stability has deterministic
-   unit coverage and a trace. The later `10996953` hosted run passed all five CI
-   jobs, including 136 browser cases and 296 layout cases. It predates the local
-   fixture repairs; confirmation of those repairs is still required. Neither
-   result establishes a submission-isolation boundary.
+1. **Keep the integration baseline trustworthy.** Local checks now cover
+   SQLite 3.54.1 in both plain/encrypted paths, SQLCipher 4.20.0, checked unsigned
+   SQL conversions, the complete store/workspace suite and a compiled-app smoke
+   pass. A checksum-bound binding manifest patch selects the corrected encrypted
+   source; preserve its provenance guard and complete component notices.
+   The old/new fictional database readback and integrity results are narrow
+   compatibility evidence, not qualification of every historical workspace.
+   The local audit passes without ignores. Current changes are being accumulated
+   locally; require exact-SHA hosted confirmation at the next substantial tested
+   checkpoint. Historical native-GUI gates and the earlier intermittent browser
+   failures are documented in `IMPLEMENTATION_STATUS.md`; do not repeat resolved
+   investigations without a new failure or material change.
 2. **Measure the local application agent.** Run a controlled, versioned corpus
    of unseen forms and a diverse set of permitted live vacancies through
    discovery, inspection, reviewed filling and final-step handoff. Measure

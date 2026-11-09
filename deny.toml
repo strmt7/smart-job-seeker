@@ -39,6 +39,14 @@ name = "webpki-root-certs"
 version = "=1.0.11"
 allow = ["CDLA-Permissive-2.0"]
 
+# Reviewed archive fd6b5280...: MIT wrapper, BSD SQLCipher, SQLite's public-
+# domain notice, and dual public-domain/WTFPL LibTomCrypt sources. Preserve
+# the complete upstream expression and ship all component notices.
+[[licenses.exceptions]]
+name = "sqlcipher-src"
+version = "=420.0.0"
+allow = ["MIT", "BSD-3-Clause", "blessing", "WTFPL"]
+
 [advisories]
 version = 2
 yanked = "deny"

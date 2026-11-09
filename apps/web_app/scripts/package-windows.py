@@ -375,6 +375,26 @@ def add_ollama_from_package(archive, package_path, expected_hash):
         return files
 
 
+def dependency_license_files(root, package):
+    """Include nested native-component notices, refusing paths outside a package."""
+    root = Path(root).resolve(strict=True)
+    files = set()
+    for path in root.rglob('*'):
+        if path.is_symlink() or getattr(path, 'is_junction', lambda: False)():
+            raise ValueError('Dependency source contains a link or junction')
+        if path.is_file() and path.name.lower().startswith(('license', 'licence', 'copying', 'notice')):
+            if path.stat().st_size > 2 * 1024 * 1024:
+                raise ValueError('Dependency license file exceeds size limit')
+            files.add(path.resolve())
+    if package.get('license-file'):
+        declared = (root / package['license-file']).resolve(strict=True)
+        if (not declared.is_relative_to(root) or not declared.is_file()
+                or declared.stat().st_size > 2 * 1024 * 1024):
+            raise ValueError('Invalid dependency license-file path')
+        files.add(declared)
+    return files
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--output', required=True, help='New ZIP path inside this repository')
@@ -433,8 +453,14 @@ def main():
     if not matching:
         raise ValueError('OpenSSL runtime does not match the specified license source')
     openssl_license = matching[0] / 'license.txt'
-    tree = subprocess.check_output(['cargo','tree','-p','waypoint_web','-e','normal','--target',TARGET,'--offline','--prefix','none','--format','{p}'],cwd=REPO,text=True,encoding='utf-8')
-    registry = Path(os.environ.get('CARGO_HOME') or (Path(os.environ['USERPROFILE']) / '.cargo')) / 'registry' / 'src'
+    # Native source providers can be build dependencies while their C code is
+    # linked into the executable. Include both normal and build closures.
+    tree = subprocess.check_output(['cargo','tree','-p','waypoint_web','-e','normal,build','--target',TARGET,'--locked','--offline','--prefix','none','--format','{p}'],cwd=REPO,text=True,encoding='utf-8')
+    metadata = json.loads(subprocess.check_output(['cargo','metadata','--format-version','1','--locked','--offline','--filter-platform',TARGET],cwd=REPO,text=True,encoding='utf-8'))
+    by_package = {}
+    for item in metadata['packages']:
+        by_package.setdefault((item['name'], item['version']), []).append(item)
+    workspace_members = set(metadata['workspace_members'])
     packages = {}
     for line in tree.splitlines():
         match = re.match(r'^([^ ]+) v([^ ]+)',line)
@@ -442,14 +468,13 @@ def main():
             raise ValueError('Unexpected Cargo dependency output')
         name, version = match.groups()
         if (name, version) in packages: continue
-        candidates = list(registry.glob(f'*/{name}-{version}/Cargo.toml'))
-        if not candidates:
-            if '(' in line and str(REPO).casefold() in line.casefold(): continue
-            raise ValueError(f'No local manifest for dependency {name} {version}')
-        if len(candidates) != 1: raise ValueError(f'Ambiguous local registry source for {name} {version}')
-        root = candidates[0].parent
-        package = tomllib.loads(candidates[0].read_text(encoding='utf-8')).get('package',{})
-        files = {f.resolve() for f in root.iterdir() if f.is_file() and f.name.lower().startswith(('license','licence','copying','notice'))}
+        candidates = by_package.get((name, version), [])
+        if len(candidates) != 1: raise ValueError(f'Missing or ambiguous dependency metadata for {name} {version}')
+        item = candidates[0]
+        if item['id'] in workspace_members: continue
+        root = Path(item['manifest_path']).parent
+        package = tomllib.loads(Path(item['manifest_path']).read_text(encoding='utf-8')).get('package',{})
+        files = dependency_license_files(root, package)
         # The published crate omits its license file. This is the upstream
         # LICENSE blob ca4e06058707e187b049ee4da06ed553b1854243 at the crate's
         # .cargo_vcs_info.json revision 14011d08c42a7cd368698fe28f77eb4cd0b65bf0.
@@ -462,10 +487,6 @@ def main():
             if hashlib.sha256(fallback.read_bytes().replace(b'\r\n', b'\n')).hexdigest() != 'd82bb4454c3439167bdb64d9dd598d391978133cac416d2f417e6ef9450ab398':
                 raise ValueError('The gpuviewer-core license does not match its upstream revision')
             files.add(fallback)
-        if package.get('license-file'):
-            license_file = (root / package['license-file']).resolve()
-            if not license_file.is_relative_to(root.resolve()) or not license_file.is_file(): raise ValueError(f'Invalid license file for {name} {version}')
-            files.add(license_file)
         if not files: raise ValueError(f'No local license text for {name} {version}')
         packages[(name,version)] = (package.get('license'), sorted(files))
     output.parent.mkdir(parents=True,exist_ok=True)

@@ -37,7 +37,7 @@ waypoint_workspace = { path = "../../crates/waypoint_workspace" }
 webbrowser = "1.2"
 
 [dev-dependencies]
-rusqlite = "0.32"
+rusqlite = { workspace = true }
 
 [lints]
 workspace = true

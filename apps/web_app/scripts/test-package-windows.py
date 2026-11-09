@@ -30,6 +30,24 @@ for component in ('LibreOffice', 'Chromium'):
 
 target = script.resolve().parents[3] / 'target'
 target.mkdir(exist_ok=True)
+with tempfile.TemporaryDirectory(prefix='waypoint-license-fixture-', dir=target) as temp:
+    root = Path(temp) / 'crate'
+    (root / 'native').mkdir(parents=True)
+    (root / 'LICENSE').write_text('fictional wrapper license', encoding='utf-8')
+    (root / 'native' / 'LICENSE-component').write_text('fictional native license', encoding='utf-8')
+    (root / 'NOTICE-native.txt').write_text('fictional native notice', encoding='utf-8')
+    files = packager.dependency_license_files(root, {})
+    assert {path.relative_to(root).as_posix() for path in files} == {
+        'LICENSE', 'native/LICENSE-component', 'NOTICE-native.txt'
+    }
+    outside = Path(temp) / 'outside.txt'
+    outside.write_text('fictional external material', encoding='utf-8')
+    try:
+        packager.dependency_license_files(root, {'license-file': '../outside.txt'})
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('A dependency license escaped its source package')
 with tempfile.TemporaryDirectory(prefix='waypoint-package-fixture-', dir=target) as temp:
     root = Path(temp) / 'office'
     (root / 'program').mkdir(parents=True)
