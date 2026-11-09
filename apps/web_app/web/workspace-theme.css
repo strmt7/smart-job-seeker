@@ -1,0 +1,59 @@
+/* Workspace refinement: shared visual tokens and layout rhythm. */
+:root {
+  --canvas: #f8f7f3;
+  --surface: #ffffff;
+  --ink: #182a2b;
+  --muted: #526565;
+  --line: #dce3dd;
+  --accent: #165d52;
+  --accent-soft: #e8f2ed;
+  --focus: #258a79;
+  --header-height: 64px;
+  color: var(--ink);
+  background: var(--canvas);
+}
+body { background: var(--canvas); }
+header { height: var(--header-height); padding: 0 28px; background: var(--surface); border-bottom: 1px solid var(--line); }
+.brand { color: var(--ink); font-size: 23px; letter-spacing: -.6px; }
+.brand span { color: var(--muted); letter-spacing: 0; }
+.brand-mark { color: var(--accent); }
+main { grid-template-columns: minmax(340px,36%) minmax(0,1fr); }
+.jobs { background: var(--canvas); padding-top: 24px; border-color: var(--line); }
+aside { background: var(--surface); padding: 24px 28px; }
+.heading h1 { font-size: 24px; letter-spacing: -.5px; }
+.heading p, p { color: var(--muted); }
+.search input { background: var(--surface); border-color: var(--line); border-radius: 9px; }
+button { background: var(--accent); border-radius: 8px; }
+button:hover:not(:disabled) { filter: brightness(.94); }
+input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-visible,a:focus-visible,summary:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+.reviewed-sort button { background: var(--surface); color: var(--accent); border: 1px solid #bfd1c8; font-size: 12px; }
+.job-tools { background: var(--surface); border-color: var(--line); border-radius: 9px; }
+#jobs { padding: 0 18px; }
+.job { margin: 0 0 12px; padding: 18px 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 11px; }
+.job.selected { padding: 18px 16px; border: 1px solid var(--accent); background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+.job>div:first-child,.job>div:last-child { padding-left: 28px; }
+.job-select,.job-review-select,.job.selected .job-select,.job.selected .job-review-select { top: 20px; left: 16px; }
+.job-title { font-size: 15px!important; line-height: 1.4!important; color: var(--ink)!important; }
+.job p { line-height: 1.45; }
+.job .footnote,.job-more .footnote { padding: 4px 0; margin: 2px 0; }
+.job-more { margin-top: 5px; }
+.score { background: #e1eee6; color: #215a45; font-weight: 600; }
+.job-state { border-radius: 6px; background: #f0f2ee; }
+.selected-heading h2 { color: var(--ink); letter-spacing: -.7px; }
+aside nav[aria-label="Workspace sections"] { gap: 8px; background: var(--surface); border-color: var(--line); min-height: 56px; }
+aside nav[aria-label="Workspace sections"] a { padding: 10px 14px; margin-bottom: 7px; border-radius: 7px; }
+aside nav[aria-label="Workspace sections"] a.active { border-bottom: 0; background: var(--accent-soft); color: var(--accent); }
+aside>section,.settings-content>section,.settings-content .local-tools { border-color: var(--line); border-radius: 11px; }
+.settings-workspace>h2 { font-size: 28px; letter-spacing: -.7px; color: var(--ink); }
+.settings-workspace>p { margin-bottom: 24px; }
+.settings-layout { grid-template-columns: 170px minmax(0,1fr); gap: 20px; }
+.settings-nav { position: sticky; top: 12px; padding: 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--canvas); }
+.settings-nav a,.settings-nav button { padding: 12px; border-radius: 7px; color: var(--ink); }
+.settings-nav a:hover,.settings-nav button:hover { background: var(--accent-soft); color: var(--accent); }
+.settings-content>section,.settings-content .local-tools { padding: 22px; }
+.settings-content h2 { font-size: 19px; color: var(--ink); }
+dialog { border-radius: 12px; border-color: var(--line); }
+@media(min-width:851px) { main { height: calc(100dvh - var(--header-height)); min-height: 0; } }
+@media(max-width:1100px) and (min-width:851px) { main { grid-template-columns: minmax(320px,36%) minmax(0,1fr); } .settings-layout { grid-template-columns: 1fr; } .settings-nav { position: static; flex-direction: row; flex-wrap: wrap; } }
+@media(max-width:850px) { main { grid-template-columns: 1fr; } header { padding: 0 18px; } .jobs { padding-top: 20px; } aside { padding: 22px 20px; } .settings-nav { position: static; } }
+@media(max-width:600px) { .settings-layout { grid-template-columns: 1fr; } .settings-nav { flex-direction: row; flex-wrap: wrap; gap: 2px; } .settings-nav a,.settings-nav button { padding: 9px 10px; } .settings-content>section,.settings-content .local-tools { padding: 18px; } .brand { font-size: 21px; } }

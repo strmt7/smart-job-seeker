@@ -2321,6 +2321,15 @@ fn serve(
         );
         return Ok(());
     }
+    if path == "/workspace-theme.css" && method == "GET" {
+        reply(
+            stream,
+            "200 OK",
+            "text/css; charset=utf-8",
+            include_str!("../web/workspace-theme.css"),
+        );
+        return Ok(());
+    }
     if supplied_token != token
         || (!origin.is_empty() && origin != format!("http://127.0.0.1:{port}"))
     {

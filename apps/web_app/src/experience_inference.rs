@@ -949,21 +949,22 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn with_resource_gated_named_model(name: &str, action: impl FnOnce()) {
+        let (status, bytes) = waypoint_inference::ollama::http_request(
+            "127.0.0.1:11434".parse().unwrap(),
+            "GET",
+            "/api/ps",
+            None,
+            3000,
+        )
+        .expect("inspect existing runtime models before qualification");
+        assert_eq!(status, 200);
+        let initial: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let no_models_loaded = initial["models"]
+            .as_array()
+            .expect("runtime model inventory")
+            .is_empty();
         let id = "fictional-experience-evaluation";
         crate::model_start::start(id.into(), name.into()).unwrap();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(150);
-        let result = loop {
-            let result = crate::model_start::poll(id).unwrap();
-            if result["status"] != "running" {
-                break result;
-            }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "model startup timed out; check runtime status"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(250));
-        };
-        assert_eq!(result["status"], "complete", "{result}");
         struct Unload {
             owned: bool,
             name: String,
@@ -982,10 +983,26 @@ pub(crate) mod tests {
                 }
             }
         }
-        let _unload = Unload {
-            owned: result["model"]["already_running"] != true,
+        let mut unload = Unload {
+            owned: no_models_loaded,
             name: name.to_owned(),
         };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(150);
+        let result = loop {
+            let result = crate::model_start::poll(id).unwrap();
+            if result["status"] != "running" {
+                break result;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "model startup timed out; check runtime status"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        };
+        if result["model"]["already_running"] == true {
+            unload.owned = false;
+        }
+        assert_eq!(result["status"], "complete", "{result}");
         action();
     }
 
