@@ -124,10 +124,11 @@ No third-party application implementation was copied.
 
 ## Next integration gates
 
-The live browser-driven capture coordinator still needs independent per-resource
-permission/robots checks, budgets/cancellation, explicit handling of blocked
-resources and missing steps, and a structural end to all fetch capability before
-candidate entry begins. GET alone does not prove an endpoint has no side effect.
+The subsequent [public-resource coordinator](PUBLIC_RESOURCE_CAPTURE.md) adds
+per-resource permission/robots checks, budgets/cancellation, blocked-resource
+outcomes and consuming freeze before entry. Automatic browser-driven resource
+discovery, missing steps and end-to-end phase integration remain unimplemented.
+GET alone does not prove an endpoint has no side effect.
 Do not allow candidate-bearing requests, authenticated sessions, automatic
 application retry or live fallback into this capture path. Server-dependent
 POST questions, cookies, unsupported encodings/variants and broader target

@@ -147,10 +147,13 @@ build and configuration.
    upload, retaining exact-request lookup and side-effect refusal. It has no live
    fallback and is not exposed in the interface. The [HTTP capture bridge](HTTP_CAPTURE_BRIDGE.md) now preserves response
    metadata and writes a bounded archive, with fictional native integration and
-   a separate public JSON API check. A live per-resource permission/robots-gated
-   coordinator, structural capture/entry phase separation, unsupported target/
-   transport lifecycles, server-dependent validation and missing steps still need
-   implementation and qualification. No live-form interaction is
+   a separate public JSON API check. The [public-resource coordinator](PUBLIC_RESOURCE_CAPTURE.md)
+   now checks source policy and robots for supplied resources and redirects,
+   freezes its transport before offline entry, and has fictional native plus
+   two public-read observations. Automatic resource discovery, browser-request
+   collection, candidate-data provenance, background-task/interface integration,
+   unsupported target/transport lifecycles, server-dependent validation and missing
+   steps still need implementation and qualification. No live-form interaction is
    authorized by these partial results.
 3. **Prove document and matching quality.** Exercise PDF and DOCX inputs from
    varied, privately retained sources through extraction, factual tailoring,

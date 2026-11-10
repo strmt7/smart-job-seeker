@@ -49,7 +49,7 @@ fn canonical(raw: &str, entry: bool) -> Result<String, String> {
     }
     Ok(url.to_string())
 }
-fn write_new(root: &Path, name: &str, bytes: &[u8]) -> Result<String, String> {
+pub(super) fn write_new(root: &Path, name: &str, bytes: &[u8]) -> Result<String, String> {
     let mut file = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -61,6 +61,14 @@ fn write_new(root: &Path, name: &str, bytes: &[u8]) -> Result<String, String> {
     Ok(waypoint_domain::sha256_hex(bytes))
 }
 impl SnapshotBuilder {
+    /// Resolve the initial public redirect chain before recording any resources.
+    pub(super) fn retarget_entry(&mut self, entry_url: &str) -> Result<(), String> {
+        if self.failed || !self.resources.is_empty() {
+            return Err("Snapshot entry is already fixed".into());
+        }
+        self.entry_url = canonical(entry_url, true)?;
+        Ok(())
+    }
     pub fn start(root: &Path, entry_url: &str) -> Result<Self, String> {
         let entry_url = canonical(entry_url, true)?;
         fs::create_dir(root).map_err(|_| "Snapshot requires a new destination directory")?;

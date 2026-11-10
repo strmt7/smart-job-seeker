@@ -2040,6 +2040,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "robotstxt"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbc52377db80e3fec3a2c748ca603b8b6cacdd34ff89ff4b742a635361d4b4a7"
+
+[[package]]
 name = "rsqlite-vfs"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2907,6 +2913,7 @@ name = "waypoint_browser"
 version = "0.1.0"
 dependencies = [
  "processkit",
+ "robotstxt",
  "serde",
  "serde_json",
  "tempfile",
@@ -2917,6 +2924,7 @@ dependencies = [
  "waypoint_applications",
  "waypoint_domain",
  "waypoint_net",
+ "waypoint_policy",
  "waypoint_store",
  "waypoint_workspace",
 ]

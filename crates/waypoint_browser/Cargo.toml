@@ -8,6 +8,8 @@ license.workspace = true
 waypoint_applications = { path = "../waypoint_applications" }
 waypoint_domain = { path = "../waypoint_domain" }
 waypoint_net = { path = "../waypoint_net" }
+waypoint_policy = { path = "../waypoint_policy" }
+robotstxt = "=0.3.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["unbounded_depth"] }
 url = "2"

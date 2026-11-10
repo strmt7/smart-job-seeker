@@ -20,6 +20,7 @@
 //! - Captchas and login walls are reported as walls. Nothing tries to climb
 //!   them.
 
+pub mod capture_session;
 pub mod cdp;
 pub mod rehearsal;
 pub mod rehearsal_capture;

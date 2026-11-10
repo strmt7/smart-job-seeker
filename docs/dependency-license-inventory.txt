@@ -1,7 +1,7 @@
 Rust dependency license inventory
 Scope: cargo metadata --locked --all-features; all resolved target platforms.
-Cargo.lock SHA-256 (LF-normalized): 32a0bab2706579b9711f0cf4a95eec46aa2b1371b2786fca2d158d7fc21db724
-Packages: 362 total; 16 workspace; 346 external.
+Cargo.lock SHA-256 (LF-normalized): 9ff6d5877fc7cbc2755178d3e9d55834c8465783de2d58a8b37dc23e3061c09e
+Packages: 363 total; 16 workspace; 347 external.
 License expressions are preserved verbatim, including OR alternatives and AND obligations.
 This inventory is not the full license text or a declaration that every alternative is permitted.
 Distribution bundles collect dependency license files separately; cargo-deny enforces policy.
@@ -9,7 +9,7 @@ Distribution bundles collect dependency license files separately; cargo-deny enf
 (Apache-2.0 OR MIT) AND BSD-3-Clause (1): encoding_rs@0.8.44
 (MIT OR Apache-2.0) AND Unicode-3.0 (1): unicode-ident@1.0.27
 0BSD OR MIT OR Apache-2.0 (1): adler2@2.0.1
-Apache-2.0 (5): calendrical_calculations@0.2.4, openssl@0.10.82, sync_wrapper@1.0.2, winit@0.30.13, zopfli@0.8.4
+Apache-2.0 (6): calendrical_calculations@0.2.4, openssl@0.10.82, robotstxt@0.3.0, sync_wrapper@1.0.2, winit@0.30.13, zopfli@0.8.4
 Apache-2.0 AND ISC (1): ring@0.17.14
 Apache-2.0 AND MIT (1): dpi@0.1.2
 Apache-2.0 OR BSL-1.0 (1): ryu@1.0.23

@@ -17,6 +17,7 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--engine',type=Path,required=True)
     parser.add_argument('--python',type=Path,default=Path(sys.executable))
+    parser.add_argument('--coordinator',action='store_true',help='Exercise policy/robots collection before offline replay')
     args=parser.parse_args()
     if os.name!='nt' or not args.engine.is_absolute() or not args.python.is_absolute() or not args.python.is_file():parser.error('Windows and explicit absolute engine/interpreter paths required')
     cargo=shutil.which('cargo')
@@ -29,12 +30,15 @@ def main():
     config={'schema':1,'engine_root':str(args.engine),'engine_files':files,'content_root':str(content),'content_files':{'index.html':hashlib.sha256(body).hexdigest()},'entry':'index.html','seconds':120}
     path=folder/'configuration.private.json';path.write_text(json.dumps(config),encoding='utf-8')
     sources=['Cargo.lock','crates/waypoint_net/Cargo.toml','crates/waypoint_net/src/lib.rs','crates/waypoint_net/src/http.rs','crates/waypoint_browser/Cargo.toml','crates/waypoint_browser/src/rehearsal_capture.rs','crates/waypoint_browser/src/lib.rs','crates/waypoint_browser/src/rehearsal.rs','crates/waypoint_browser/src/rehearsal_worker.py','crates/waypoint_browser/src/rehearsal_replay.py','crates/waypoint_browser/tests/capture_replay_live.rs','tools/owned_process.py','tools/qualify_rehearsal.py','tools/qualify_history_ui.py','tools/qualify_capture_replay.py']
+    if args.coordinator:sources.extend(['crates/waypoint_browser/src/capture_session.rs','crates/waypoint_browser/src/capture_session_qualification.rs','crates/waypoint_policy/src/lib.rs','crates/waypoint_policy/data/source_permissions.json'])
     hashes=lambda:{name:sha(REPO/name) for name in sources}
     report={'complete':False,'scope':'fictional response bytes to offline snapshot and contained browser; no public source or employer-form capture','source_sha256':hashes(),'configuration_sha256':sha(path)}
+    report['coordinator']=args.coordinator
     env=os.environ.copy();env.update(WAYPOINT_REHEARSAL_CONFIG=str(path),WAYPOINT_REHEARSAL_CONFIG_SHA256=report['configuration_sha256'],WAYPOINT_REHEARSAL_PYTHON=str(args.python),CARGO_BUILD_JOBS='2')
     memory=RamSamples();memory.thread.start()
     try:
-        log=folder/'native.private.log';report['run']=run([cargo,'test','-p','waypoint_browser','--test','capture_replay_live','--','--ignored','--nocapture','--test-threads=1'],env,log,180)
+        selection=['--lib','capture_session::qualification::coordinator_archive_drives_contained_form'] if args.coordinator else ['--test','capture_replay_live']
+        log=folder/'native.private.log';report['run']=run([cargo,'test','-p','waypoint_browser',*selection,'--','--ignored','--nocapture','--test-threads=1'],env,log,180)
         if report['run']['exit_code']:raise RuntimeError('Capture bridge failed; inspect '+str(log))
         report['tests']=test_denominator(log.read_text(encoding='utf-8'),'rust',1)
         native=folder/'http-captured.private.json'
