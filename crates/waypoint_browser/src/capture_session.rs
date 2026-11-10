@@ -101,6 +101,7 @@ pub struct CaptureReport {
     pub elapsed_ms: u128,
     pub omitted_proposals: usize,
     pub robots: Vec<RobotsRecord>,
+    pub discovery: Option<crate::capture_discovery::DiscoverySummary>,
     pub coverage: &'static str,
     pub server_validation: &'static str,
 }
@@ -153,6 +154,7 @@ pub struct CaptureSession {
     started: Instant,
     cancelled: Arc<AtomicBool>,
     failed: bool,
+    discovery: Option<crate::capture_discovery::DiscoverySummary>,
 }
 
 fn resource_url(raw: &str) -> Result<url::Url, CaptureGap> {
@@ -173,6 +175,142 @@ fn resource_url(raw: &str) -> Result<url::Url, CaptureGap> {
     Ok(url)
 }
 impl CaptureSession {
+    /// Run only on an owned background worker. The template contributes its
+    /// verified private engine; candidate content is never accepted here.
+    #[cfg(windows)]
+    pub fn discover_resources(
+        &mut self,
+        python: &Path,
+        template: crate::rehearsal::RehearsalConfig,
+        rounds: u8,
+        settle_ms: u64,
+    ) -> Result<crate::capture_discovery::DiscoverySummary, String> {
+        if !(250..=3000).contains(&settle_ms) {
+            return Err("Invalid discovery settling budget".into());
+        }
+        self.discover_with_probe(rounds, |snapshot, remaining| {
+            let mut config = template.clone();
+            config.seconds = remaining.clamp(5, 30);
+            crate::capture_discovery::render(python, config, snapshot, settle_ms)
+        })
+    }
+    #[cfg(any(windows, test))]
+    fn discover_with_probe(
+        &mut self,
+        rounds: u8,
+        mut render: impl FnMut(Snapshot, u64) -> Result<crate::capture_discovery::Probe, String>,
+    ) -> Result<crate::capture_discovery::DiscoverySummary, String> {
+        use crate::capture_discovery::{DiscoveryRound, DiscoveryStop, DiscoverySummary};
+        if !(1..=4).contains(&rounds) || self.discovery.is_some() {
+            return Err("Discovery needs one fresh bounded run of one to four rounds".into());
+        }
+        let mut summary = DiscoverySummary {
+            rounds: vec![],
+            stopped: DiscoveryStop::RoundLimit,
+            coverage: "observed requests only; no guarantee of complete page or unseen steps",
+        };
+        if !self.entry_recorded && !matches!(self.capture_entry(), CaptureOutcome::Recorded { .. })
+        {
+            summary.stopped = DiscoveryStop::ReviewRequired;
+        } else {
+            let mut attempted = BTreeSet::new();
+            let mut review_seen = false;
+            for round in 0..rounds {
+                if self.check_time().is_err() {
+                    summary.stopped = DiscoveryStop::CancelledOrExpired;
+                    break;
+                }
+                let mut checkpoint_name = self
+                    .root
+                    .file_name()
+                    .ok_or("Capture directory has no name")?
+                    .to_os_string();
+                checkpoint_name.push(format!("-discovery-{:02}", round + 1));
+                let destination = self
+                    .root
+                    .parent()
+                    .ok_or("Capture directory has no parent")?
+                    .join(checkpoint_name);
+                let checkpoint = self
+                    .builder
+                    .as_ref()
+                    .ok_or("Capture already frozen")?
+                    .discovery_snapshot(&destination);
+                let snapshot = match checkpoint {
+                    Ok(s) => s,
+                    Err(_) => {
+                        self.failed = true;
+                        summary.stopped = DiscoveryStop::CheckpointFailed;
+                        break;
+                    }
+                };
+                let remaining = self
+                    .budget
+                    .seconds
+                    .saturating_sub(self.started.elapsed().as_secs());
+                if remaining < 5 {
+                    summary.stopped = DiscoveryStop::CancelledOrExpired;
+                    break;
+                }
+                // render() must finish verified browser shutdown before returning.
+                // Failure never falls through to a public fetch or unrestricted browser.
+                let probe = match render(snapshot, remaining) {
+                    Ok(p) if p.valid() => p,
+                    _ => {
+                        summary.stopped = DiscoveryStop::BrowserFailed;
+                        break;
+                    }
+                };
+                if self.check_time().is_err() {
+                    summary.stopped = DiscoveryStop::CancelledOrExpired;
+                    break;
+                }
+                let unsupported = probe.unsupported();
+                let mut result = DiscoveryRound {
+                    proposed: probe.urls.len(),
+                    newly_recorded: 0,
+                    review_outcomes: 0,
+                    omitted_requests: probe.omitted_requests,
+                    ineligible_requests: probe.ineligible_requests,
+                    pending_commands: probe.pending_commands,
+                    unsupported_targets: unsupported,
+                    unreplayed_transports: probe.unreplayed_transports,
+                };
+                for url in &probe.urls {
+                    if !attempted.insert(url.clone()) {
+                        continue;
+                    }
+                    let before = self.recorded.len();
+                    if matches!(self.capture(url), CaptureOutcome::NeedsReview { .. }) {
+                        result.review_outcomes += 1;
+                    }
+                    result.newly_recorded += self.recorded.len().saturating_sub(before);
+                }
+                review_seen |= result.review_outcomes > 0
+                    || result.omitted_requests > 0
+                    || result.ineligible_requests > 0
+                    || result.pending_commands > 0
+                    || unsupported > 0
+                    || result.unreplayed_transports > 0;
+                let no_new = result.newly_recorded == 0;
+                summary.rounds.push(result);
+                if probe.urls.is_empty() {
+                    summary.stopped = if review_seen {
+                        DiscoveryStop::ReviewRequired
+                    } else {
+                        DiscoveryStop::NoNewRequests
+                    };
+                    break;
+                }
+                if no_new {
+                    summary.stopped = DiscoveryStop::ReviewRequired;
+                    break;
+                }
+            }
+        }
+        self.discovery = Some(summary.clone());
+        Ok(summary)
+    }
     pub fn start(
         root: &Path,
         entry: &str,
@@ -246,6 +384,7 @@ impl CaptureSession {
             started: Instant::now(),
             cancelled,
             failed: false,
+            discovery: None,
         })
     }
     fn check_time(&self) -> Result<(), CaptureGap> {
@@ -470,6 +609,7 @@ impl CaptureSession {
             elapsed_ms: self.started.elapsed().as_millis(),
             omitted_proposals: self.omitted,
             robots: self.robots_records.clone(),
+            discovery: self.discovery.clone(),
             coverage: "unassessed; missing resources and server-dependent steps require review",
             server_validation: "not_performed",
         }
@@ -995,5 +1135,172 @@ mod tests {
         assert_eq!(h.calls.lock().unwrap().len(), 7);
         assert!(!h.calls.lock().unwrap().iter().any(|u| u.ends_with("/6")));
         assert!(h.session.freeze().is_err());
+    }
+
+    fn probe(urls: Vec<&str>) -> crate::capture_discovery::Probe {
+        serde_json::from_value(
+            serde_json::json!({"schema":1,"mode":"resource_discovery","urls":urls,
+            "omitted_requests":0,"ineligible_requests":0,"pending_commands":0,
+            "unsupported_targets":{},"unreplayed_transports":0,"unmanaged_child_sessions":0}),
+        )
+        .unwrap()
+    }
+    #[test]
+    fn discovery_collects_transitive_requests_then_verifies_without_new_requests() {
+        use crate::capture_discovery::DiscoveryStop;
+        let mut h = harness(
+            vec![
+                ("https://fixture.invalid/robots.txt", robots("")),
+                (ENTRY, html()),
+                (
+                    "https://fixture.invalid/app.js",
+                    response(200, "fixture", "text/javascript"),
+                ),
+                (
+                    "https://fixture.invalid/data",
+                    response(200, "{}", "application/json"),
+                ),
+            ],
+            "user_supplied_url",
+            CaptureBudget::default(),
+        );
+        let mut round = 0;
+        let result = h
+            .session
+            .discover_with_probe(4, |snapshot, _| {
+                assert!(snapshot.root.is_dir());
+                round += 1;
+                Ok(probe(match round {
+                    1 => vec!["https://fixture.invalid/app.js"],
+                    2 => vec!["https://fixture.invalid/data"],
+                    _ => vec![],
+                }))
+            })
+            .unwrap();
+        assert_eq!(result.stopped, DiscoveryStop::NoNewRequests);
+        assert_eq!(result.rounds.len(), 3);
+        assert_eq!(h.calls.lock().unwrap().len(), 4);
+        let frozen = h.session.freeze().unwrap();
+        let actual: BTreeSet<_> = std::fs::read_dir(&frozen.snapshot.root)
+            .unwrap()
+            .map(|p| p.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(actual, frozen.snapshot.files.keys().cloned().collect());
+        assert!(h
+            .folder
+            .path()
+            .join("capture-discovery-03/replay.json")
+            .exists());
+    }
+    #[test]
+    fn discovery_denials_and_browser_failures_never_retry_or_fall_back() {
+        use crate::capture_discovery::DiscoveryStop;
+        let mut h = ready();
+        let mut rounds = 0;
+        let report = h
+            .session
+            .discover_with_probe(4, |_, _| {
+                rounds += 1;
+                Ok(probe(vec!["https://undeclared.invalid/script"]))
+            })
+            .unwrap();
+        assert_eq!(report.stopped, DiscoveryStop::ReviewRequired);
+        assert_eq!(rounds, 1);
+        assert_eq!(h.calls.lock().unwrap().len(), 2);
+        let mut h = ready();
+        let report = h
+            .session
+            .discover_with_probe(4, |_, _| Err("fictional browser failure".into()))
+            .unwrap();
+        assert_eq!(report.stopped, DiscoveryStop::BrowserFailed);
+        assert_eq!(h.calls.lock().unwrap().len(), 2);
+        assert!(h.session.freeze().unwrap().report.discovery.is_some());
+    }
+    #[test]
+    fn round_limit_does_not_claim_the_new_archive_was_fully_observed() {
+        use crate::capture_discovery::DiscoveryStop;
+        let mut h = harness(
+            vec![
+                ("https://fixture.invalid/robots.txt", robots("")),
+                (ENTRY, html()),
+                (
+                    "https://fixture.invalid/a.js",
+                    response(200, "x", "text/javascript"),
+                ),
+            ],
+            "user_supplied_url",
+            CaptureBudget::default(),
+        );
+        let report = h
+            .session
+            .discover_with_probe(1, |_, _| Ok(probe(vec!["https://fixture.invalid/a.js"])))
+            .unwrap();
+        assert_eq!(report.stopped, DiscoveryStop::RoundLimit);
+        assert_eq!(report.rounds[0].newly_recorded, 1);
+        assert!(h
+            .session
+            .discover_with_probe(1, |_, _| Ok(probe(vec![])))
+            .is_err());
+    }
+    #[test]
+    fn discovery_unknown_channels_overflow_and_pending_commands_stay_reviewable() {
+        use crate::capture_discovery::DiscoveryStop;
+        for field in [
+            "omitted_requests",
+            "ineligible_requests",
+            "pending_commands",
+            "unreplayed_transports",
+            "unmanaged_child_sessions",
+        ] {
+            let mut h = ready();
+            let report=h.session.discover_with_probe(2,|_,_| {
+                let mut value=serde_json::to_value(serde_json::json!({"schema":1,"mode":"resource_discovery","urls":[],
+                    "omitted_requests":0,"ineligible_requests":0,"pending_commands":0,
+                    "unsupported_targets":{},"unreplayed_transports":0,"unmanaged_child_sessions":0})).unwrap();
+                value[field]=serde_json::json!(1);Ok(serde_json::from_value(value).unwrap())
+            }).unwrap();
+            assert_eq!(report.stopped, DiscoveryStop::ReviewRequired, "{field}");
+        }
+    }
+    #[test]
+    fn cancellation_after_render_precedes_any_proposed_network_access() {
+        use crate::capture_discovery::DiscoveryStop;
+        let mut h = ready();
+        let cancel = h.session.cancelled.clone();
+        let report = h
+            .session
+            .discover_with_probe(4, |_, _| {
+                cancel.store(true, Ordering::Release);
+                Ok(probe(vec!["https://fixture.invalid/missing"]))
+            })
+            .unwrap();
+        assert_eq!(report.stopped, DiscoveryStop::CancelledOrExpired);
+        assert_eq!(h.calls.lock().unwrap().len(), 2);
+        assert!(h.session.freeze().is_err());
+    }
+    #[test]
+    fn changed_checkpoint_body_prevents_rendering_or_final_activation() {
+        use crate::capture_discovery::DiscoveryStop;
+        let mut h = ready();
+        h.session.capture_entry();
+        std::fs::write(h.session.root.join("index.html"), b"changed").unwrap();
+        let report = h
+            .session
+            .discover_with_probe(2, |_, _| panic!("changed checkpoint was rendered"))
+            .unwrap();
+        assert_eq!(report.stopped, DiscoveryStop::CheckpointFailed);
+        assert!(h.session.freeze().is_err());
+    }
+    #[cfg(windows)]
+    #[test]
+    fn discovery_config_cannot_start_a_candidate_entry_driver() {
+        let config:crate::rehearsal::RehearsalConfig=serde_json::from_value(serde_json::json!({
+            "schema":3,"engine_root":std::env::temp_dir(),"engine_files":{},"content_root":std::env::temp_dir(),
+            "content_files":{},"entry":"index.html","seconds":10,"replay_manifest":"replay.json"})).unwrap();
+        let result =
+            crate::CdpDriver::launch_rehearsal(Path::new("missing-fictional-python"), config);
+        assert!(
+            matches!(result,Err(e) if e.to_string().contains("cannot open a candidate-entry driver"))
+        );
     }
 }

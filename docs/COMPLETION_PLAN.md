@@ -150,8 +150,9 @@ build and configuration.
    a separate public JSON API check. The [public-resource coordinator](PUBLIC_RESOURCE_CAPTURE.md)
    now checks source policy and robots for supplied resources and redirects,
    freezes its transport before offline entry, and has fictional native plus
-   two public-read observations. Automatic resource discovery, browser-request
-   collection, candidate-data provenance, background-task/interface integration,
+   two public-read observations. Bounded [browser-observed discovery](RESOURCE_DISCOVERY.md)
+   now has a separate render-only worker mode and a fictional transitive-resource
+   check. Broader discovery qualification, candidate-data provenance, background-task/interface integration,
    unsupported target/transport lifecycles, server-dependent validation and missing
    steps still need implementation and qualification. No live-form interaction is
    authorized by these partial results.

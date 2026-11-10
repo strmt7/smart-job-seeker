@@ -1,6 +1,8 @@
 //! Build an offline replay archive from already-obtained public resource bytes.
 //! No transport, browser action, permission decision, cookies or live fallback.
 use serde_json::{json, Value};
+#[cfg(any(windows, test))]
+use std::io::Read;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -61,6 +63,44 @@ pub(super) fn write_new(root: &Path, name: &str, bytes: &[u8]) -> Result<String,
     Ok(waypoint_domain::sha256_hex(bytes))
 }
 impl SnapshotBuilder {
+    /// An immutable rendering checkpoint while the anonymous collector remains
+    /// active. Only the render-only worker may consume these checkpoints.
+    #[cfg(any(windows, test))]
+    pub(super) fn discovery_snapshot(&self, destination: &Path) -> Result<Snapshot, String> {
+        if self.failed || !self.files.contains_key("index.html") {
+            return Err("Cannot discover resources from an incomplete entry".into());
+        }
+        fs::create_dir(destination).map_err(|_| "Discovery requires a new checkpoint directory")?;
+        for (name, expected) in &self.files {
+            let source = self.root.join(name);
+            let metadata =
+                fs::symlink_metadata(&source).map_err(|_| "Cannot inspect checkpoint resource")?;
+            if !metadata.file_type().is_file() || metadata.len() > MAX_BODY as u64 {
+                return Err("Checkpoint source is not a bounded regular resource".into());
+            }
+            let mut bytes = Vec::new();
+            fs::File::open(source)
+                .map_err(|_| "Cannot read checkpoint resource")?
+                .take(MAX_BODY as u64 + 1)
+                .read_to_end(&mut bytes)
+                .map_err(|_| "Cannot read checkpoint resource")?;
+            if bytes.len() > MAX_BODY || waypoint_domain::sha256_hex(&bytes) != *expected {
+                return Err("Checkpoint source changed".into());
+            }
+            write_new(destination, name, &bytes)?;
+        }
+        Self {
+            root: destination.to_owned(),
+            entry_url: self.entry_url.clone(),
+            resources: self.resources.clone(),
+            files: self.files.clone(),
+            urls: self.urls.clone(),
+            total: self.total,
+            warnings: self.warnings.clone(),
+            failed: false,
+        }
+        .finish()
+    }
     /// Resolve the initial public redirect chain before recording any resources.
     pub(super) fn retarget_entry(&mut self, entry_url: &str) -> Result<(), String> {
         if self.failed || !self.resources.is_empty() {

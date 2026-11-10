@@ -28,6 +28,14 @@ impl Drop for RecordedHttp {
 #[test]
 #[ignore = "explicit private engine, synthetic HTTP resources and owned memory containment"]
 fn coordinator_archive_drives_contained_form() {
+    run_coordinator(false);
+}
+#[test]
+#[ignore = "explicit private engine, automatic fictional resource discovery and owned memory containment"]
+fn discovery_archives_transitive_resources_before_candidate_entry() {
+    run_coordinator(true);
+}
+fn run_coordinator(discovery: bool) {
     let target =
         std::fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target")).unwrap();
     let path = std::fs::canonicalize(
@@ -44,19 +52,59 @@ fn coordinator_archive_drives_contained_form() {
     let mut config: RehearsalConfig = serde_json::from_slice(&bytes).unwrap();
     let folder = path.parent().unwrap();
     let html="<!doctype html><meta charset=utf-8><title>Fictional coordinated form</title><link rel=stylesheet href=/style.css><h1>Fictional coordinated form</h1><label>Name<input id=name></label><button type=button id=next>Continue</button><section id=questions></section><script src=/app.js></script>";
-    let script="document.getElementById('next').onclick=()=>fetch('/questions').then(r=>r.json()).then(v=>{const label=document.createElement('label');label.textContent=v.label;const input=document.createElement('input');input.id='email';input.type='email';label.append(input);document.getElementById('questions').append(label);});";
+    let script = if discovery {
+        "fetch('/questions').then(r=>r.json()).then(v=>{const label=document.createElement('label');label.textContent=v.label;const input=document.createElement('input');input.id='email';input.type='email';label.append(input);const section=document.getElementById('questions');section.append(label);section.hidden=true;document.getElementById('next').onclick=()=>section.hidden=false;});"
+    } else {
+        "document.getElementById('next').onclick=()=>fetch('/questions').then(r=>r.json()).then(v=>{const label=document.createElement('label');label.textContent=v.label;const input=document.createElement('input');input.id='email';input.type='email';label.append(input);document.getElementById('questions').append(label);});"
+    };
+    let style = if discovery {
+        "@import url('/nested.css'); body{font:18px Arial;margin:30px}"
+    } else {
+        "body{font:18px Arial;margin:30px}label{display:block;margin:16px 0}input{margin-left:16px}"
+    };
     let mut responses = BTreeMap::new();
-    for (url,body,mime,extra) in [
-        ("https://fixture.invalid/robots.txt","User-agent: *\nAllow: /","text/plain",""),
-        ("https://fixture.invalid/form","redirect","text/plain","Location: /flow\r\n"),
-        ("https://fixture.invalid/flow",html,"text/html; charset=utf-8","Set-Cookie: fictional=discarded\r\n"),
-        ("https://fixture.invalid/app.js",script,"text/javascript",""),
-        ("https://fixture.invalid/style.css","body{font:18px Arial;margin:30px}label{display:block;margin:16px 0}input{margin-left:16px}","text/css",""),
-        ("https://fixture.invalid/questions","{\"label\":\"Email\"}","application/json","")
+    for (url, body, mime, extra) in [
+        (
+            "https://fixture.invalid/robots.txt",
+            "User-agent: *\nAllow: /",
+            "text/plain",
+            "",
+        ),
+        (
+            "https://fixture.invalid/form",
+            "redirect",
+            "text/plain",
+            "Location: /flow\r\n",
+        ),
+        (
+            "https://fixture.invalid/flow",
+            html,
+            "text/html; charset=utf-8",
+            "Set-Cookie: fictional=discarded\r\n",
+        ),
+        (
+            "https://fixture.invalid/app.js",
+            script,
+            "text/javascript",
+            "",
+        ),
+        ("https://fixture.invalid/style.css", style, "text/css", ""),
+        (
+            "https://fixture.invalid/nested.css",
+            "label{display:block;margin:16px 0}input{margin-left:16px}",
+            "text/css",
+            "",
+        ),
+        (
+            "https://fixture.invalid/questions",
+            "{\"label\":\"Email\"}",
+            "application/json",
+            "",
+        ),
     ] {
-        let status=if url.ends_with("/form") {302} else {200};
+        let status = if url.ends_with("/form") { 302 } else { 200 };
         let raw=format!("HTTP/1.1 {status} Fixture\r\nContent-Type: {mime}\r\nContent-Length: {}\r\n{extra}\r\n{body}",body.len());
-        responses.insert(url.to_owned(),raw.into_bytes());
+        responses.insert(url.to_owned(), raw.into_bytes());
     }
     let requests = Arc::new(Mutex::new(vec![]));
     let dropped = Arc::new(AtomicBool::new(false));
@@ -81,27 +129,50 @@ fn coordinator_archive_drives_contained_form() {
         capture.capture_entry(),
         CaptureOutcome::Recorded { status: 200, .. }
     ));
-    for url in [
-        "https://fixture.invalid/app.js",
-        "https://fixture.invalid/style.css",
-        "https://fixture.invalid/questions",
-    ] {
-        assert!(matches!(
-            capture.capture(url),
-            CaptureOutcome::Recorded { .. }
-        ));
+    let python = PathBuf::from(std::env::var_os("WAYPOINT_REHEARSAL_PYTHON").unwrap());
+    if discovery {
+        let summary = capture
+            .discover_resources(&python, config.clone(), 4, 1500)
+            .unwrap();
+        assert_eq!(
+            summary.stopped,
+            crate::capture_discovery::DiscoveryStop::NoNewRequests
+        );
+        assert_eq!(summary.rounds.len(), 3);
+        assert_eq!(
+            summary
+                .rounds
+                .iter()
+                .map(|r| r.newly_recorded)
+                .sum::<usize>(),
+            4
+        );
+    } else {
+        for url in [
+            "https://fixture.invalid/app.js",
+            "https://fixture.invalid/style.css",
+            "https://fixture.invalid/questions",
+        ] {
+            assert!(matches!(
+                capture.capture(url),
+                CaptureOutcome::Recorded { .. }
+            ));
+        }
     }
     let frozen = capture.freeze().unwrap();
     assert!(dropped.load(Ordering::Acquire));
-    assert_eq!(requests.lock().unwrap().len(), 6);
-    assert_eq!(frozen.report.recorded_resources, 5);
+    let expected_requests = if discovery { 7 } else { 6 };
+    assert_eq!(requests.lock().unwrap().len(), expected_requests);
+    assert_eq!(
+        frozen.report.recorded_resources,
+        if discovery { 6 } else { 5 }
+    );
     assert_eq!(frozen.report.robots.len(), 1);
     config.schema = 2;
     config.content_root = frozen.snapshot.root;
     config.content_files = frozen.snapshot.files;
     config.entry = frozen.snapshot.entry;
     config.replay_manifest = Some(frozen.snapshot.manifest);
-    let python = PathBuf::from(std::env::var_os("WAYPOINT_REHEARSAL_PYTHON").unwrap());
     let (mut driver, ready) = CdpDriver::launch_rehearsal(&python, config).unwrap();
     assert_eq!(ready.entry_url, "https://fixture.invalid/flow#application");
     driver.open(&ready.entry_url).unwrap();
@@ -137,11 +208,11 @@ fn coordinator_archive_drives_contained_form() {
         .verify_text_value("#email", "fictional@example.invalid")
         .unwrap();
     let replay = driver.rehearsal_replay_report().unwrap();
-    assert_eq!(replay["served"], 4);
+    assert_eq!(replay["served"], if discovery { 5 } else { 4 });
     assert_eq!(replay["cached_non_read_replies"], 0);
     assert_eq!(
         requests.lock().unwrap().len(),
-        6,
+        expected_requests,
         "Collection transport was used after freeze"
     );
     std::fs::write(

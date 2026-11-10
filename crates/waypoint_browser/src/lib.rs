@@ -20,6 +20,7 @@
 //! - Captchas and login walls are reported as walls. Nothing tries to climb
 //!   them.
 
+pub mod capture_discovery;
 pub mod capture_session;
 pub mod cdp;
 pub mod rehearsal;
@@ -1584,6 +1585,11 @@ impl CdpDriver {
         python: &std::path::Path,
         config: rehearsal::RehearsalConfig,
     ) -> Result<(Self, rehearsal::RehearsalReady), DriverError> {
+        if !matches!(config.schema, 1 | 2) {
+            return Err(DriverError(
+                "Resource discovery cannot open a candidate-entry driver".into(),
+            ));
+        }
         let relative_upload_dirs: std::collections::BTreeSet<_> = config
             .content_files
             .keys()

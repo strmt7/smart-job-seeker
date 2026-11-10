@@ -99,10 +99,9 @@ No third-party application implementation was copied.
 
 ## Remaining integration
 
-Automatic resource discovery and recursive browser-request collection are still
-missing. The current API collects explicitly supplied resource URLs; the native
-fixture supplies its known resources. Do not describe this as an autonomous
-whole-site capture. Related worker/transport lifecycles, server-dependent POST
+The subsequent [browser-observed discovery](RESOURCE_DISCOVERY.md) collects
+transitive anonymous GETs through bounded render-only rounds. It has fictional
+native evidence, not a public whole-site qualification. Related worker/transport lifecycles, server-dependent POST
 questions, authenticated pages, content variants and missing resources remain
 explicit gaps. The [isolation qualification gates](ISOLATED_REHEARSAL.md),
 candidate-data provenance checks, bounded background task and interface integration

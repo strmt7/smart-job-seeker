@@ -623,7 +623,7 @@ class Container:
         if not binary.is_file() or not (engine / 'icudtl.dat').is_file():
             raise WorkerError('headless_engine_incomplete')
         content = self.folder / 'content'
-        copy_verified(source_root(config['content_root']), config['content_files'], content, 64 * 1024**2, True, config['schema']==2)
+        copy_verified(source_root(config['content_root']), config['content_files'], content, 64 * 1024**2, True, config['schema'] in (2,3))
         entry = str(relative_path(config['entry']))
         if entry not in config['content_files'] or Path(entry).suffix.lower() not in ('.html', '.htm'):
             raise WorkerError('invalid_snapshot_entry')
@@ -834,10 +834,10 @@ def emit(value):
 def validate_config(config):
     required = {'schema', 'engine_root', 'engine_files', 'content_root', 'content_files', 'entry', 'seconds'}
     if (not isinstance(config, dict) or type(config.get('schema')) is not int
-            or config['schema'] not in (1,2)
-            or set(config) != required | ({'replay_manifest'} if config['schema']==2 else set())):
+            or config['schema'] not in (1,2,3)
+            or set(config) != required | ({'replay_manifest'} if config['schema'] in (2,3) else set())):
         raise WorkerError('invalid_worker_configuration')
-    if config['schema']==2:
+    if config['schema'] in (2,3):
         name=str(relative_path(config['replay_manifest']))
         if not isinstance(config['content_files'], dict) or not name.endswith('.json') or name not in config['content_files']:
             raise WorkerError('invalid_replay_manifest')
@@ -857,7 +857,7 @@ def run():
     archive = broker = None
     try:
         binary, content, sid_text = owner.prepare(config)
-        if config['schema']==2:
+        if config['schema'] in (2,3):
             spec=importlib.util.spec_from_file_location('smart_jobseeker_replay',Path(__file__).with_name('rehearsal_replay.py'))
             module=importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
@@ -881,7 +881,7 @@ def run():
             if len(wire)>MAX_FRAME or os.write(owner.write_fd,wire)!=len(wire):
                 raise WorkerError('protocol_write_failed')
         if archive:
-            broker=module.Broker(archive,send,emit)
+            broker=module.Broker(archive,send,emit,discovery=config['schema']==3)
         host_fd = sys.stdin.fileno()
         host, browser = bytearray(), bytearray()
         deadline = time.monotonic() + config['seconds']

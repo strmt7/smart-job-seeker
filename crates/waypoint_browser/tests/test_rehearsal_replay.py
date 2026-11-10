@@ -177,4 +177,59 @@ class BrokerTests(unittest.TestCase):
         with self.assertRaises(replay.ReplayError):self.broker.browser({'method':'Fetch.requestPaused','sessionId':'unknown','params':{'requestId':'x','request':{}}})
 
 
+class DiscoveryTests(unittest.TestCase):
+    def setUp(self):
+        self.fixture=Fixture();self.sent=[];self.emitted=[]
+        self.broker=replay.Broker(self.fixture.archive(),self.sent.append,self.emitted.append,discovery=True)
+        self.broker.sessions['page']='page'
+    def tearDown(self):self.fixture.close()
+    def frame(self,**request):
+        self.broker.browser({'method':'Fetch.requestPaused','sessionId':'page','params':{'requestId':'r','request':request}})
+        command=self.sent[-1]
+        self.broker.browser({'id':command['id'],'result':{}})
+        return command
+    def report(self):
+        self.assertFalse(self.broker.host({'id':99,'method':'SmartJobseeker.discoveryReport','params':{}}))
+        return self.emitted[-1]['result']
+    def test_only_anonymous_bodyless_missing_gets_become_sorted_proposals(self):
+        for path in ['/z.js','/a.css','/z.js']:
+            command=self.frame(url='https://fixture.invalid'+path,method='GET')
+            self.assertEqual(command['method'],'Fetch.failRequest')
+        report=self.report();self.assertEqual(report['urls'],['https://fixture.invalid/a.css','https://fixture.invalid/z.js'])
+        self.assertEqual(report['blocked'],3);self.assertEqual(report['pending_commands'],0)
+        self.assertNotIn('urls',self.broker.report())
+    def test_authentication_cookies_and_nonread_or_opaque_bodies_are_not_proposed(self):
+        for extra in [{'method':'POST'},{'method':'HEAD'},{'method':'GET','hasPostData':True},
+                      {'method':'GET','postData':'candidate'}, {'method':'GET','headers':{'Authorization':'private'}},
+                      {'method':'GET','headers':{'Cookie':'private'}},{'method':'GET','headers':[]},
+                      {'method':'GET','url':'http://fixture.invalid/x'}]:
+            self.frame(**{'url':'https://fixture.invalid/missing','method':'GET',**extra})
+        report=self.report();self.assertEqual(report['urls'],[]);self.assertEqual(report['ineligible_requests'],8)
+        self.assertNotIn('candidate',json.dumps(report));self.assertNotIn('private',json.dumps(report))
+    def test_candidate_entry_and_protocol_escape_commands_are_refused_before_send(self):
+        commands=[('Input.insertText',{'text':'candidate'}),('Input.dispatchMouseEvent',{}),
+                  ('DOM.setFileInputFiles',{'files':['private.pdf']}),('Runtime.evaluate',{'expression':'document.forms[0].submit()'}),
+                  ('Runtime.callFunctionOn',{}),('Page.setDocumentContent',{}),('Network.setExtraHTTPHeaders',{}),
+                  ('Page.navigate',{'url':'https://fixture.invalid/submit'}),('Target.createTarget',{'url':'https://fixture.invalid/submit'}),
+                  ('Target.createTarget',{'url':'about:blank','browserContextId':'other'})]
+        for method,params in commands:
+            with self.subTest(method=method),self.assertRaisesRegex(replay.ReplayError,'discovery_command_refused'):
+                self.broker.host({'id':1,'method':method,'params':params})
+        self.assertEqual(self.sent,[])
+    def test_navigation_is_bound_to_the_recorded_entry_and_empty_domain_enables(self):
+        for method,params in [('Page.enable',{}),('Network.enable',{}),('Browser.getVersion',{}),
+                              ('Target.createTarget',{'url':'about:blank'}),('Page.navigate',{'url':self.fixture.archive().entry_url})]:
+            self.assertTrue(self.broker.host({'id':1,'method':method,'params':params}))
+        with self.assertRaises(replay.ReplayError):self.broker.host({'id':1,'method':'Page.enable','params':{'unknown':True}})
+    def test_frontier_is_bounded_and_overflow_remains_visible(self):
+        for index in range(132):self.frame(url=f'https://fixture.invalid/{index}',method='GET')
+        report=self.report();self.assertEqual(len(report['urls']),128);self.assertEqual(report['omitted_requests'],4)
+        self.frame(url='https://fixture.invalid/'+'x'*4096,method='GET')
+        self.assertEqual(self.report()['omitted_requests'],5)
+    def test_normal_entry_replay_never_exposes_discovery_urls(self):
+        broker=replay.Broker(self.fixture.archive(),self.sent.append,self.emitted.append)
+        with self.assertRaisesRegex(replay.ReplayError,'not_resource_discovery'):
+            broker.host({'id':1,'method':'SmartJobseeker.discoveryReport','params':{}})
+        self.assertNotIn('urls',broker.report());self.assertEqual(self.emitted,[])
+
 if __name__=='__main__':unittest.main()

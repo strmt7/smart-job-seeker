@@ -205,8 +205,12 @@ class Archive:
 
 class Broker:
     """Services Fetch on the continuously pumped browser pipe, including children."""
-    def __init__(self, archive, send, emit):
+    def __init__(self, archive, send, emit, discovery=False):
+        if type(discovery) is not bool:
+            raise ReplayError('invalid_discovery_mode')
         self.archive, self.send, self.emit = archive, send, emit
+        self.discovery = discovery
+        self.proposals, self.proposal_bytes, self.omitted_proposals, self.ineligible_requests = {}, 0, 0, 0
         self.next_id, self.pending, self.attaching, self.sessions, self.targets = INTERNAL_ID, {}, {}, {}, {}
         self.counts = {'served': 0, 'blocked': 0, 'cached_non_read_replies': 0, 'unreplayed_transports': 0, 'unmanaged_child_sessions':0}
         self.reasons, self.gaps = {}, {}
@@ -229,6 +233,15 @@ class Broker:
     def host(self, message):
         if message['id'] >= INTERNAL_ID or message['method'].startswith('Fetch.') or message['method'] in ('Target.setAutoAttach', 'Target.autoAttachRelated'):
             raise ReplayError('replay_control_override')
+        if self.discovery:
+            self.discovery_command(message)
+        if message['method'] == 'SmartJobseeker.discoveryReport':
+            if not self.discovery:
+                raise ReplayError('not_resource_discovery')
+            self.emit({'id': message['id'], 'result': {**self.report(), 'mode':'resource_discovery',
+                'urls':sorted(self.proposals), 'omitted_requests':self.omitted_proposals,
+                'ineligible_requests':self.ineligible_requests, 'pending_commands':len(self.pending)}})
+            return False
         if message['method'] == 'SmartJobseeker.replayReport':
             self.emit({'id': message['id'], 'result': self.report()})
             return False
@@ -240,6 +253,46 @@ class Broker:
                 raise ReplayError('invalid_replay_target')
             self.attaching[message['id']] = target
         return True
+
+    def discovery_command(self, message):
+        """No candidate entry, arbitrary script, upload, click or live navigation."""
+        method, params = message['method'], message.get('params')
+        if not isinstance(params, dict):
+            raise ReplayError('discovery_command_refused')
+        if method in ('Page.enable', 'Network.enable', 'Browser.getVersion',
+                      'SmartJobseeker.discoveryReport', 'SmartJobseeker.replayReport') and not params:
+            return
+        if method == 'Target.createTarget' and params == {'url':'about:blank'}:
+            return
+        if method in ('Target.activateTarget','Target.attachToTarget'):
+            keys = {'targetId'} | ({'flatten'} if method=='Target.attachToTarget' else set())
+            target=params.get('targetId')
+            if (set(params)==keys and isinstance(target,str) and 0<len(target)<=512
+                    and not any(ord(c)<32 for c in target)
+                    and (method!='Target.attachToTarget' or params['flatten'] is True)):
+                return
+        if method=='Page.navigate' and params=={'url':self.archive.entry_url}:
+            return
+        raise ReplayError('discovery_command_refused')
+
+    def propose(self, request, reason):
+        if reason!='response_not_recorded' or request.get('method')!='GET':
+            self.ineligible_requests += 1
+            return
+        # Never forward request headers, bodies, cookies or authentication.
+        if (request.get('hasPostData') or 'postData' in request or 'postDataEntries' in request
+                or any(str(k).lower() in ('cookie','authorization','proxy-authorization') and v
+                       for k,v in request.get('headers',{}).items())):
+            self.ineligible_requests += 1
+            return
+        url=request_url(request['url'])
+        if url in self.proposals:
+            return
+        if len(url)>4096 or len(self.proposals)>=128 or self.proposal_bytes+len(url.encode('utf-8'))>128*1024:
+            self.omitted_proposals += 1
+            return
+        self.proposals[url]=True
+        self.proposal_bytes+=len(url.encode('utf-8'))
 
     def bind(self, session, kind, original, paused, target):
         if not isinstance(session, str) or not session or len(session) > 512 or any(ord(c)<32 for c in session) or session in self.sessions:
@@ -338,6 +391,8 @@ class Broker:
                 raise ReplayError('invalid_replay_pause')
             result, reason = self.archive.response(request)
             if result is None:
+                if self.discovery:
+                    self.propose(request, reason)
                 self.call('Fetch.failRequest', {'requestId': paused_id, 'errorReason': 'BlockedByClient'}, session, ('reply', session, 'blocked', reason, False))
             else:
                 self.call('Fetch.fulfillRequest', {'requestId': paused_id, **result}, session, ('reply', session, 'served', request.get('method') not in ('GET', 'HEAD'), False))

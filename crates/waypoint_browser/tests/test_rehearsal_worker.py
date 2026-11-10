@@ -55,6 +55,8 @@ class RehearsalProtocolTests(unittest.TestCase):
                         {'replay_manifest':'other.json'}, {'content_files':None}]:
             with self.subTest(changes=changes), self.assertRaises(worker.WorkerError):
                 worker.validate_config({**good,**changes})
+        self.assertEqual(worker.validate_config({**good,'schema':3})['schema'],3)
+        with self.assertRaises(worker.WorkerError):worker.validate_config({**good,'schema':4})
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);source=root/'source';source.mkdir();data=b'fictional response'
             (source/'body.bin').write_bytes(data);files={'body.bin':hashlib.sha256(data).hexdigest()}

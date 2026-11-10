@@ -55,7 +55,7 @@ impl RehearsalReady {
         if self.kind != "ready"
             || !match (&self.replay, self.schema) {
                 (None, 1) => self.entry_url.starts_with("file:///"),
-                (Some(replay), 2) => {
+                (Some(replay), 2 | 3) => {
                     replay.manifest_sha256.len() == 64
                         && replay
                             .manifest_sha256
@@ -190,7 +190,7 @@ mod windows {
                 || !python.is_file()
                 || !matches!(
                     (config.schema, config.replay_manifest.is_some()),
-                    (1, false) | (2, true)
+                    (1, false) | (2 | 3, true)
                 )
                 || !(5..=3600).contains(&config.seconds)
             {
