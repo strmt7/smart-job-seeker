@@ -5,6 +5,10 @@ not enabled in the application interface or qualified for employer applications.
 It does not establish a general no-egress guarantee. Setup failure never selects
 the ordinary browser as a fallback.
 
+The [current lifecycle checkpoint](g1/OFFLINE_REPLAY_LIFECYCLE_2026-11-10.md)
+explicitly separates cross-site renderers and retires closed session mappings.
+The existing browser memory/process caps and pending qualification gates remain.
+
 Schema 2 adds [recorded-response replay](RECORDED_RESPONSE_REPLAY.md) for explicit
 fictional archives, preserving HTTPS origins with no live-fetch fallback. Its
 separate functional check does not qualify remaining network/broker channels or

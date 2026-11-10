@@ -7705,3 +7705,6 @@ mod traversal_tests {
         assert!(control_text);
     }
 }
+
+#[cfg(all(test, windows))]
+mod replay_lifecycle_qualification;

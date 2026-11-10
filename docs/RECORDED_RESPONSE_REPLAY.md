@@ -1,5 +1,11 @@
 # Recorded-response rehearsal
 
+The [2026-11-10 lifecycle checkpoint](g1/OFFLINE_REPLAY_LIFECYCLE_2026-11-10.md)
+adds bounded retirement of detached sessions/aliases and explicit cross-site
+renderer separation. It qualifies 80 native frame replacements while retaining
+the existing entry and containment assertions. Remaining isolation limits below
+still apply; this does not enable real application interaction.
+
 Status: experimental Windows development interface, 2026-11-10. This adds
 bounded response replay to the existing [isolated browser](ISOLATED_REHEARSAL.md).
 It is not enabled in the web interface or qualified for interacting with real

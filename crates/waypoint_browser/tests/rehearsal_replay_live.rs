@@ -46,6 +46,9 @@ fn isolated_replay_preserves_origin_scripts_steps_and_blocks_uncaptured_requests
     let (mut driver, ready) = CdpDriver::launch_rehearsal(&python, config).unwrap();
     ready.validate().unwrap();
     assert!(ready.replay.is_some());
+    let frame_churn = std::env::var("WAYPOINT_REPLAY_FRAME_CHURN").unwrap_or_else(|_| "0".into());
+    assert!(matches!(frame_churn.as_str(), "0" | "1"));
+    let frame_churn = frame_churn == "1";
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let form = driver.open(&ready.entry_url).unwrap();
         assert_eq!(form.origin, "https://fixture.invalid");
@@ -86,6 +89,55 @@ fn isolated_replay_preserves_origin_scripts_steps_and_blocks_uncaptured_requests
         driver
             .verify_local_file("#resume", &ready.content_root.join("fictional.pdf"))
             .unwrap();
+        if frame_churn {
+            driver
+                .execute(&BrowserCommand::Click {
+                    selector: "#start-churn".into(),
+                })
+                .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(60);
+            loop {
+                if driver.verify_text_value("#churn-status", "80").is_ok() {
+                    break;
+                }
+                assert!(Instant::now() < deadline, "Frame cycles did not finish");
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            let lifecycle = driver.rehearsal_replay_report().unwrap();
+            assert!(
+                lifecycle["retired_sessions"].as_u64().unwrap() >= 80,
+                "{lifecycle}"
+            );
+            assert!(
+                lifecycle["active_sessions"].as_u64().unwrap() <= 8,
+                "{lifecycle}"
+            );
+            driver
+                .execute(&BrowserCommand::Click {
+                    selector: "#open-inspected".into(),
+                })
+                .unwrap();
+            wait_value(&mut driver, "#interactive-status", "ready");
+            let inspected = driver.inspect_current().unwrap();
+            assert!(inspected
+                .walls
+                .iter()
+                .any(|wall| wall == waypoint_browser::INACCESSIBLE_FRAME_FORM_REVIEW));
+            assert!(!inspected
+                .schema
+                .fields
+                .iter()
+                .any(|field| field.label.ends_with("Cycle answer")));
+            driver
+                .execute(&BrowserCommand::Click {
+                    selector: "#close-inspected".into(),
+                })
+                .unwrap();
+            wait_value(&mut driver, "#interactive-status", "removed");
+            driver
+                .verify_text_value("#email", "fictional@example.invalid")
+                .unwrap();
+        }
         let refusal = driver
             .execute(&BrowserCommand::Fill {
                 selector: "#sideeffect".into(),
@@ -137,5 +189,5 @@ fn isolated_replay_preserves_origin_scripts_steps_and_blocks_uncaptured_requests
         .join(&ready.profile_name);
     driver.execute(&BrowserCommand::Close).unwrap();
     assert!(!profile.join("AC").exists());
-    std::fs::write(artifact.join("native.private.json"),serde_json::to_vec_pretty(&serde_json::json!({"complete":true,"scope":"fictional recorded-response replay; no live employer interaction or general no-egress qualification","report":report,"profile_removed":true})).unwrap()).unwrap();
+    std::fs::write(artifact.join("native.private.json"),serde_json::to_vec_pretty(&serde_json::json!({"complete":true,"scope":"fictional recorded-response replay; no live employer interaction or general no-egress qualification","report":report,"frame_churn_cycles":if frame_churn {80} else {0},"profile_removed":true})).unwrap()).unwrap();
 }

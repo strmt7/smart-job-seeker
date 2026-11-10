@@ -9,6 +9,15 @@ scope.
 
 ## Current results
 
+The latest local [offline lifecycle check](g1/OFFLINE_REPLAY_LIFECYCLE_2026-11-10.md)
+fixes retained closed sessions that exhausted the live-session ceiling. Native
+replay completed 80 cross-site target replacements and continued the existing
+entry/refusal checks; portable late-reply/alias cases and native containment and
+recovery checks pass. This advances session reliability without enabling real
+form entry or proving the remaining no-send boundary. The pushed `45a53361`
+checkpoint's CI/coverage/CodeQL workflows passed, separately from these later
+local changes.
+
 The latest [owned local-model qualification](OWNED_ANSWER_QUALIFICATION.md)
 exposed and corrected a concrete factual-revision defect on the selected 12B
 model. The same three fictional criteria pass after bounded correction; this

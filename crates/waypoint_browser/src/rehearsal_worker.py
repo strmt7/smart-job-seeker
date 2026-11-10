@@ -694,6 +694,7 @@ class Container:
             startup.startup.stdin, startup.startup.stdout, startup.startup.stderr = handles
             startup.attributes = ct.cast(attributes, P)
             args = [str(binary), '--headless=new', '--no-sandbox', '--no-first-run',
+                    '--site-per-process',
                     '--enable-logging=stderr',
                     '--disable-gpu', '--disable-background-networking', '--disable-extensions',
                     '--disable-sync', '--no-default-browser-check', '--window-size=1280,900',

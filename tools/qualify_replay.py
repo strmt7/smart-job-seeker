@@ -18,6 +18,8 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--engine',required=True,type=Path)
     parser.add_argument('--python',type=Path,default=Path(sys.executable))
+    parser.add_argument('--frame-churn',action='store_true',help='Replace 80 cross-site recorded frames before continuing the original fixture')
+    parser.add_argument('--alias-lifecycle',action='store_true',help='Also verify physical alias closure and fresh attachment on a live target')
     args=parser.parse_args()
     if os.name!='nt' or not args.engine.is_absolute() or not args.python.is_absolute():
         parser.error('Windows and explicit absolute runtime paths required')
@@ -27,6 +29,8 @@ def main():
     resources=[]
     def add(url,name,body,mime,method='GET',request=b''):
         data=body.encode() if isinstance(body,str) else body
+        if args.frame_churn and name=='index.html':
+            data += b'<label>Frame cycles<input id="churn-status" value="0"></label><button id="start-churn" type="button">Start frame cycles</button><label>Interactive frame status<input id="interactive-status" value="idle"></label><button id="open-inspected" type="button">Open interactive frame</button><button id="close-inspected" type="button">Close interactive frame</button><script>(()=>{const status=document.getElementById(\'churn-status\'),button=document.getElementById(\'start-churn\');let frame=null,count=0;const spawn=()=>{frame=document.createElement(\'iframe\');frame.src=\'https://steps.example.invalid/frame\';document.body.append(frame);};window.addEventListener(\'message\',event=>{if(event.origin!==\'https://steps.example.invalid\'||event.source!==frame?.contentWindow||event.data!==\'frame-cycle-ready\')return;frame.remove();frame=null;status.value=String(++count);if(count<80)setTimeout(spawn,15);});button.addEventListener(\'click\',()=>{button.disabled=true;spawn();});let inspected=null;document.getElementById(\'open-inspected\').addEventListener(\'click\',()=>{inspected=document.createElement(\'iframe\');inspected.src=\'https://steps.example.invalid/interactive\';document.body.append(inspected);});window.addEventListener(\'message\',event=>{if(event.origin===\'https://steps.example.invalid\'&&event.source===inspected?.contentWindow&&event.data===\'interactive-frame-ready\')document.getElementById(\'interactive-status\').value=\'ready\';});document.getElementById(\'close-inspected\').addEventListener(\'click\',()=>{inspected?.remove();inspected=null;document.getElementById(\'interactive-status\').value=\'removed\';});})();</script>'
         (content/name).write_bytes(data)
         resources.append({'url':url,'method':method,'request_body_sha256':hashlib.sha256(request).hexdigest(),
                           'status':200,'headers':[{'name':'Content-Type','value':mime}],
@@ -39,6 +43,10 @@ def main():
     add('https://child.fixture.invalid/frame','frame.bin','<!doctype html><p>Fictional recorded frame</p><script>parent.postMessage("frame-ready","https://fixture.invalid");</script>','text/html')
     add('https://fixture.invalid/worker.js','worker.bin',"fetch('/worker-data').then(r=>r.json()).then(v=>postMessage(v.value)).catch(()=>postMessage('unavailable'));",'text/javascript')
     add('https://fixture.invalid/worker-data','worker-data.bin','{"value":"recorded-worker"}','application/json')
+    if args.frame_churn:
+        add('https://steps.example.invalid/frame','frame-cycle.bin','<!doctype html><title>Fictional cycle frame</title><script>parent.postMessage("frame-cycle-ready","https://fixture.invalid")</script>','text/html')
+    if args.frame_churn:
+        add('https://steps.example.invalid/interactive','interactive-frame.bin','<!doctype html><label>Cycle answer<input id="cycle-answer"></label><script>parent.postMessage("interactive-frame-ready","https://fixture.invalid")</script>','text/html')
     (content/'fictional.pdf').write_bytes(fictional_pdf())
     manifest={'schema':1,'body_representation':'decoded_http','entry_url':'https://fixture.invalid/form#application','resources':resources}
     (content/'replay.json').write_text(json.dumps(manifest),encoding='utf-8')
@@ -46,10 +54,10 @@ def main():
             'content_files':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in content.iterdir()},
             'entry':'index.html','replay_manifest':'replay.json','seconds':120}
     path=folder/'configuration.private.json';path.write_text(json.dumps(config),encoding='utf-8')
-    sources=[REPO/p for p in ['crates/waypoint_browser/src/lib.rs','crates/waypoint_browser/src/rehearsal.rs','crates/waypoint_browser/src/rehearsal_worker.py','crates/waypoint_browser/src/rehearsal_replay.py','crates/waypoint_browser/tests/rehearsal_replay_live.rs','tools/owned_process.py','tools/qualify_rehearsal.py','tools/qualify_history_ui.py','tools/qualify_replay.py']]
+    sources=[REPO/p for p in ['crates/waypoint_browser/src/lib.rs','crates/waypoint_browser/src/rehearsal.rs','crates/waypoint_browser/src/rehearsal_worker.py','crates/waypoint_browser/src/rehearsal_replay.py','crates/waypoint_browser/tests/rehearsal_replay_live.rs','tools/owned_process.py','tools/qualify_rehearsal.py','tools/qualify_history_ui.py','tools/qualify_replay.py','crates/waypoint_browser/src/replay_lifecycle_qualification.rs']]
     def hashes():return {str(p.relative_to(REPO)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sources}
-    report={'complete':False,'sources':hashes(),'config_sha256':hashlib.sha256(path.read_bytes()).hexdigest(),'scope':'fictional HTTPS-origin recorded responses only; no general network isolation claim'}
-    environment=os.environ.copy();environment.update(WAYPOINT_REHEARSAL_CONFIG=str(path),WAYPOINT_REHEARSAL_CONFIG_SHA256=report['config_sha256'],WAYPOINT_REHEARSAL_PYTHON=str(args.python),CARGO_BUILD_JOBS='2')
+    report={'complete':False,'frame_churn':args.frame_churn,'alias_lifecycle':args.alias_lifecycle,'sources':hashes(),'config_sha256':hashlib.sha256(path.read_bytes()).hexdigest(),'scope':'fictional HTTPS-origin recorded responses only; no general network isolation claim'}
+    environment=os.environ.copy();environment.update(WAYPOINT_REHEARSAL_CONFIG=str(path),WAYPOINT_REHEARSAL_CONFIG_SHA256=report['config_sha256'],WAYPOINT_REHEARSAL_PYTHON=str(args.python),WAYPOINT_REPLAY_FRAME_CHURN='1' if args.frame_churn else '0',CARGO_BUILD_JOBS='2')
     memory=RamSamples();memory.thread.start()
     try:
         log=folder/'native.private.log'
@@ -62,6 +70,15 @@ def main():
         if inventory(args.engine)!=files:raise RuntimeError('Source engine changed during qualification')
         report['source_engine_unchanged']=True
         if hashes()!=report['sources']:raise RuntimeError('Replay source changed during qualification')
+        if args.alias_lifecycle:
+            alias_log=folder/'alias-lifecycle.private.log'
+            report['alias_run']=run([shutil.which('cargo'),'test','-p','waypoint_browser','--lib','replay_lifecycle_qualification::closed_interceptor_releases_aliases_before_reattachment','--','--ignored','--nocapture','--test-threads=1'],environment,alias_log,180)
+            if report['alias_run']['exit_code']:raise RuntimeError('Alias lifecycle failed; inspect '+str(alias_log))
+            report['alias_tests']=test_denominator(alias_log.read_text(encoding='utf-8'),'rust',1)
+            alias=folder/'alias-lifecycle.private.json'
+            if json.loads(alias.read_text())['complete'] is not True:raise RuntimeError('Missing alias lifecycle completion')
+            report['alias_native_sha256']=hashlib.sha256(alias.read_bytes()).hexdigest()
+            if hashes()!=report['sources']:raise RuntimeError('Replay source changed during alias qualification')
         report['complete']=True
     finally:
         report['memory']=memory.finish();(folder/'result.private.json').write_text(json.dumps(report,indent=2),encoding='utf-8');print('Private replay qualification:',folder)

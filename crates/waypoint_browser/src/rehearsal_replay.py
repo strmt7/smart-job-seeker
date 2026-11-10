@@ -14,6 +14,8 @@ from urllib.parse import urlsplit, urlunsplit
 MAX_BODY = 4 * 1024**2
 MAX_TOTAL = 64 * 1024**2
 INTERNAL_ID = 1_000_000_000
+MAX_RETIRED_SESSIONS = 4096
+MAX_RETIRED_REPLIES = 512
 
 
 class ReplayError(ValueError):
@@ -301,12 +303,18 @@ class Broker:
         self.discovery = discovery
         self.proposals, self.proposal_bytes, self.omitted_proposals, self.ineligible_requests = {}, 0, 0, 0
         self.next_id, self.pending, self.attaching, self.sessions, self.targets = INTERNAL_ID, {}, {}, {}, {}
+        self.session_targets, self.session_parents = {}, {}
+        self.retired_sessions, self.retired_replies = set(), set()
         self.counts = {'served': 0, 'blocked': 0, 'cached_non_read_replies': 0, 'unreplayed_transports': 0, 'unmanaged_child_sessions':0}
+        self.counts.update(discarded_replies=0, discarded_events=0, closed_aliases=0)
         self.reasons, self.gaps = {}, {}
         self.outline_requested, self.outline = False, None
 
     def report(self):
         return {'schema': 1, 'mode': 'offline_response_replay', **self.counts,
+                'active_sessions':len(self.sessions), 'active_targets':len(self.targets),
+                'retired_sessions':len(self.retired_sessions), 'retired_commands':len(self.retired_replies),
+                'pending_detachments':sum(action[0]=='detach' for action in self.pending.values()),
                 'blocked_reasons': dict(self.reasons), 'unsupported_targets': dict(self.gaps),
                 'server_validation': 'not_performed', 'external_delivery': 'not_performed_by_replay'}
 
@@ -323,6 +331,9 @@ class Broker:
     def host(self, message):
         if message['id'] >= INTERNAL_ID or message['method'].startswith('Fetch.') or message['method'] in ('Target.setAutoAttach', 'Target.autoAttachRelated'):
             raise ReplayError('replay_control_override')
+        if isinstance(message.get('sessionId'), str) and message['sessionId'] in self.retired_sessions:
+            self.emit(self.stale_reply(message))
+            return False
         if self.discovery:
             self.discovery_command(message)
         if message['method'] == 'SmartJobseeker.publicFormOutline':
@@ -351,8 +362,65 @@ class Broker:
             target=message.get('params',{}).get('targetId')
             if not isinstance(target,str) or not target or len(target)>512 or message['id'] in self.attaching:
                 raise ReplayError('invalid_replay_target')
-            self.attaching[message['id']] = target
+            self.attaching[message['id']] = (target, message.get('sessionId'))
         return True
+
+    @staticmethod
+    def stale_reply(message):
+        reply = {'id':message['id'], 'error':{'code':-32000,'message':'Replay session detached; inspect the current page again'}}
+        if message.get('sessionId'):
+            reply['sessionId'] = message['sessionId']
+        return reply
+
+    def retire(self, session):
+        """Invalidate this interceptor's aliases/descendants before releasing state.
+
+        Old acknowledgements are consumed separately, never counted as service or
+        used to resume a newly attached target. No request gains a live fallback.
+        """
+        removed = {session}
+        while True:
+            previous = len(removed)
+            removed.update(s for s, parent in self.session_parents.items() if parent in removed)
+            primary_targets = {self.session_targets[s] for s in removed
+                               if self.targets.get(self.session_targets[s],{}).get('session') == s}
+            removed.update(s for s, target in self.session_targets.items() if target in primary_targets)
+            if len(removed) == previous:
+                break
+        commands = {key:action for key,action in self.pending.items() if action[1] in removed}
+        if (len(self.retired_sessions) + len(removed) > MAX_RETIRED_SESSIONS
+                or len(self.retired_replies) + len(commands) > MAX_RETIRED_REPLIES):
+            raise ReplayError('replay_lifecycle_budget_exceeded')
+        self.retired_sessions.update(removed)
+        self.retired_replies.update(commands)
+        for key, action in commands.items():
+            del self.pending[key]
+            name, scoped, _, original, _ = action
+            if name == 'outline':
+                self.outline = {**public_form_outline(None),'reason':'browser_target_detached'}
+                self.emit({'id':original,'sessionId':scoped,'result':self.outline})
+            elif name in ('fetch','auto','resume') and isinstance(original,dict) and 'id' in original:
+                self.emit(self.stale_reply(original))
+        for target, state in list(self.targets.items()):
+            kept = []
+            for reply in state['aliases']:
+                if reply['result']['sessionId'] in removed:
+                    self.emit(self.stale_reply(reply))
+                else:
+                    kept.append(reply)
+            state['aliases'] = kept
+            if state['session'] in removed:
+                del self.targets[target]
+        for scoped in removed:
+            del self.sessions[scoped]
+            del self.session_targets[scoped]
+            del self.session_parents[scoped]
+        # Losing an interceptor need not destroy its underlying target. Close
+        # invalidated aliases/descendants too, so fresh attachment cannot leave
+        # real browser sessions resident behind retired bookkeeping entries.
+        for scoped in sorted(removed - {session}):
+            self.call('Target.detachFromTarget', {'sessionId':scoped}, None,
+                      ('detach', None, None, None, False))
 
     def discovery_command(self, message):
         """No candidate entry, arbitrary script, upload, click or live navigation."""
@@ -395,14 +463,17 @@ class Broker:
         self.proposals[url]=True
         self.proposal_bytes+=len(url.encode('utf-8'))
 
-    def bind(self, session, kind, original, paused, target):
-        if not isinstance(session, str) or not session or len(session) > 512 or any(ord(c)<32 for c in session) or session in self.sessions:
+    def bind(self, session, kind, original, paused, target, parent=None):
+        if not isinstance(session, str) or not session or len(session) > 512 or any(ord(c)<32 for c in session) or session in self.sessions or session in self.retired_sessions:
             raise ReplayError('invalid_replay_session')
         if len(self.sessions) >= 64:
             raise ReplayError('replay_target_budget_exceeded')
-        self.sessions[session] = kind
         if not isinstance(target,str) or not target or len(target)>512:
             raise ReplayError('invalid_replay_target')
+        if parent is not None and parent not in self.sessions:
+            raise ReplayError('unknown_replay_parent')
+        self.sessions[session] = kind
+        self.session_targets[session], self.session_parents[session] = target, parent
         if target in self.targets:
             primary=self.targets[target]
             if paused:
@@ -443,10 +514,22 @@ class Broker:
         if request_id is not None and type(request_id) is not int:
             raise ReplayError('invalid_replay_message')
         if type(request_id) is int and request_id >= INTERNAL_ID:
+            if request_id in self.retired_replies:
+                self.retired_replies.remove(request_id)
+                self.counts['discarded_replies'] += 1
+                return False
             action = self.pending.pop(request_id, None)
             if action is None:
                 raise ReplayError('unexpected_replay_reply')
             name, session, kind, original, paused = action
+            if name == 'detach':
+                error = message.get('error')
+                if error is not None and not (isinstance(error,dict)
+                        and error.get('code') in (-32000,-32602)
+                        and error.get('message') == 'No session with given id'):
+                    raise ReplayError('replay_alias_cleanup_failed')
+                self.counts['closed_aliases'] += 1
+                return False
             if name == 'outline':
                 self.outline = public_form_outline(None if 'error' in message else message.get('result'))
                 if 'error' in message:
@@ -475,11 +558,32 @@ class Broker:
                 self.finish(session,original)
             return False
         if request_id in self.attaching:
-            target=self.attaching.pop(request_id)
+            target, parent=self.attaching.pop(request_id)
+            if parent in self.retired_sessions:
+                self.emit(self.stale_reply(message))
+                return False
             if 'error' not in message:
-                self.bind(message.get('result', {}).get('sessionId'), 'page', message, False,target)
+                self.bind(message.get('result', {}).get('sessionId'), 'page', message, False,target,parent)
                 return False
         method = message.get('method')
+        if method == 'Target.detachedFromTarget':
+            params = message.get('params',{})
+            detached = params.get('sessionId') if isinstance(params,dict) else None
+            if not isinstance(detached,str) or not detached or len(detached)>512 or any(ord(c)<32 for c in detached):
+                raise ReplayError('invalid_replay_detachment')
+            if detached in self.sessions:
+                self.retire(detached)
+                return True
+            if detached in self.retired_sessions:
+                self.counts['discarded_events'] += 1
+                return False
+        scoped = message.get('sessionId')
+        if isinstance(scoped,str) and scoped in self.retired_sessions:
+            if request_id is not None:
+                self.emit(self.stale_reply(message))
+            else:
+                self.counts['discarded_events'] += 1
+            return False
         if self.discovery and isinstance(method, str) and method.startswith('Accessibility.'):
             return False  # Raw accessibility events may contain control values.
         params = message.get('params', {})
@@ -487,7 +591,7 @@ class Broker:
             kind = params.get('targetInfo', {}).get('type')
             if kind not in ('page', 'iframe', 'worker', 'service_worker', 'shared_worker'):
                 raise ReplayError('unsupported_replay_target')
-            self.bind(params.get('sessionId'), kind, message, True,params.get('targetInfo',{}).get('targetId'))
+            self.bind(params.get('sessionId'), kind, message, True,params.get('targetInfo',{}).get('targetId'),message.get('sessionId'))
             return False
         if method in ('Network.webSocketCreated', 'Network.webTransportCreated'):
             self.counts['unreplayed_transports'] += 1

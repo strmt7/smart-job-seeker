@@ -167,6 +167,145 @@ class BrokerTests(unittest.TestCase):
         self.bind();event={'method':'Target.attachedToTarget','params':{'sessionId':'worker','waitingForDebugger':True,'targetInfo':{'type':'worker','targetId':'worker-target'}}}
         self.broker.browser(event);self.assertEqual(self.sent[-1]['method'],'Target.setAutoAttach');self.ack('unsupported target');self.ack()
         report=self.broker.report();self.assertEqual(report['unsupported_targets'],{'worker':1});self.assertEqual(report['unmanaged_child_sessions'],1)
+
+    def test_replaced_frame_churn_reuses_live_session_budget(self):
+        self.bind()
+        for index in range(80):
+            session='frame-'+str(index)
+            event={'method':'Target.attachedToTarget','sessionId':'page','params':{'sessionId':session,'waitingForDebugger':True,'targetInfo':{'type':'iframe','targetId':'target-'+str(index)}}}
+            self.broker.browser(event);self.ack();self.ack();self.ack()
+            self.assertTrue(self.broker.browser({'method':'Target.detachedFromTarget','sessionId':'page','params':{'sessionId':session}}))
+        self.assertEqual(set(self.broker.sessions),{'page'})
+        self.assertEqual(len(self.broker.targets),1)
+
+    def test_detach_during_initialization_fails_waiters_and_consumes_late_ack(self):
+        self.broker.host({'id':1,'method':'Target.attachToTarget','params':{'targetId':'root'}})
+        self.broker.browser({'id':1,'result':{'sessionId':'page'}})
+        pending=self.sent[-1]
+        self.broker.host({'id':2,'method':'Target.attachToTarget','params':{'targetId':'root'}})
+        self.broker.browser({'id':2,'result':{'sessionId':'alias'}})
+        self.broker.browser({'method':'Target.detachedFromTarget','params':{'sessionId':'page'}})
+        self.assertEqual({r['id'] for r in self.emitted},{1,2})
+        self.assertTrue(all('error' in r and 'result' not in r for r in self.emitted))
+        self.assertFalse(self.broker.browser({'id':pending['id'],'result':{}}))
+        self.assertTrue(all(c['method']!='Runtime.runIfWaitingForDebugger' for c in self.sent),'detached target must not be resumed')
+        cleanup=self.sent[-1];self.assertEqual(cleanup['method'],'Target.detachFromTarget');self.ack()
+        self.assertEqual(self.broker.report()['closed_aliases'],1)
+        self.assertEqual(self.broker.report()['discarded_replies'],1)
+        self.assertEqual(self.broker.sessions,{})
+        self.assertFalse(self.broker.host({'id':3,'method':'Runtime.evaluate','sessionId':'alias','params':{}}))
+        self.assertIn('error',self.emitted[-1]);self.assertEqual(self.sent[-1],cleanup)
+
+    def test_alias_detachment_preserves_the_primary_interceptor(self):
+        self.bind()
+        self.broker.host({'id':2,'method':'Target.attachToTarget','params':{'targetId':'root'}})
+        self.broker.browser({'id':2,'result':{'sessionId':'alias'}})
+        self.broker.browser({'method':'Target.detachedFromTarget','params':{'sessionId':'alias'}})
+        self.assertEqual(set(self.broker.sessions),{'page'})
+        self.broker.browser({'method':'Fetch.requestPaused','sessionId':'page','params':{'requestId':'r','request':{'url':'https://fixture.invalid/form','method':'GET'}}})
+        self.assertEqual(self.sent[-1]['method'],'Fetch.fulfillRequest');self.ack()
+        self.assertEqual(self.broker.report()['served'],1)
+
+    def test_parent_detachment_retires_nested_targets_and_their_aliases(self):
+        self.bind()
+        for session,parent in [('child','page'),('nested','child')]:
+            self.broker.browser({'method':'Target.attachedToTarget','sessionId':parent,'params':{'sessionId':session,'waitingForDebugger':True,'targetInfo':{'type':'iframe','targetId':session+'-target'}}})
+            self.ack();self.ack();self.ack()
+        self.broker.host({'id':2,'method':'Target.attachToTarget','params':{'targetId':'nested-target'}})
+        self.broker.browser({'id':2,'result':{'sessionId':'alias'}})
+        self.broker.browser({'method':'Target.detachedFromTarget','sessionId':'page','params':{'sessionId':'child'}})
+        self.assertEqual(set(self.broker.sessions),{'page'})
+        self.assertEqual(set(self.broker.session_targets),{'page'})
+        self.assertEqual(set(self.broker.session_parents),{'page'})
+        self.assertEqual(len(self.broker.targets),1)
+        self.assertFalse(self.broker.browser({'method':'Target.detachedFromTarget','params':{'sessionId':'nested'}}))
+        self.assertFalse(self.broker.browser({'id':7,'sessionId':'alias','result':{'private':'fictional private value'}}))
+        self.assertNotIn('fictional private value',json.dumps(self.emitted))
+        self.assertIn('error',self.emitted[-1])
+
+    def test_detached_response_ack_does_not_count_as_success(self):
+        self.bind()
+        self.broker.browser({'method':'Fetch.requestPaused','sessionId':'page','params':{'requestId':'r','request':{'url':'https://fixture.invalid/form','method':'GET'}}})
+        pending=self.sent[-1]
+        self.broker.browser({'method':'Target.detachedFromTarget','params':{'sessionId':'page'}})
+        self.broker.browser({'id':pending['id'],'result':{}})
+        self.assertEqual(self.broker.report()['served'],0)
+        self.assertEqual(self.broker.report()['retired_commands'],0)
+        self.assertEqual(self.broker.report()['discarded_replies'],1)
+        self.assertFalse(self.broker.browser({'method':'Fetch.requestPaused','sessionId':'page','params':{'private':'do not emit'}}))
+        self.assertNotIn('do not emit',json.dumps(self.emitted))
+
+    def test_detached_outline_returns_unknown_once_and_discards_late_values(self):
+        self.bind();self.broker.discovery=True
+        self.broker.host({'id':8,'method':'SmartJobseeker.publicFormOutline','sessionId':'page','params':{}})
+        pending=self.sent[-1]
+        self.broker.browser({'method':'Target.detachedFromTarget','params':{'sessionId':'page'}})
+        replies=[r for r in self.emitted if r.get('id')==8]
+        self.assertEqual(len(replies),1)
+        self.assertEqual(replies[0]['result']['status'],'unavailable')
+        self.assertEqual(replies[0]['result']['reason'],'browser_target_detached')
+        self.broker.browser({'id':pending['id'],'result':{'nodes':[{'private':'fictional private value'}]}})
+        self.assertEqual(len([r for r in self.emitted if r.get('id')==8]),1)
+        self.assertNotIn('fictional private value',json.dumps(self.emitted))
+
+    def test_lifecycle_history_is_bounded_and_retired_ids_cannot_be_rebound(self):
+        self.bind();self.broker.browser({'method':'Target.detachedFromTarget','params':{'sessionId':'page'}})
+        with self.assertRaisesRegex(replay.ReplayError,'invalid_replay_session'):
+            self.broker.bind('page','page',None,False,'new-target')
+        self.broker.bind('new-page','page',None,False,'new-target');self.ack();self.ack()
+        with patch.object(replay,'MAX_RETIRED_SESSIONS',1), self.assertRaisesRegex(replay.ReplayError,'lifecycle_budget'):
+            self.broker.browser({'method':'Target.detachedFromTarget','params':{'sessionId':'new-page'}})
+        self.assertIn('new-page',self.broker.sessions)
+        self.broker.browser({'method':'Fetch.requestPaused','sessionId':'new-page','params':{'requestId':'r','request':{'url':'https://fixture.invalid/form','method':'GET'}}})
+        with patch.object(replay,'MAX_RETIRED_REPLIES',0), self.assertRaisesRegex(replay.ReplayError,'lifecycle_budget'):
+            self.broker.browser({'method':'Target.detachedFromTarget','params':{'sessionId':'new-page'}})
+
+    def test_reattach_uses_a_fresh_interceptor_before_releasing_the_new_session(self):
+        self.broker.host({'id':1,'method':'Target.attachToTarget','params':{'targetId':'root'}})
+        self.broker.browser({'id':1,'result':{'sessionId':'old'}})
+        old=self.sent[-1]
+        self.broker.browser({'method':'Target.detachedFromTarget','params':{'sessionId':'old'}})
+        self.broker.host({'id':2,'method':'Target.attachToTarget','params':{'targetId':'root'}})
+        reply={'id':2,'result':{'sessionId':'new'}}
+        self.broker.browser(reply);fresh=self.sent[-1]
+        self.assertEqual(fresh['method'],'Fetch.enable');self.assertEqual(fresh['sessionId'],'new')
+        self.assertNotIn(reply,self.emitted)
+        self.broker.browser({'id':old['id'],'error':{'message':'old target closed'}})
+        self.assertEqual(self.sent[-1],fresh);self.assertNotIn(reply,self.emitted)
+        self.ack();self.ack();self.assertIn(reply,self.emitted)
+        self.assertEqual(set(self.broker.sessions),{'new'})
+
+    def test_pending_parent_attach_cannot_reintroduce_a_detached_scope(self):
+        self.bind()
+        self.broker.host({'id':2,'method':'Target.attachToTarget','sessionId':'page','params':{'targetId':'nested'}})
+        self.broker.browser({'method':'Target.detachedFromTarget','params':{'sessionId':'page'}})
+        reply={'id':2,'result':{'sessionId':'late'}}
+        self.assertFalse(self.broker.browser(reply))
+        self.assertNotIn(reply,self.emitted)
+        self.assertEqual(self.broker.sessions,{})
+        self.assertEqual(self.broker.attaching,{})
+        self.assertIn('error',self.emitted[-1])
+
+    def test_already_closed_alias_is_idempotent_but_unknown_cleanup_errors_fail(self):
+        self.bind()
+        self.broker.host({'id':2,'method':'Target.attachToTarget','params':{'targetId':'root'}})
+        self.broker.browser({'id':2,'result':{'sessionId':'alias'}})
+        self.broker.browser({'method':'Target.detachedFromTarget','params':{'sessionId':'page'}})
+        command=self.sent[-1]
+        self.assertEqual(command['method'],'Target.detachFromTarget')
+        self.broker.browser({'id':command['id'],'error':{'code':-32000,'message':'No session with given id'}})
+        self.assertEqual(self.broker.report()['closed_aliases'],1)
+        self.assertEqual(self.broker.report()['pending_detachments'],0)
+        self.broker.bind('other','page',None,False,'other-target');self.ack();self.ack()
+        self.broker.host({'id':3,'method':'Target.attachToTarget','params':{'targetId':'other-target'}})
+        self.broker.browser({'id':3,'result':{'sessionId':'other-alias'}})
+        self.broker.browser({'method':'Target.detachedFromTarget','params':{'sessionId':'other'}})
+        command=self.sent[-1]
+        with self.assertRaisesRegex(replay.ReplayError,'alias_cleanup_failed'):
+            self.broker.browser({'id':command['id'],'error':{'code':-32000,'message':'different failure'}})
+        self.assertEqual(self.broker.report()['closed_aliases'],1)
+
+
     def test_interception_error_override_duplicate_ids_and_unknown_sessions_fail(self):
         for method in ['Fetch.disable','Fetch.continueRequest','Fetch.enable','Target.setAutoAttach']:
             with self.assertRaises(replay.ReplayError):self.broker.host({'id':1,'method':method})
