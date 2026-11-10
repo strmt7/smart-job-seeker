@@ -3,8 +3,9 @@
 Checkpoint: 2026-11-10. The public-resource coordinator can now discover anonymous
 GET resources requested while rendering its captured entry. It makes bounded
 passes through scripts, stylesheets and subsequent requests without an explicit
-asset list. The component remains experimental and outside the application
-interface. This is not whole-site crawling or application completion.
+asset list. The component remains experimental. A [background source-copy workflow](SOURCE_COPY_WORKFLOW.md)
+now connects it to job details and application records. This is not whole-site
+crawling or application completion.
 
 ## Separate collection and entry modes
 
@@ -61,7 +62,7 @@ can retain an otherwise valid partial archive with its failure recorded for revi
 
 No real application form was interacted with during this development. Remaining
 [isolation gates](ISOLATED_REHEARSAL.md), local-model verification, broader public
-capture qualification and interface integration remain open. This does not
+capture qualification and captured-form journey integration remain open. This does not
 qualify an unrestricted no-egress boundary or enable live-form work.
 
 ## Verification

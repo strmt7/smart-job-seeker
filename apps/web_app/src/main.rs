@@ -58,6 +58,7 @@ mod history_pipeline_tests;
 mod history_record_choice;
 #[cfg(all(test, windows))]
 mod history_ui_qualification;
+mod job_capture;
 mod letter_export;
 mod link_rank;
 mod local_advice;
@@ -2491,6 +2492,15 @@ fn serve(
         );
         return Ok(());
     }
+    if path == "/source-copy.js" && method == "GET" {
+        reply(
+            stream,
+            "200 OK",
+            "text/javascript; charset=utf-8",
+            include_str!("../web/source-copy.js"),
+        );
+        return Ok(());
+    }
     if path == "/image-viewer.js" && method == "GET" {
         reply(
             stream,
@@ -3185,6 +3195,42 @@ fn serve(
                 .map_err(|_| "Cannot clear Gmail credentials")?;
             json_reply(stream, "200 OK", json!({"ok":true}));
         }
+        "/api/job-source/start" => {
+            if session.is_some()
+                || form_task::busy()
+                || candidate_task::busy()
+                || form_links::busy()
+                || custom_choice_action::busy()
+                || form_capture_task::busy()
+                || job_capture::busy()
+            {
+                return Err("Finish the current form review before saving a page copy".into());
+            }
+            let job = JobIdentityId::new(body["id"].as_str().ok_or("Missing job identity")?)
+                .map_err(|e| e.to_string())?;
+            let id = random_id()?;
+            job_capture::start(ws, &job, id.clone())?;
+            json_reply(
+                stream,
+                "200 OK",
+                json!({"task_id":id,"job_id":job.as_str()}),
+            );
+        }
+        "/api/job-source/pending" => {
+            json_reply(stream, "200 OK", job_capture::pending(ws)?);
+        }
+        "/api/job-source/status" => {
+            let id = body["task_id"]
+                .as_str()
+                .ok_or("Missing page-copy identity")?;
+            json_reply(stream, "200 OK", job_capture::poll(ws, id)?);
+        }
+        "/api/job-source/cancel" => {
+            let id = body["task_id"]
+                .as_str()
+                .ok_or("Missing page-copy identity")?;
+            json_reply(stream, "200 OK", job_capture::cancel(ws, id)?);
+        }
         "/api/application-check/start" => {
             if session.is_some()
                 || form_task::busy()
@@ -3192,6 +3238,7 @@ fn serve(
                 || form_links::busy()
                 || custom_choice_action::busy()
                 || form_capture_task::busy()
+                || job_capture::busy()
             {
                 return Err(
                     "Close or finish the active form inspection before checking another page"
@@ -3471,6 +3518,7 @@ fn serve(
                 || form_links::busy()
                 || custom_choice_action::busy()
                 || form_capture_task::busy()
+                || job_capture::busy()
             {
                 return Err(
                     "Finish the current browser session before inspecting a listing".into(),
@@ -3623,6 +3671,7 @@ fn serve(
                 || form_links::busy()
                 || custom_choice_action::busy()
                 || form_capture_task::busy()
+                || job_capture::busy()
                 || email_worker::busy()
             {
                 return Err(
@@ -5320,6 +5369,7 @@ fn serve(
                 || form_links::busy()
                 || custom_choice_action::busy()
                 || form_capture_task::busy()
+                || job_capture::busy()
             {
                 return Err("Wait for the current browser inspection to finish".into());
             }
@@ -8839,6 +8889,7 @@ fn serve(
                 || form_links::busy()
                 || custom_choice_action::busy()
                 || form_capture_task::busy()
+                || job_capture::busy()
             {
                 return Err("Finish the active browser operation before recapturing".into());
             }
@@ -9312,6 +9363,12 @@ fn serve(
 }
 
 fn main() {
+    if std::env::args_os()
+        .nth(1)
+        .is_some_and(|arg| arg == job_capture::WORKER_FLAG)
+    {
+        std::process::exit(job_capture::worker_main());
+    }
     if let Err(error) = run() {
         let message = startup_error_message(&error.to_string());
         eprintln!("{message}");

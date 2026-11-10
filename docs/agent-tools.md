@@ -147,3 +147,17 @@ both plain and encrypted store configurations. The three opt-in
 inside ignored `target/`; preserve the old test executable before upgrading if
 checking backward readability. Those fixtures are fictional and are not user
 workspace migrations or a general compatibility guarantee.
+
+
+## Source-copy workflow qualification
+
+`tools/qualify_source_copy.py` exercises the compiled local web app headlessly
+with a disposable control folder and fictional job record. It copies only
+explicit test-owned managed browser/PDF runtimes from `target/`, reads one public
+technical reference through the native coordinator, and verifies rendered
+cancellation, archive records, reload recovery and nine bounded width/zoom cases.
+It uses no personal browser profile or employer form. Private evidence stays in
+`target/source-copy-ui-*/`; a passing process exit alone does not establish visual
+quality or resource qualification. The shared qualification runner checks host
+RAM every 500 ms and closes only its own containment below a 3 GiB reserve.
+See [scope, evidence and remaining gates](SOURCE_COPY_WORKFLOW.md).

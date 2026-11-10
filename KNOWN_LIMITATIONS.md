@@ -4,6 +4,14 @@ Last updated: 2026-09-25. Honesty rules from AGENTS.md apply: absence from this 
 
 This register is a historical gate snapshot. For subsequent changes and current web-prototype limitations, see `IMPLEMENTATION_STATUS.md` and `docs/WEB_PROTOTYPE_CHECKPOINT.md`; older entries below may describe behavior that has since changed.
 
+Current source-copy integration (2026-11-10) is documented separately in
+[its evidence and limits](docs/SOURCE_COPY_WORKFLOW.md): read-only public archive
+collection is connected to the web app, but it does not expose captured real-site
+forms for candidate entry. Cross-origin resources, authenticated/server-dependent
+steps, candidate-data provenance and clean-Windows qualification remain open.
+Continuous RAM checks stop owned work on low memory; they cannot reserve RAM or
+prevent unrelated software from consuming it between observations.
+
 ## Hard limitations (known, deliberate, documented)
 
 1. **Job postings are stored in plaintext on purpose; the candidate's own material is sealed.**

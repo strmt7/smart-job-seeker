@@ -104,8 +104,9 @@ transitive anonymous GETs through bounded render-only rounds. It has fictional
 native evidence, not a public whole-site qualification. Related worker/transport lifecycles, server-dependent POST
 questions, authenticated pages, content variants and missing resources remain
 explicit gaps. The [isolation qualification gates](ISOLATED_REHEARSAL.md),
-candidate-data provenance checks, bounded background task and interface integration
-remain prerequisites for exposing a captured-form journey. No live-form
+candidate-data provenance checks and captured-form journey integration remain
+prerequisites for candidate entry. A [bounded background source-copy task](SOURCE_COPY_WORKFLOW.md)
+now exposes read-only collection in job details. No live-form
 interaction is authorized by this checkpoint.
 
 ```powershell

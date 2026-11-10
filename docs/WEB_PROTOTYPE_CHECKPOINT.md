@@ -14,6 +14,12 @@ zoom, pan and corner resizing, with compiled narrow-layout/native-zoom evidence.
 Clean-Windows, broader document/model quality and no-write live-form gates remain
 open. No release or real application submission occurred.
 
+Latest source-copy checkpoint, 2026-11-10: job details now connect anonymous
+public-page collection to a background worker, cancellation, reload recovery
+and durable attempt records. Missing private browser/PDF tools are installed
+when needed. [Evidence and limits](SOURCE_COPY_WORKFLOW.md) retain explicit gaps;
+this does not enable candidate entry on captured real-site forms.
+
 Latest dependency checkpoint, 2026-11-09: Settings can install missing tools or
 repair private runtimes, and default missing tools can be installed when needed.
 Downloads, readback, activation, memory/disk admission and prior-version

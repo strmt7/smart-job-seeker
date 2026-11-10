@@ -44,7 +44,7 @@ browser, document converter or Ollama distribution. PDF tools are bootstrapped
 first when needed, without using or changing a host Python installation.
 
 Missing default tools can also be provisioned when starting Ollama, opening a
-browser inspection or converting a document. PDF operations can bootstrap their
+browser inspection, saving a [source-page copy](SOURCE_COPY_WORKFLOW.md) or converting a document. PDF operations can bootstrap their
 missing default worker; **Check PDF tools** remains a read-only probe. Explicit
 custom paths retain precedence and their diagnostics. Installing a private copy
 does not replace an override or automatically repeat a form interaction.

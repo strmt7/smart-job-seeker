@@ -21,7 +21,7 @@ import sys
 import tempfile
 import time
 
-from owned_process import ChildContainment, CREATE_SUSPENDED, admit_child_memory_bytes, resume_owned_child
+from owned_process import ChildContainment, CREATE_SUSPENDED, admit_child_memory_bytes, resume_owned_child, available_physical_bytes
 from internet_canary import InternetCanary
 
 REPO = Path(__file__).resolve().parents[1]
@@ -74,6 +74,12 @@ def inventory(root: Path) -> dict[str, str]:
     return files
 
 
+def ensure_host_reserve():
+    """Stop only our contained qualification when external RAM pressure rises."""
+    if available_physical_bytes() < 3 * 1024**3:
+        raise RuntimeError('Qualification stopped to preserve the 3 GiB host RAM reserve')
+
+
 def run(command: list[str], environment: dict[str, str], log: Path, seconds: int = 240) -> dict:
     if type(seconds) is not int or not 1 <= seconds <= 1200:
         raise ValueError('Command timeout must be a bounded integer')
@@ -87,7 +93,11 @@ def run(command: list[str], environment: dict[str, str], log: Path, seconds: int
         try:
             containment = ChildContainment(process, budget)
             resume_owned_child(process)
+            memory_checked = 0.0
             while process.poll() is None:
+                if time.monotonic() - memory_checked >= .5:
+                    ensure_host_reserve()
+                    memory_checked = time.monotonic()
                 if time.monotonic() - started > seconds or log.stat().st_size > 8 * 1024**2:
                     raise RuntimeError('Qualification time or log budget exceeded')
                 time.sleep(.05)

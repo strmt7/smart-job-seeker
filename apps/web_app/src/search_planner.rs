@@ -106,6 +106,13 @@ fn normalized_identifier(value: &str) -> String {
         .collect()
 }
 
+pub(crate) fn contains_protected(text: &str, identifiers: &[String]) -> bool {
+    let normalized = normalized_identifier(text);
+    identifiers
+        .iter()
+        .any(|identifier| query_contains_protected(text, &normalized, identifier))
+}
+
 fn query_contains_protected(query: &str, normalized: &str, identifier: &str) -> bool {
     if identifier.chars().count() >= 6 {
         return normalized.contains(identifier);

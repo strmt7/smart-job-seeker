@@ -1023,6 +1023,34 @@ pub fn list(ws: &Workspace, id: &JobIdentityId) -> Result<Value, String> {
     list_page(ws, id, 0)
 }
 
+/// Read the bounded outcome of an anonymous source-copy attempt.
+fn source_page_copy_summary(root: &std::path::Path) -> Value {
+    let path = root.join("source-page-summary.json");
+    if let Ok(meta) = fs::symlink_metadata(&path) {
+        #[cfg(windows)]
+        let linked = {
+            use std::os::windows::fs::MetadataExt;
+            meta.file_attributes() & 0x400 != 0
+        };
+        #[cfg(not(windows))]
+        let linked = meta.file_type().is_symlink();
+        if !meta.is_file() || linked || meta.len() > 256 * 1024 {
+            return json!({"status":"unreadable"});
+        }
+    }
+    let Ok(file) = fs::File::open(path) else {
+        return Value::Null;
+    };
+    let mut bytes = Vec::new();
+    if file.take(256 * 1024 + 1).read_to_end(&mut bytes).is_err() || bytes.len() > 256 * 1024 {
+        return json!({"status":"unreadable"});
+    }
+    let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
+        return json!({"status":"unreadable"});
+    };
+    json!({"status":value["status"],"archive_written":value["result"]["archive_written"],"needs_review":value["result"]["needs_review"],"resources":value["result"]["report"]["recorded_resources"],"requests":value["result"]["report"]["requests"]})
+}
+
 /// Return one bounded page from the first 2,000 directory entries inspected.
 pub fn list_page(ws: &Workspace, id: &JobIdentityId, page: usize) -> Result<Value, String> {
     if page >= 40 {
@@ -1104,7 +1132,7 @@ pub fn list_page(ws: &Workspace, id: &JobIdentityId, page: usize) -> Result<Valu
                 meta.is_file() && !meta.file_type().is_symlink() && meta.len() <= 65536
             })
         };
-        attempts.push(json!({"attempt_id":attempt_id,"status":status,"started_at":started,"folder":entry.path().to_string_lossy(),"submitted":value["submitted"],"submitted_by_waypoint":value["submitted_by_waypoint"],"material_manifest_incomplete":value["material_manifest_incomplete"],"page_capture_available":value["page_capture_available"],"page_capture_coverage":value["page_capture_coverage"],"followup_capture_available":value["followup_capture_available"],"followup_capture_files":listing_capture_files(&entry.path(), &value, true),"page_capture_files":listing_capture_files(&entry.path(), &value, false),"page_capture_segment_count":value["page_capture_segment_count"],"followup_capture_segment_count":value["followup_capture_segment_count"],"page_capture_source_url":value["page_capture_source_url"],"page_capture_matches_current_url":value["page_capture_matches_current_url"],"gmail_review":gmail_review,"email_outcome_file":has_record("email-handoff.json"),"email_reconciliation_file":has_record("email-reconciliation.json"),"export_document_id":reviewed_export_document_id(&entry.path()),"document_visual_review":fs::symlink_metadata(entry.path().join("document-visual-review.json")).is_ok_and(|m|m.is_file() && !m.file_type().is_symlink() && m.len() <= 512*1024)}));
+        attempts.push(json!({"attempt_id":attempt_id,"status":status,"started_at":started,"folder":entry.path().to_string_lossy(),"submitted":value["submitted"],"submitted_by_waypoint":value["submitted_by_waypoint"],"material_manifest_incomplete":value["material_manifest_incomplete"],"page_capture_available":value["page_capture_available"],"page_capture_coverage":value["page_capture_coverage"],"followup_capture_available":value["followup_capture_available"],"followup_capture_files":listing_capture_files(&entry.path(), &value, true),"page_capture_files":listing_capture_files(&entry.path(), &value, false),"page_capture_segment_count":value["page_capture_segment_count"],"followup_capture_segment_count":value["followup_capture_segment_count"],"page_capture_source_url":value["page_capture_source_url"],"page_capture_matches_current_url":value["page_capture_matches_current_url"],"source_page_copy":source_page_copy_summary(&entry.path()),"gmail_review":gmail_review,"email_outcome_file":has_record("email-handoff.json"),"email_reconciliation_file":has_record("email-reconciliation.json"),"export_document_id":reviewed_export_document_id(&entry.path()),"document_visual_review":fs::symlink_metadata(entry.path().join("document-visual-review.json")).is_ok_and(|m|m.is_file() && !m.file_type().is_symlink() && m.len() <= 512*1024)}));
     }
     attempts.sort_by(|a, b| {
         b["started_at"]
@@ -1853,6 +1881,19 @@ pub fn attachment_viewport(
 }
 
 impl AttemptRecord {
+    pub(crate) fn source_capture_directory(&self) -> PathBuf {
+        self.dir.join("source-page")
+    }
+    pub(crate) fn source_capture_result(&self, value: &Value) -> Result<(), String> {
+        let mut file = tempfile::NamedTempFile::new_in(&self.dir)
+            .map_err(|_| "Cannot save page-copy summary")?;
+        serde_json::to_writer_pretty(&mut file, value)
+            .map_err(|_| "Cannot encode page-copy summary")?;
+        file.flush().map_err(|_| "Cannot save page-copy summary")?;
+        file.persist_noclobber(self.dir.join("source-page-summary.json"))
+            .map_err(|_| "Cannot preserve page-copy summary")?;
+        Ok(())
+    }
     pub fn start(
         ws: &Workspace,
         id: &JobIdentityId,

@@ -121,16 +121,25 @@ def admit_child_memory_bytes(requested_bytes: int | None = None) -> int:
         raise RuntimeError("FlitzZip command execution requires Windows aggregate job-memory containment")
     if requested_bytes is not None and (type(requested_bytes) is not int or requested_bytes <= 0):
         raise ValueError("requested job memory must be a positive integer byte count")
+    budget_bytes = resolve_memory_budget_mib(available_physical_bytes() // MIB) * MIB
+    if requested_bytes is not None and requested_bytes > budget_bytes:
+        raise ValueError("requested job memory exceeds current shared-policy RAM admission")
+    return budget_bytes if requested_bytes is None else requested_bytes
+
+
+def available_physical_bytes() -> int:
+    """Read current whole-host available RAM; unknown counters never pass."""
+    if os.name != "nt":
+        raise RuntimeError("Windows physical RAM observation is required")
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel32.GlobalMemoryStatusEx.argtypes = [ctypes.POINTER(_MemoryStatus)]
     kernel32.GlobalMemoryStatusEx.restype = wintypes.BOOL
     status = _MemoryStatus(length=ctypes.sizeof(_MemoryStatus))
     if not kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
         raise OSError(ctypes.get_last_error(), "available physical RAM query failed")
-    budget_bytes = resolve_memory_budget_mib(status.available_physical // MIB) * MIB
-    if requested_bytes is not None and requested_bytes > budget_bytes:
-        raise ValueError("requested job memory exceeds current shared-policy RAM admission")
-    return budget_bytes if requested_bytes is None else requested_bytes
+    if status.total_physical == 0 or status.available_physical > status.total_physical:
+        raise RuntimeError("Invalid physical RAM observation")
+    return status.available_physical
 
 
 def resume_owned_child(process: subprocess.Popen[bytes]) -> None:

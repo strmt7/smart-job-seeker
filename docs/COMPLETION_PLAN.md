@@ -152,7 +152,9 @@ build and configuration.
    freezes its transport before offline entry, and has fictional native plus
    two public-read observations. Bounded [browser-observed discovery](RESOURCE_DISCOVERY.md)
    now has a separate render-only worker mode and a fictional transitive-resource
-   check. Broader discovery qualification, candidate-data provenance, background-task/interface integration,
+   check. A [background source-copy workflow](SOURCE_COPY_WORKFLOW.md) now connects
+   read-only collection to job details, cancellation and attempt records. Broader
+   discovery qualification, candidate-data provenance, captured-form journey integration,
    unsupported target/transport lifecycles, server-dependent validation and missing
    steps still need implementation and qualification. No live-form interaction is
    authorized by these partial results.

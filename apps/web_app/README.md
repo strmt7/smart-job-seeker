@@ -4,6 +4,12 @@ Document-page and captured-form images open in a shared full-size viewer. Use
 mouse-wheel zoom, drag to pan, or the corner grip to resize it. The original
 image and application-review state remain unchanged.
 
+In a job's **Details and records**, **Save page copy** preserves the original
+public page and available resources in a separate application record. It runs
+in the background, sets up missing private tools automatically and supports
+stopping and reload recovery. Missing resources and unopened sections remain
+review gaps. See [scope and qualification](../../docs/SOURCE_COPY_WORKFLOW.md).
+
 On Windows, build the prototype from the repository root with:
 
 ```powershell
