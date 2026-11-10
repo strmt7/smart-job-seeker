@@ -173,19 +173,27 @@ function showFitBadge(badge,text){badge.textContent=text;badge.hidden=false;if(b
 function visualComparisonStatus(item,expected,observations,allFresh,segmentComparisons=[]){
  if(!allFresh)return 'capture changed or freshness could not be confirmed';
  if(item.ambiguous===true)return 'not uniquely observed';
- const normalize=label=>label.replace(/[\u0009-\u000d\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+/g,' ').replace(/^ | $/g,'').toLowerCase(),label=normalize(item.label),leaf=label.split('—').at(-1).trim(),same=expected.filter(other=>{const name=normalize(other.label);return label.includes('—')?(name===label||(!name.includes('—')&&name===leaf)):name.split('—').at(-1).trim()===leaf;}),matches=observations.filter(other=>{const name=normalize(other.label);return name===label||(!label.includes('—')&&name.includes('—')&&name.split('—').at(-1).trim()===label);}),checks=[item,...segmentComparisons.filter(other=>normalize(other.label)===label && other.expected===item.expected)];
+ const {same,matches,checks}=visualFieldEvidence(item,expected,observations,segmentComparisons);
  if(checks.some(check=>check.dom_status==='unconfirmed'))return 'live field value not confirmed';
  if(same.length!==1||matches.length!==1)return 'not uniquely observed';
  const nativeMatch=checks.some(check=>check.status==='matches_transcription'&&check.dom_status==='matches'&&check.normalization?.method==='native_display'&&['month','time','date_time_local'].includes(check.normalization.field_type)&&check.normalization.visible_value===matches[0].visible_value&&check.normalization.canonical_value===item.expected);
  return matches[0].visible_value===item.expected||nativeMatch?(checks.some(check=>check.dom_status==='matches')?'transcription and live value match reviewed answer':'live field value not confirmed'):'transcription differs from reviewed answer';
 }
+function visualFieldEvidence(item,expected,observations,segmentComparisons=[]){
+ const normalize=label=>label.replace(/[\u0009-\u000d\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+/g,' ').replace(/^ | $/g,'').toLowerCase(),label=normalize(item.label),leaf=label.split('—').at(-1).trim(),same=expected.filter(other=>{const name=normalize(other.label);return label.includes('—')?(name===label||(!name.includes('—')&&name===leaf)):name.split('—').at(-1).trim()===leaf;}),matches=observations.filter(other=>{const name=normalize(other.label);return name===label||(!label.includes('—')&&name.includes('—')&&name.split('—').at(-1).trim()===label);}),checks=[item,...segmentComparisons.filter(other=>normalize(other.label)===label && other.expected===item.expected)];
+ return {same,matches,checks};
+}
 function visualRetrySelector(fields,available,label){if(!Array.isArray(fields)||typeof label!=='string')return null;const allowed=new Set(Array.from(available || [],option=>option.value)),matches=fields.filter(field=>field&&field.label===label&&typeof field.selector==='string'&&allowed.has(field.selector));return matches.length===1?matches[0].selector:null;}
 function visualAutoRetryCandidates(expected,observations,allFresh,coverage,segmentComparisons,fields,available){
  const empty={selectors:[],remaining:0,total:0};
  if(!allFresh||coverage!==true||!Array.isArray(expected)||!expected.length)return empty;
- const checks=expected.map(item=>({item,status:visualComparisonStatus(item,expected,observations,allFresh,segmentComparisons)}));
- if(checks.some(check=>!['transcription differs from reviewed answer','transcription and live value match reviewed answer'].includes(check.status)))return empty;
- const mismatches=checks.filter(check=>check.status==='transcription differs from reviewed answer'),selectors=mismatches.map(check=>visualRetrySelector(fields,available,check.item.label));
+ const checks=expected.map(item=>{
+  const status=visualComparisonStatus(item,expected,observations,allFresh,segmentComparisons),evidence=visualFieldEvidence(item,expected,observations,segmentComparisons);
+  const missing=status==='not uniquely observed'&&item.ambiguous!==true&&item.status==='unobserved'&&evidence.same.length===1&&evidence.matches.length===0&&evidence.checks.every(check=>check.status==='unobserved'&&check.ambiguous!==true&&check.dom_status!=='unconfirmed');
+  return {item,status,missing};
+ });
+ if(checks.some(check=>!check.missing&&!['transcription differs from reviewed answer','transcription and live value match reviewed answer'].includes(check.status)))return empty;
+ const unresolved=checks.filter(check=>check.missing||check.status==='transcription differs from reviewed answer'),selectors=unresolved.map(check=>visualRetrySelector(fields,available,check.item.label));
  if(selectors.some(selector=>!selector)||new Set(selectors).size!==selectors.length)return empty;
  return {selectors:selectors.slice(0,3),remaining:Math.max(0,selectors.length-3),total:selectors.length};
 }

@@ -85,6 +85,8 @@ mod smtp_handoff;
 mod source_answer;
 #[cfg(all(test, windows))]
 mod source_answer_qualification;
+#[cfg(all(test, windows))]
+mod source_vision_qualification;
 mod storage_settings;
 mod suggestions;
 mod template_plan;

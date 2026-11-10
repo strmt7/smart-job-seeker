@@ -12,8 +12,12 @@ advance a form or submit an application.
 
 The initial review must have complete supported comparison/capture coverage,
 current captures, saved evidence, unique field associations and no unconfirmed
-live values. Only isolated transcription differences qualify. Ambiguous,
-unobserved or incomplete fields keep the existing manual route. The planner uses
+live values. Isolated transcription differences qualify. A uniquely identified
+reviewed field with no visual observation can also receive a closeup when all
+its segment comparisons explicitly remain `unobserved`; no contradictory,
+ambiguous or failed DOM evidence is permitted. The focus endpoint must still
+revalidate completed values before capturing it. Unknown coverage, ambiguous
+labels and unconfirmed live values keep the existing manual route. The planner uses
 inspected fields and their available filled-field selectors, never employer names,
 remembered selectors or platform-specific layouts.
 
@@ -152,3 +156,52 @@ Additional receipt digests: instrumented caret regression
 isolated capture regression
 `a1022c61acf61a62decc5667d9500b36aac665f2048ffdcad98ec4987034000d`
 at `target/visual-followup-isolated-9q32962u/result.private.json`.
+
+## Missing-transcription follow-up, 2026-11-10
+
+The shared planner now includes the eligible unobserved case above without
+changing the three-closeup or two-minute budgets. Field association logic is
+shared with result presentation. A missing observation is not a successful read;
+it needs a fresh focused transcription and DOM check. Original unknowns remain
+in the initial record, and focused matches cannot approve the full form.
+
+All 169 interface scripts and 47 tool checks passed. New adversarial cases cover
+missing observations with conflicting status, ambiguous labels, stale captures,
+incomplete coverage, duplicate selectors, unconfirmed values and failed retained
+value checks. A closeup that still differs remains unresolved; it never changes
+the reviewed answer. An early fixture bug reindexed filtered observations and
+incorrectly made a different field appear correct; that fixture was corrected,
+and the failing output was not counted as a pass.
+
+The headless rendered check passed 18 grouped cases in
+`target/layout-check-run-qwytt7aw/`, with native evidence in
+`target/visual-followups-ui-oy2OhQ/`, SHA-256
+`256c06d3dbef5b07b0171888724dcfe83083129df5b6af01c21c25d800cd0ad6`.
+Its three screenshots were inspected directly, including 390 px and 400% zoom.
+This run explicitly routed current source JavaScript into an existing compiled
+shell; it does not qualify the final compiled bundle or actual model responses.
+The initial source-routing attempt queried outside the renderer's interception
+and correctly failed its digest check; both its failure and cleanup remain in
+`target/layout-check-run-r7gtq3hf/`.
+
+Run `python -B tools/qualify_layout.py --flow visual-followups --browser
+<absolute Chromium executable>` for compiled assets, adding `--source-assets`
+only for an explicitly recorded source pass. The shared controller contains the
+app/Node/browser tree in its existing 4 GiB Windows job and monitors the host RAM
+reserve. Direct Windows execution of the JavaScript entrypoint is refused.
+Context closure, browser disconnection and app exit must all be recorded;
+cleanup failures prevent success. No employer form or model call is involved
+in this rendered-response fixture.
+
+After the externally owned compiler update completed, the rebuilt compiled
+bundle passed the same 18 cases without source interception:
+`target/layout-check-run-r64na2kt/`, native
+`target/visual-followups-ui-sxULNP/`, report SHA-256
+`d1fdb12ce5d4e890696c35b7a231d506d021e02ce7394f56aec74dc33af3ca25`.
+The executable SHA-256 is
+`7e0da666133c20fee5c21d2368afd59762af3114c354f8e3f5fd57565fac5021`.
+All three compiled screenshots are byte-identical to the directly inspected
+source-pass screenshots, so those visual observations apply to the compiled
+captures as well. Context closure, browser disconnection and app exit were
+confirmed without cleanup errors. This remains a fictional rendered-response
+journey; [local-model evidence](LOCAL_VISION_QUALIFICATION.md) is separate.

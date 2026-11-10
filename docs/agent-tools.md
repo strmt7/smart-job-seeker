@@ -143,7 +143,21 @@ all leaks or protect unrelated workloads from their own resource consumption.
 All new repository tools follow the concise
 communication rules in `AGENTS.md`.
 
+Use `--flow visual-followups --browser <absolute Chromium executable>` for the
+owned rendered closeup workflow. Its default verifies current compiled
+JavaScript; `--source-assets` explicitly intercepts the source script in the
+renderer and records that narrower scope. The same containment and RAM reserve
+apply, and confirmed context/browser/app cleanup is required. The JavaScript
+entrypoint refuses direct Windows execution. See [evidence](VISUAL_FOLLOWUP.md).
+
 ## Experimental browser qualification
+
+`tools/qualify_owned_answers.py --suite vision-system --browser <absolute-browser>
+--ollama <absolute-ollama> --model-store <absolute-store> --digest <model-digest>`
+uses a separate owned model runtime and fictional browser-rendered controls.
+The `vision` suite preserves raw-model criteria separately. See
+[visual evidence and limits](LOCAL_VISION_QUALIFICATION.md) for exact inputs,
+cache budgets, native receipts and remaining linked checks.
 
 `python -B tools/qualify_document_journey.py --control <absolute-test-owned-runtime-directory-in-target> --flow signature`
 checks fixed-body profile signatures, PDF pagination and archived page geometry

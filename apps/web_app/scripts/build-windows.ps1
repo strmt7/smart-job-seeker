@@ -3,6 +3,7 @@ param(
     [string]$OpenSslInstaller,
     [switch]$Release,
     [switch]$Test,
+    [switch]$NoRun,
     [switch]$Clippy,
     [switch]$Workspace,
     [switch]$StaticCrt,
@@ -13,6 +14,7 @@ param(
 $ErrorActionPreference = 'Stop'
 if (-not $IsWindows -and $env:OS -ne 'Windows_NT') { throw 'This helper is for Windows builds.' }
 if ($Test -and $Clippy) { throw '-Test and -Clippy cannot be used together.' }
+if ($NoRun -and (-not $Test -or $TestFilter -or $Ignored -or $NoCapture)) { throw '-NoRun requires -Test without a filter or execution options.' }
 if ($Workspace -and -not ($Test -or $Clippy)) { throw '-Workspace requires -Test or -Clippy.' }
 if ($TestFilter -and -not $Test) { throw '-TestFilter requires -Test.' }
 if ($Ignored -and (-not $Test -or -not $TestFilter)) { throw '-Ignored requires -Test and a specific -TestFilter.' }
@@ -105,6 +107,7 @@ try {
     $cargoArgs = if ($Workspace) { @($operation,'--workspace') } else { @($operation,'-p','waypoint_web') }
     if ($Release) { $cargoArgs += '--release' }
     if ($TestFilter) { $cargoArgs += $TestFilter }
+    if ($NoRun) { $cargoArgs += '--no-run' }
     if ($Clippy) { $cargoArgs += @('--all-targets', '--', '-D', 'warnings') }
     if ($Ignored -or $NoCapture) {
         $cargoArgs += '--'
@@ -125,7 +128,11 @@ try {
         & cargo @cargoArgs
     }
     if ($LASTEXITCODE -ne 0) { throw "Cargo $operation failed ($LASTEXITCODE)." }
-    if ($Test) { Write-Host "Smart Jobseeker tests completed using the configured SQLCipher runtime."; return }
+    if ($Test) {
+        if ($NoRun) { Write-Host 'Smart Jobseeker test executables compiled; no tests were run.' }
+        else { Write-Host 'Smart Jobseeker tests completed using the configured SQLCipher runtime.' }
+        return
+    }
     if ($Clippy) { Write-Host "Smart Jobseeker lint completed using the configured SQLCipher runtime."; return }
     $profile = if ($Release) { 'release' } else { 'debug' }
     if ($artifactPaths.Count -ne 1) { throw 'Cargo did not identify exactly one Smart Jobseeker executable; no receipt was written.' }

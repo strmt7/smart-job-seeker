@@ -3,8 +3,10 @@ const source=fs.readFileSync('apps/web_app/web/app.js','utf8'),helpers=source.sl
 function element(tag,text=''){return {tag,text,children:[],listeners:{},isConnected:true,setAttribute(name,value){(this.attributes??={})[name]=value;},append(...items){this.children.push(...items)},replaceChildren(...items){this.children=[...items]},addEventListener(name,fn){this.listeners[name]=fn}}}
 const walk=root=>[root,...root.children.flatMap(child=>walk(child))];
 async function run(options={}){
- const {mismatches=3,coverage=true,retained=true,focusSaved=true,statusSaved=true,fresh='same',focusFresh='same',badFocused=false,cancel=false,detach=false,alreadySaved=false,unobserved=false,duplicate=false,domUnconfirmed=false,expire=false,running=false}=options;
- const calls=[],root=element('div'),storage=new Map(),expected=Array.from({length:mismatches+1},(_,i)=>({label:`Employment ${i} — Company`,expected:`Fictional ${i}`,dom_status:domUnconfirmed&&i===0?'unconfirmed':'matches'})),fields=expected.map((item,i)=>({label:item.label,selector:`#f${i}`}));
+ const {mismatches=3,coverage=true,retained=true,focusSaved=true,statusSaved=true,fresh='same',focusFresh='same',badFocused=false,cancel=false,detach=false,alreadySaved=false,unobserved=false,duplicate=false,domUnconfirmed=false,expire=false,running=false,missing=false,ambiguous=false,inconsistent=false}=options;
+ const calls=[],root=element('div'),storage=new Map(),expected=Array.from({length:mismatches+1},(_,i)=>({label:`Employment ${i} — Company`,expected:`Fictional ${i}`,status:i===0?'matches_transcription':'differs_from_transcription',dom_status:domUnconfirmed&&i===0?'unconfirmed':'matches'})),fields=expected.map((item,i)=>({label:item.label,selector:`#f${i}`}));
+ if(missing){expected[0].status=inconsistent?'differs_from_transcription':'unobserved';if(!domUnconfirmed)delete expected[0].dom_status;}
+ if(ambiguous)expected[0].ambiguous=true;
  if(duplicate)fields.push({...fields[1],selector:'#other'});
  let focusedSelector=null,clock=0;
  const context={element,Date:{now:()=>clock},visualPanel:root,visualButton:{disabled:false},fieldVisionButton:{disabled:false,click(){}},fieldFocusSelect:{value:'',options:fields.map(field=>({value:field.selector}))},result:{session_id:'fixture',fields},fillInProgress:false,fillButton:null,fillCompleted:true,refresh:async()=>{},recoverFormVision(){},setTimeout:fn=>fn(),document:{createElement:tag=>element(tag)},sessionStorage:{getItem:key=>storage.get(key)||null,setItem:(key,v)=>storage.set(key,v),removeItem:key=>storage.delete(key)},api:async(path,body)=>{
@@ -12,11 +14,11 @@ async function run(options={}){
   if(path.endsWith('visual-focus')){focusedSelector=body.selector;return {value_retained:retained,unverified_count:0,failed_fields:[],record_saved:focusSaved,failed_attachments:0,unverified_attachments:0};}
   if(path.endsWith('visual-review-start'))return {task_id:body.target_selector||'full',segments:1,segment:0,half:null,target_selector:body.target_selector,coverage_complete:body.target_selector?false:coverage,page_signature:'fictional',screenshot:'fictional',record_saved:true};
   if(path.endsWith('visual-review-status')){
-   const full=body.task_id==='full',i=full?0:Number(focusedSelector.slice(2)),items=full?expected:[expected[i]];
+   const full=body.task_id==='full',i=full?0:Number(focusedSelector.slice(2)),items=full?expected:[{...expected[i],status:'matches_transcription',dom_status:'matches'}];
    if(expire&&!full)clock=120001;
    if(cancel&&!full)walk(root).find(node=>node.text==='Stop remaining close-ups').listeners.click();
    if(detach&&!full)root.isConnected=false;
-   return {status:running?'running':'complete',visual_freshness:full?fresh:focusFresh,record_saved:statusSaved,freshness_record_saved:!alreadySaved,freshness_record_status:alreadySaved?'already_saved':'saved',visual_review:{comparisons:items,observations:items.filter((_,index)=>!unobserved||!full||index!==0).map((item,index)=>({label:item.label,visible_value:full&&index>0||!full&&badFocused?'misread':item.expected}))}};
+   return {status:running?'running':'complete',visual_freshness:full?fresh:focusFresh,record_saved:statusSaved,freshness_record_saved:!alreadySaved,freshness_record_status:alreadySaved?'already_saved':'saved',visual_review:{comparisons:items,observations:items.filter((_,index)=>!(unobserved||missing)||!full||index!==0).map((item,index)=>({label:item.label,visible_value:full&&expected.indexOf(item)>0||!full&&badFocused?'misread':item.expected}))}};
   }
   throw Error('Unexpected endpoint');
  }};
@@ -25,6 +27,11 @@ async function run(options={}){
 }
 (async()=>{
  let x=await run();assert.equal(x.calls.length,11);assert.deepEqual(x.calls.filter(c=>c[0].endsWith('visual-focus')).map(c=>c[1].selector),['#f1','#f2','#f3']);assert.equal(x.outcome.followup.resolved,3);assert.equal(x.outcome.followup.remaining,0);assert.ok(!walk(x.root).some(node=>node.text.includes('Full capture coverage is not established')));assert.ok(walk(x.root).some(n=>n.text.includes('earlier page captures historical')));
+ x=await run({missing:true,mismatches:1});assert.deepEqual(x.calls.filter(c=>c[0].endsWith('visual-focus')).map(c=>c[1].selector),['#f0','#f1']);assert.equal(x.outcome.followup.resolved,2);assert.equal(x.outcome.followup.remaining,0);assert.equal(x.outcome.comparisons[0].status,'not uniquely observed');
+ x=await run({missing:true,mismatches:4});assert.equal(x.outcome.followup.checked,3);assert.equal(x.outcome.followup.remaining,2);
+ x=await run({missing:true,retained:false});assert.equal(x.calls.length,3);assert.equal(x.outcome.followup.stopped,true);
+ x=await run({missing:true,badFocused:true,mismatches:1});assert.equal(x.outcome.followup.resolved,0);assert.equal(x.outcome.followup.unresolved,2);
+ for(const options of [{ambiguous:true},{inconsistent:true},{domUnconfirmed:true},{coverage:false},{fresh:'changed'},{duplicate:true}]){x=await run({missing:true,...options});assert.equal(x.calls.length,2,JSON.stringify(options));assert.equal(x.outcome.followup,undefined);}
  x=await run({mismatches:5});assert.equal(x.outcome.followup.checked,3);assert.equal(x.outcome.followup.remaining,2);assert.ok(walk(x.root).some(n=>n.text.includes('limit was reached')));
  for(const options of [{coverage:false},{fresh:'changed'},{statusSaved:false},{unobserved:true},{duplicate:true},{domUnconfirmed:true}]){x=await run(options);assert.equal(x.calls.length,2,JSON.stringify(options));assert.equal(x.outcome.followup,undefined);}
  for(const options of [{retained:false},{focusSaved:false}]){x=await run(options);assert.equal(x.calls.length,3);assert.equal(x.outcome.followup.stopped,true);assert.equal(x.outcome.followup.remaining,2);}

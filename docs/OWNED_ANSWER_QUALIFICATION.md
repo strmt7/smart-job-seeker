@@ -22,6 +22,19 @@ that ceiling; a 3 GiB whole-host reserve is checked during execution. Build
 commands keep their existing 4 GiB limit. Time, output, model-copy size,
 parallelism, queue length and context are bounded.
 
+The managed test stage now uses `-Test -NoRun`: it compiles the native test
+executable without rerunning unrelated answer tests. That stage is explicitly
+recorded as compilation, not a passing test run. The subsequent native client
+executes exactly the selected ignored qualification test. The build-path
+contract fixture also restores the caller's environment, including removing
+new variables; its temporary OpenSSL path must not escape into later builds.
+
+The same controller now supports separate raw-vision and combined-review
+suites. Prompt cache and checkpoint budgets are scoped to its owned child
+runtime; [visual qualification evidence](LOCAL_VISION_QUALIFICATION.md) records
+the allocation failures that motivated the limits. The user's shared service
+and persistent environment remain unchanged.
+
 Only child-process environment variables select the private model directory,
 profile and literal loopback port. Cloud inference and startup pruning are
 disabled. The user's existing service must have no resident model; if another
@@ -132,8 +145,13 @@ establish the precise timing behind its refused connection.
 
 All nine fixture tests passed, including fragmented redirect requests with an
 idle connection. Both affected headless browser cases passed individually after
-the correction, with their assertions intact. The full hosted suite still needs
-confirmation on a subsequent pushed commit.
+the correction, with their assertions intact. The subsequent exact-commit
+`b56d01bb` hosted CI run `42870236376` passed all five jobs, including the full
+browser job. Its JavaScript/TypeScript, Python and Actions CodeQL analyses
+ingested without errors and each reported zero results. Retained API evidence
+is `target/owned-vision-hosted-base-jobs.private.json` and
+`target/finding-state-audit/b56-analyses.private.json`. This confirms that
+checkpoint, not unpushed follow-up changes or universal employer-site behavior.
 
 ## Regression checkpoint
 

@@ -29,7 +29,11 @@ from qualify_rehearsal import run, ensure_host_reserve, test_denominator
 
 REPO = Path(__file__).resolve().parents[1]
 TEST = 'source_answer_qualification::private_runtime_prepares_grounded_answers_and_refuses_unsupported_experience'
+VISION_TEST = 'source_vision_qualification::private_runtime_transcribes_form_values_without_expected_answer_leakage'
+TESTS = {'answers':TEST, 'vision':VISION_TEST, 'vision-system':VISION_TEST}
 GIB = 1024**3
+PROMPT_CACHE_MIB = 512
+CONTEXT_CHECKPOINTS = 1
 
 
 def digest(path):
@@ -130,6 +134,8 @@ def server_environment(folder, model_store, port):
         OLLAMA_HOST=f'127.0.0.1:{port}', OLLAMA_MODELS=str(model_store), OLLAMA_NO_CLOUD='1',
         OLLAMA_NOPRUNE='1', OLLAMA_NUM_PARALLEL='1', OLLAMA_MAX_LOADED_MODELS='1',
         OLLAMA_MAX_QUEUE='1', OLLAMA_CONTEXT_LENGTH='4096', OLLAMA_KEEP_ALIVE='5m',
+        LLAMA_ARG_CACHE_RAM=str(PROMPT_CACHE_MIB),
+        LLAMA_ARG_CTX_CHECKPOINTS=str(CONTEXT_CHECKPOINTS),
     )
     return environment
 
@@ -199,6 +205,30 @@ def listener_identity(shell, port, expected_pid):
     return identity
 
 
+def wait_runtime_ready(server, origin, config, errors):
+    """An observation timeout is not an exited server or permission to restart it."""
+    deadline = time.monotonic() + 60
+    attempts = 0
+    while time.monotonic() < deadline:
+        ensure_host_reserve()
+        if server.poll() is not None: raise RuntimeError('Owned runtime exited during readiness checks')
+        attempts += 1
+        try:
+            version = local_json(origin, '/api/version', 2)
+            if version.get('version') != config['version']:
+                raise RuntimeError('Private runtime version differs from the selected executable')
+            tags = local_json(origin, '/api/tags', 2).get('models')
+            if not isinstance(tags, list): raise ValueError('Model inventory is not available yet')
+            if len(tags)==1 and tags[0]['name']==config['model'] and tags[0]['digest']==config['digest']:
+                return attempts
+            if tags: raise RuntimeError('Private runtime model inventory differs from the selected copy')
+            if len(errors)<8: errors.append('Model inventory not ready')
+        except (OSError, ValueError) as error:
+            if len(errors)<8: errors.append(type(error).__name__)
+        time.sleep(.2)
+    raise RuntimeError('Private runtime metadata did not become ready within sixty seconds')
+
+
 def worker(config_path):
     config_path = regular(config_path).resolve(strict=True)
     if not config_path.is_relative_to((REPO / 'target').resolve()) or config_path.stat().st_size > 16384:
@@ -214,6 +244,8 @@ def worker(config_path):
     if not kernel.IsProcessInJob(kernel.GetCurrentProcess(), None, ctypes.byref(contained)) or not contained.value:
         raise RuntimeError('Owned runtime requires Windows process-tree containment')
     folder = config_path.parent
+    suite = config.get('suite','answers')
+    test_name = TESTS[suite]
     runtime_log = folder / 'ollama.private.log'
     server = client = None
     observations = []
@@ -241,17 +273,18 @@ def worker(config_path):
                     if len(receipt['listener_errors']) < 8: receipt['listener_errors'].append(str(error))
                     time.sleep(.2)
             receipt['origin'] = origin
-            if local_json(origin, '/api/version')['version'] != config['version']:
-                raise RuntimeError('Private runtime version differs from the selected executable')
-            tags = local_json(origin, '/api/tags')['models']
-            if len(tags) != 1 or tags[0]['name'] != config['model'] or tags[0]['digest'] != config['digest']:
-                raise RuntimeError('Private runtime did not load the copied model inventory')
+            receipt['readiness_errors']=[]
+            receipt['readiness_attempts']=wait_runtime_ready(server,origin,config,receipt['readiness_errors'])
             environment = {**os.environ, 'WAYPOINT_OWNED_OLLAMA_ORIGIN': origin,
                 'WAYPOINT_OWNED_OLLAMA_MODEL': config['model'],
                 'WAYPOINT_OWNED_ANSWER_REPORT': str(folder / 'answers.private.json'),
+                'WAYPOINT_OWNED_VISION_REPORT': str(folder / (suite + '.private.json')),
+                'WAYPOINT_OWNED_VISION_MODE': 'system' if suite=='vision-system' else 'raw',
                 'PATH':str(folder / 'test-runtime') + os.pathsep + os.environ.get('PATH','')}
-            with (folder / 'answers.private.log').open('xb') as log:
-                client = subprocess.Popen([config['test_binary'], TEST, '--ignored', '--exact', '--nocapture', '--test-threads=1'],
+            if suite in ('vision','vision-system'): environment['WAYPOINT_BROWSER']=config['browser']
+            client_log = folder / (suite + '.private.log')
+            with client_log.open('xb') as log:
+                client = subprocess.Popen([config['test_binary'], test_name, '--ignored', '--exact', '--nocapture', '--test-threads=1'],
                     env=environment, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
                     creationflags=subprocess.CREATE_NO_WINDOW)
                 deadline = time.monotonic() + 1100
@@ -260,7 +293,7 @@ def worker(config_path):
                     ensure_host_reserve()
                     if server.poll() is not None:
                         raise RuntimeError('Owned model runtime exited before qualification completed')
-                    if time.monotonic() > deadline or runtime_log.stat().st_size > 8 * 1024**2 or (folder / 'answers.private.log').stat().st_size > 8 * 1024**2:
+                    if time.monotonic() > deadline or runtime_log.stat().st_size > 8 * 1024**2 or client_log.stat().st_size > 8 * 1024**2:
                         raise RuntimeError('Private qualification exceeded its time/output budget')
                     if time.monotonic() - checked >= 2:
                         if resident_models('http://127.0.0.1:11434'):
@@ -270,8 +303,8 @@ def worker(config_path):
                     time.sleep(.2)
                 receipt['test_exit_code'] = client.wait(timeout=5)
                 if receipt['test_exit_code']:
-                    raise RuntimeError('Local answer criteria failed; inspect retained answers')
-                receipt['denominator'] = test_denominator((folder / 'answers.private.log').read_text(encoding='utf-8'), 'rust', 1)
+                    raise RuntimeError('Local model criteria failed; inspect retained observations')
+                receipt['denominator'] = test_denominator(client_log.read_text(encoding='utf-8'), 'rust', 1)
                 receipt['complete'] = True
     finally:
         errors = []
@@ -294,9 +327,13 @@ def main():
     parser.add_argument('--model-store', type=Path, required=True)
     parser.add_argument('--model', default='gemma4:12b-it-q4_K_M')
     parser.add_argument('--digest', required=True)
+    parser.add_argument('--suite', choices=sorted(TESTS), default='answers')
+    parser.add_argument('--browser', type=Path)
     args = parser.parse_args()
     if os.name != 'nt' or not args.ollama.is_absolute() or not args.ollama.is_file():
         parser.error('Select an explicit existing Windows Ollama executable')
+    if args.suite in ('vision','vision-system') and (not args.browser or not args.browser.is_absolute() or not args.browser.is_file()):
+        parser.error('Vision qualification requires an explicit headless-capable browser executable')
     shell = shutil.which('pwsh') or shutil.which('powershell')
     if not shell: parser.error('A Windows PowerShell runtime is required')
     if resident_models('http://127.0.0.1:11434'):
@@ -308,14 +345,19 @@ def main():
         parser.error('Insufficient disk space for a disposable model copy and 2 GiB reserve')
     folder = Path(tempfile.mkdtemp(prefix='owned-answer-qualification-', dir=REPO / 'target'))
     receipt = {'complete': False, 'started_at': datetime.now(timezone.utc).isoformat(), 'model':args.model,
-        'model_digest':args.digest,'model_bytes':total,'version':version,'ollama_sha256':digest(args.ollama)}
+        'model_digest':args.digest,'model_bytes':total,'version':version,'ollama_sha256':digest(args.ollama),'suite':args.suite}
+    receipt['configured_runner_cache'] = {'ram_limit_mib':PROMPT_CACHE_MIB,'context_checkpoints':CONTEXT_CHECKPOINTS,
+        'scope':'owned child runtime only; inspect native logs for backend acceptance'}
+    if args.browser: receipt['browser_sha256']=digest(args.browser)
     paths = [Path(__file__), REPO / 'tools/owned_process.py', REPO / 'tools/qualify_rehearsal.py',
         REPO / 'apps/web_app/src/source_answer_qualification.rs', REPO / 'apps/web_app/src/answer_task.rs',
         REPO / 'apps/web_app/src/source_answer.rs', REPO / 'crates/waypoint_inference/src/ollama.rs',
         REPO / 'apps/web_app/src/main.rs', REPO / 'apps/web_app/src/fit_task.rs',
         REPO / 'apps/web_app/src/draft_task.rs', REPO / 'apps/web_app/src/gpu_resources.rs',
         REPO / 'Cargo.lock', REPO / 'Cargo.toml', REPO / 'apps/web_app/Cargo.toml',
-        REPO / 'apps/web_app/scripts/build-windows.ps1']
+        REPO / 'apps/web_app/scripts/build-windows.ps1', REPO / 'apps/web_app/src/visual_review.rs',
+        REPO / 'apps/web_app/src/source_vision_qualification.rs', REPO / 'crates/waypoint_browser/src/lib.rs',
+        REPO / 'crates/waypoint_browser/src/cdp.rs']
     hashes = lambda: {p.relative_to(REPO).as_posix(): digest(p) for p in paths}
     receipt['sources'] = hashes()
     memory = RamSamples(); memory.thread.start()
@@ -338,19 +380,18 @@ def main():
         shutil.copyfile(dll, runtime_folder / dll_name)
         receipt['openssl_runtime_sha256'] = digest(runtime_folder / dll_name)
         if receipt['openssl_runtime_sha256'] != build_receipt['openssl_sha256']: raise RuntimeError('Private runtime copy changed')
-        receipt['build'] = run([shell, '-NoProfile', '-NonInteractive', '-File', str(REPO / 'apps/web_app/scripts/build-windows.ps1'),
-            '-Test', '-TestFilter', 'source_answer::tests'], environment, folder / 'build.private.log', 600)
+        receipt['build'] = run([*build_command, '-Test', '-NoRun'], environment, folder / 'build.private.log', 600)
         if receipt['build']['exit_code']: raise RuntimeError('Managed qualification build failed')
         build = (folder / 'build.private.log').read_text(encoding='utf-8')
-        receipt['build_tests'] = test_denominator(build, 'rust', 7)
-        binaries = re.findall(r'Running unittests .*? \(([^\r\n]+\.exe)\)', build)
+        receipt['test_compilation_only'] = True
+        binaries = re.findall(r'Executable unittests .*? \(([^\r\n]+\.exe)\)', build)
         if len(binaries) != 1: raise RuntimeError('Managed build did not identify one native test binary')
         binary = (REPO / binaries[0]).resolve(strict=True)
         if not binary.is_relative_to((REPO / 'target').resolve()): raise RuntimeError('Unexpected test binary path')
         receipt['test_binary_sha256'] = digest(binary)
         copy_model(store, folder / 'models', files)
         config = {'ollama':str(args.ollama), 'shell':shell, 'model':args.model, 'digest':args.digest, 'nonce':uuid.uuid4().hex,
-            'version':version, 'test_binary':str(binary)}
+            'version':version, 'test_binary':str(binary),'suite':args.suite,'browser':str(args.browser) if args.browser else None}
         config_path = folder / 'runtime-config.private.json'
         config_path.write_text(json.dumps(config), encoding='utf-8')
         environment['WAYPOINT_OWNED_ANSWER_NONCE'] = config['nonce']

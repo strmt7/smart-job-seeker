@@ -14,6 +14,15 @@ prevent unrelated software from consuming it between observations.
 
 ## Hard limitations (known, deliberate, documented)
 
+Current local vision has concrete raw transcription errors even on fictional
+controls. [The eight-condition review](docs/LOCAL_VISION_QUALIFICATION.md) passed
+with actual DOM checks and focused recapture, while raw transcription remained
+six of eight. Test-only runner cache limits do not cap a separately managed
+product Ollama service. Multilingual/unseen forms and full captured-site journeys
+remain unqualified. The final linked checks passed after the pre-existing Visual
+Studio update completed; its earlier build interruption remains in the evidence.
+These are distinct scopes, not universal model or resource guarantees.
+
 1. **Job postings are stored in plaintext on purpose; the candidate's own material is sealed.**
    Postings are public data and SQLite has to search them, so they sit in ordinary
    columns. Everything the candidate *writes* about themselves — the facts they

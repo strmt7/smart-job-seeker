@@ -26,6 +26,25 @@ repo up cold. Read this first, then `README.md`, then the references below.
   concerns. Reuse exact-commit evidence with its scope. Prefer existing shared
   mechanisms over parallel implementations. Never weaken reasoning, criteria,
   assertions, coverage, privacy or cleanup to save tokens.
+- Use progressive evidence gathering: start with the changed paths and the
+  question to resolve, retrieve a few relevant symbols, then read their callers
+  or contracts only as needed. Before each large tool call, choose the fields,
+  line range and output budget that can answer that question. If output is
+  truncated, narrow the query; do not repeatedly request the same oversized dump.
+  Keep full native reports privately and return a compact result, artifact path,
+  exit status and live handle when work is still running.
+- Batch independent reads/checks in one call and inspect every result; keep edits,
+  dependent operations and resource-heavy work sequential where required. Reuse
+  an existing running handle instead of restarting work after an observation
+  timeout. Do not add a new abstraction, helper, dependency, web search or agent
+  merely to save conversational tokens when an existing mechanism suffices.
+- Carry forward decisions and unresolved failures in a short handoff containing
+  current source identity, affected paths, measured results, remaining work and
+  owned resources. Consult that evidence instead of reconstructing the whole
+  history. Reuse checks only when their relevant source, dependencies, inputs and
+  environment are unchanged; label older evidence and narrower scopes honestly.
+  Token savings must come from irrelevant work and repeated context, never from
+  reducing model reasoning, weakening review or silently lowering test criteria.
 - Prefer substantial local development batches and reviewable local commits.
   Push tested, coherent checkpoints to `main` less frequently; avoid separate
   pushes for routine status/documentation updates or every small edit unless
@@ -229,6 +248,17 @@ used by development tools and tests. Do not add WSL or Docker as product require
 
 ## Real pitfalls already hit (don't rediscover these)
 
+- A fully GPU-loaded model can still retain substantial host-memory prompt
+  checkpoints. The owned Ollama qualifier uses a 512 MiB saved-prompt cache and
+  one checkpoint per slot; verify backend acceptance in its native log. Retain
+  incomplete native responses and distinguish runtime allocation failures from
+  model mistakes or host RAM exhaustion. Never diagnose an output limit without
+  its completion metadata. See `docs/LOCAL_VISION_QUALIFICATION.md`.
+- Build contract fixtures must restore their caller's complete process
+  environment on success and failure. Remove added variables through the Env
+  provider; assigning null through the native environment API left present empty
+  variables on the measured host. Do not let deleted fake SDK paths reach later
+  builds or modify an externally owned toolchain update to work around them.
 - Keep source citations in structured metadata, not newly added numeric markers
   in usable template text. Preserve references actually present in the original.
   Candidate history must not be rewritten to match the hiring employer or role.

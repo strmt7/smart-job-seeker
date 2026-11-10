@@ -10,6 +10,7 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+from unittest.mock import MagicMock
 
 TOOLS = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('owned_answers', TOOLS / 'qualify_owned_answers.py')
@@ -18,6 +19,23 @@ with patch.object(sys, 'path', [str(TOOLS), *sys.path]): spec.loader.exec_module
 
 
 class OwnedAnswerQualification(unittest.TestCase):
+    def test_metadata_timeout_retries_the_same_live_server_without_restarting(self):
+        server=MagicMock();server.poll.return_value=None
+        errors=[];config={'version':'fixture','model':'fictional:tiny','digest':'a'*64}
+        with patch.object(qualification,'ensure_host_reserve'), patch.object(qualification.time,'sleep'), \
+                patch.object(qualification,'local_json',side_effect=[TimeoutError(),{'version':'fixture'},{'models':[{'name':'fictional:tiny','digest':'a'*64}]}]) as query:
+            self.assertEqual(qualification.wait_runtime_ready(server,'http://127.0.0.1:49999',config,errors),2)
+        self.assertEqual(query.call_count,3);self.assertEqual(errors,['TimeoutError'])
+        server.kill.assert_not_called()
+
+    def test_readiness_refuses_expired_observation_budget_and_wrong_runtime(self):
+        server=MagicMock();server.poll.return_value=None
+        config={'version':'fixture','model':'fictional:tiny','digest':'a'*64}
+        with patch.object(qualification,'ensure_host_reserve'), patch.object(qualification.time,'monotonic',side_effect=[0,61]), self.assertRaises(RuntimeError):
+            qualification.wait_runtime_ready(server,'http://127.0.0.1:49999',config,[])
+        with patch.object(qualification,'ensure_host_reserve'), patch.object(qualification,'local_json',return_value={'version':'different'}), self.assertRaises(RuntimeError):
+            qualification.wait_runtime_ready(server,'http://127.0.0.1:49999',config,[])
+
     def test_cleanup_removes_only_owned_disposable_copies_and_keeps_reports(self):
         with tempfile.TemporaryDirectory(prefix='owned-answer-qualification-', dir=qualification.REPO / 'target') as temp:
             folder = Path(temp)
@@ -95,9 +113,22 @@ class OwnedAnswerQualification(unittest.TestCase):
             self.assertEqual(env['OLLAMA_NUM_PARALLEL'], '1')
             self.assertEqual(env['OLLAMA_MAX_LOADED_MODELS'], '1')
             self.assertEqual(env['OLLAMA_NOPRUNE'], '1')
+            self.assertEqual(env['LLAMA_ARG_CACHE_RAM'], '512')
+            self.assertEqual(env['LLAMA_ARG_CTX_CHECKPOINTS'], '1')
             for key in ['USERPROFILE','APPDATA','LOCALAPPDATA','TEMP','TMP']:
                 self.assertTrue(Path(env[key]).is_relative_to(folder))
         self.assertEqual(dict(os.environ), before)
+
+    def test_unbounded_inherited_prompt_caches_are_scoped_to_owned_children(self):
+        with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {
+            'LLAMA_ARG_CACHE_RAM':'-1', 'LLAMA_ARG_CTX_CHECKPOINTS':'1000'
+        }):
+            folder=Path(temp)
+            env=qualification.server_environment(folder,folder/'models',49151)
+            self.assertEqual(env['LLAMA_ARG_CACHE_RAM'],'512')
+            self.assertEqual(env['LLAMA_ARG_CTX_CHECKPOINTS'],'1')
+            self.assertEqual(os.environ['LLAMA_ARG_CACHE_RAM'],'-1')
+            self.assertEqual(os.environ['LLAMA_ARG_CTX_CHECKPOINTS'],'1000')
 
     def test_unknown_shared_residency_never_passes(self):
         for value in [{}, {'models':None}, {'models':''}, {'models':{}}]:

@@ -12,9 +12,27 @@ scope.
 The latest [owned local-model qualification](OWNED_ANSWER_QUALIFICATION.md)
 exposed and corrected a concrete factual-revision defect on the selected 12B
 model. The same three fictional criteria pass after bounded correction; this
-remains narrow evidence. The `f4d50769` hosted browser job failed two cases while
-the other jobs, coverage and all three CodeQL analyses passed. Local corrections
-preserve the browser assertions; exact-SHA hosted confirmation is still pending.
+remains narrow evidence. After the `f4d50769` browser failures, exact-commit
+`b56d01bb` CI passed all five jobs, including browser. All three of that commit's
+CodeQL analyses ingested without errors and reported zero results.
+
+The [local visual criteria](LOCAL_VISION_QUALIFICATION.md) exposed two raw model
+errors: placeholder confirmation and a changed diacritic. The existing DOM guard
+and a focused recapture met all eight combined criteria; raw transcription
+remains six of eight. An owned-runner checkpoint cache allocation failure was
+resolved by child-only cache limits without reducing model/context. After the
+pre-existing compiler update completed, 1,238 ordinary workspace tests passed
+(582 ignored) and the final nine-call model run met the same criteria. The failed
+linker build and earlier model failures are retained. Broad unseen-form
+intelligence remains unproven.
+
+The interface can now try a closeup for a uniquely associated missing
+transcription while preserving the existing ambiguity, freshness and value
+checks. All 169 interface scripts and 47 tool checks pass. The owned compiled
+rendered fixture passed 18 width/actual-zoom groups, with screenshots matching
+the inspected source pass byte for byte. [Evidence](VISUAL_FOLLOWUP.md) records
+the deliberately substituted response scope; this is separate from the actual
+model criteria and does not qualify captured employer-form completion.
 
 [Saved-question preparation](SAVED_QUESTION_DRAFTS.md) now connects bounded public
 observations to the existing answer generator and immutable per-attempt draft

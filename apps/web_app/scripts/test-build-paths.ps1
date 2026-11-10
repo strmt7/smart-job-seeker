@@ -1,4 +1,8 @@
 $ErrorActionPreference = 'Stop'
+$testEnvironmentBefore = @{}
+foreach ($entry in [Environment]::GetEnvironmentVariables('Process').GetEnumerator()) {
+    $testEnvironmentBefore[$entry.Key] = [string]$entry.Value
+}
 $script = Join-Path $PSScriptRoot 'build-windows.ps1'
 $tokens = $null
 $errors = $null
@@ -118,6 +122,14 @@ try {
     $encodedWasPresent = Test-Path Env:CARGO_ENCODED_RUSTFLAGS
     & $script -OpenSslRoot $fakeOpenSsl -StaticCrt -Test -TestFilter fixture
     if ($global:WaypointBuildTestCargoArgs -contains '--workspace' -or $global:WaypointBuildTestCargoArgs -notcontains 'waypoint_web') { throw 'Default test package selection changed.' }
+    & $script -OpenSslRoot $fakeOpenSsl -StaticCrt -Test -NoRun
+    if ($global:WaypointBuildTestCargoArgs -notcontains '--no-run' -or $global:WaypointBuildTestCargoArgs -contains '--ignored') { throw 'Compile-only tests lost their execution boundary.' }
+    $compileOnlyRefused = $false
+    try { & $script -NoRun -OpenSslRoot $fakeOpenSsl } catch {
+        if ($_.Exception.Message -notmatch '-NoRun requires') { throw }
+        $compileOnlyRefused = $true
+    }
+    if (-not $compileOnlyRefused) { throw 'Compile-only mode was accepted without test compilation.' }
     & $script -OpenSslRoot $fakeOpenSsl -StaticCrt -Workspace -Test -TestFilter fixture
     if ($global:WaypointBuildTestCargoArgs -notcontains '--workspace' -or $global:WaypointBuildTestCargoArgs -contains '-p' -or $global:WaypointBuildTestCargoArgs -notcontains 'fixture') { throw 'Workspace tests did not preserve scope/filter.' }
     & $script -OpenSslRoot $fakeOpenSsl -StaticCrt -Workspace -Clippy
@@ -169,11 +181,23 @@ try {
     }
     if (-not $refused) { throw 'Build without Cargo executable was accepted.' }
 } finally {
-    Remove-Variable -Scope Global -Name WaypointBuildTestCargoArgs -ErrorAction SilentlyContinue
-    if (Test-Path -LiteralPath $fixture) {
-        $resolved = (Resolve-Path -LiteralPath $fixture).Path
-        if ((Split-Path -Parent $resolved) -ne $target -or -not (Split-Path -Leaf $resolved).StartsWith('waypoint-runtime-fixture-')) { throw 'Refusing to remove an unexpected test directory.' }
-        Remove-Item -LiteralPath $resolved -Recurse -Force
+    try {
+        Remove-Variable -Scope Global -Name WaypointBuildTestCargoArgs -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $fixture) {
+            $resolved = (Resolve-Path -LiteralPath $fixture).Path
+            if ((Split-Path -Parent $resolved) -ne $target -or -not (Split-Path -Leaf $resolved).StartsWith('waypoint-runtime-fixture-')) { throw 'Refusing to remove an unexpected test directory.' }
+            Remove-Item -LiteralPath $resolved -Recurse -Force
+        }
+    } finally {
+        $testEnvironmentAfter = [Environment]::GetEnvironmentVariables('Process')
+        foreach ($key in $testEnvironmentAfter.Keys) {
+            if (-not $testEnvironmentBefore.ContainsKey($key)) { Remove-Item -LiteralPath ('Env:' + $key) -ErrorAction SilentlyContinue }
+        }
+        foreach ($key in $testEnvironmentBefore.Keys) {
+            if ([Environment]::GetEnvironmentVariable($key,'Process') -cne $testEnvironmentBefore[$key]) {
+                Set-Item -LiteralPath ('Env:' + $key) -Value $testEnvironmentBefore[$key]
+            }
+        }
     }
 }
 Write-Host 'Build helper path tests passed.'
