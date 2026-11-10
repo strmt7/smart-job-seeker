@@ -14,6 +14,11 @@ fictional archives, preserving HTTPS origins with no live-fetch fallback. Its
 separate functional check does not qualify remaining network/broker channels or
 server-dependent steps. Schema 1 local-file behavior remains supported.
 
+The [recorded-frame control checkpoint](g1/CAPTURED_FRAME_CONTROLS_2026-11-10.md)
+adds explicit, leased entry into direct recorded cross-origin targets. Its six
+native control criteria and adversarial point/scope checks do not enable the
+web interface, qualify local-model review or close the isolation gates below.
+
 ## Mechanism and budgets
 
 `CdpDriver::launch_rehearsal` starts an embedded, standard-library Python worker

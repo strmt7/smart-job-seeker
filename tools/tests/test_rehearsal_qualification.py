@@ -95,5 +95,26 @@ class TestQualificationDenominators(unittest.TestCase):
             self.assertTrue((folder / 'result.private.json').is_file())
 
 
+class TestReplaySelection(unittest.TestCase):
+    def test_frame_control_selection_refuses_mixed_denominators_before_any_runtime_work(self):
+        spec = importlib.util.spec_from_file_location('replay_selection', TOOLS / 'qualify_replay.py')
+        replay = importlib.util.module_from_spec(spec)
+        with patch.object(sys, 'path', [str(TOOLS), *sys.path]):
+            spec.loader.exec_module(replay)
+        for option in ['--frame-churn', '--alias-lifecycle']:
+            with self.subTest(option=option), \
+                    patch.object(sys, 'argv', ['qualify_replay.py', '--engine', 'unused', '--frame-controls', option]), \
+                    patch.object(replay, 'inventory') as inventory, \
+                    patch.object(replay.tempfile, 'mkdtemp') as allocate, \
+                    patch.object(replay, 'run') as launch, \
+                    patch.object(sys, 'stderr'):
+                with self.assertRaises(SystemExit) as failure:
+                    replay.main()
+                self.assertEqual(failure.exception.code, 2)
+                inventory.assert_not_called()
+                allocate.assert_not_called()
+                launch.assert_not_called()
+
+
 if __name__ == '__main__':
     unittest.main()

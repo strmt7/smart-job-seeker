@@ -32,8 +32,10 @@ function Get-CimInstance {
     [pscustomobject]@{ProcessId=$PID;ParentProcessId=0;Name='powershell.exe';CommandLine='fixture observer';CreationDate=[datetime]::UtcNow}
 }
 """
+        if observer == 0 and not any(row['ProcessId'] == 9 for row in rows):
+            rows = [self.row(9, 0, 1, 'fixture-parent.exe'), *rows]
         env = {**os.environ, 'WAYPOINT_TEST_PROFILE': 'fictional-profile',
-               'WAYPOINT_FAKE_ROWS': json.dumps(rows),
+               'WAYPOINT_FAKE_ROWS': json.dumps(rows), 'WAYPOINT_TEST_PARENT': '9',
                'WAYPOINT_TEST_IDENTITIES': json.dumps(identities or [])}
         result = subprocess.run([SHELL, '-NoProfile', '-NonInteractive', '-Command',
                                  fixture + json.loads(scripts[observer])], env=env,
@@ -68,6 +70,35 @@ function Get-CimInstance {
         result = self.observe([self.row(100, 9, None, command='fictional-profile')])
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(b'creation time unavailable', result.stderr)
+
+    def test_packaged_or_renamed_browser_uses_actual_ancestry_instead_of_its_name(self):
+        rows = [self.row(100, 9, 1000, 'packaged-headless.exe', '--user-data-dir=fictional-profile'),
+                self.row(101, 100, 1001, 'fixture-renderer.exe')]
+        result = self.observe(rows)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual({row['pid'] for row in json.loads(result.stdout)}, {100, 101})
+
+    def test_profile_lookalike_outside_the_owned_parent_is_not_adopted(self):
+        rows = [self.row(100, 9, 1000, command='--user-data-dir=fictional-profile'),
+                self.row(200, 99, 1000, command='--user-data-dir=fictional-profile'),
+                self.row(201, 200, 1001)]
+        result = self.observe(rows)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([row['pid'] for row in json.loads(result.stdout)], [100])
+
+    def test_reused_helper_pid_cannot_claim_an_older_profile_owner(self):
+        rows = [self.row(9, 0, 2000, 'fixture-parent.exe'),
+                self.row(100, 9, 1000, command='--user-data-dir=fictional-profile')]
+        result = self.observe(rows)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), [])
+
+    def test_cycle_cannot_establish_a_connection_to_the_owned_parent(self):
+        rows = [self.row(100, 101, 1000, command='--user-data-dir=fictional-profile'),
+                self.row(101, 100, 1000)]
+        result = self.observe(rows)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), [])
 
     def test_survivor_check_requires_same_pid_and_creation_time(self):
         rows = [self.row(100, 9, 2000), self.row(101, 9, 1001)]

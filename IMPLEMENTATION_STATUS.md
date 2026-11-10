@@ -1,3 +1,10 @@
+## Recorded cross-origin controls - 2026-11-10
+
+- The browser engine now offers source-bound frame entry inside isolated frozen-response rehearsal only. Native fictional checks passed text, textarea, checkbox, select, PDF upload and a section/follow-up journey; raw/expired selectors, reloads, click-point overlays, transforms and removed frames were checked separately. Frame images come from the verified parent viewport. Ordinary/live cross-origin forms retain their manual route.
+- [Evidence and limits](docs/g1/CAPTURED_FRAME_CONTROLS_2026-11-10.md) distinguish the engine API from the pending web/local-model integration. No real application form, application email or release was involved.
+- Current checks passed 1,241 ordinary workspace tests (584 opt-in cases ignored), 137 browser fixtures, native caret/frame checks and 52 tool contracts, with Clippy/format/build passing. A packaged-engine observer and inconsistent inline-frame budget were corrected; failed probes remain in the evidence. Final audit found no matching processes or resident models and 33,385,619,456 available physical bytes. Automatic review blocked cleanup of one failed-run temporary profile folder; it remains.
+
+
 ## Offline frame/session lifecycle - 2026-11-10
 
 - Fixed a reproduced live-session budget leak: replacing frames no longer leaves their closed sessions, aliases or descendants in the active inventory. Pending callers receive explicit errors/unknowns; late acknowledgements cannot resume a replacement target, report success or expose stale reads. Fresh attachments must establish interception again. Historical bookkeeping is separately bounded.

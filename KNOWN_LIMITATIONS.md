@@ -1,5 +1,7 @@
 # Known limitations register (T050)
 
+Recorded cross-origin controls have a [narrow native engine qualification](docs/g1/CAPTURED_FRAME_CONTROLS_2026-11-10.md), including uploads and one section transition. They are not yet connected to the web interface or local-model agent. Ordinary/live frames, nested cross-origin targets, transformed layouts and full child-document review remain manual or unqualified. No broader no-send or release-readiness claim follows from this result.
+
 Last updated: 2026-09-25. Honesty rules from AGENTS.md apply: absence from this list is not a claim of absence of problems.
 
 This register is a historical gate snapshot. For subsequent changes and current web-prototype limitations, see `IMPLEMENTATION_STATUS.md` and `docs/WEB_PROTOTYPE_CHECKPOINT.md`; older entries below may describe behavior that has since changed.

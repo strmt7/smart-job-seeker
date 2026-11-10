@@ -1,3 +1,8 @@
+## Recorded cross-origin controls - 2026-11-10
+
+- The browser engine now offers source-bound frame entry inside isolated frozen-response rehearsal only. Native fictional checks passed text, textarea, checkbox, select, PDF upload and a section/follow-up journey; raw/expired selectors, reloads, click-point overlays, transforms and removed frames were checked separately. Frame images come from the verified parent viewport. Ordinary/live cross-origin forms retain their manual route.
+- [Evidence and limits](g1/CAPTURED_FRAME_CONTROLS_2026-11-10.md) distinguish the engine API from the pending web/local-model integration. No real application form, application email or release was involved.
+
 # Browser-interface prototype checkpoint
 
 Latest template checkpoint, 2026-11-10: **Suggest template changes** selects
@@ -461,6 +466,8 @@ Form attachment now uses a bounded Windows-safe temporary filename, retains the 
 Wider-web search now retains up to 100 valid candidates from each provider page, matching its existing 100-item examination bound; previously it stopped after 30 and could leave additional results on the same page unexamined. The global 600-link batch cap, single in-flight request, 2 MiB response cap and five-page-per-phrase limit remain. If a page has more valid candidates than the remaining batch budget, coverage reports how many were omitted instead of describing them as unexamined. A fictional loopback provider returned 70 candidates on one page and a later new result after 70 duplicates; the search tests passed. A rendered local mock exercised pagination and the coverage notice. These are unverified links, not confirmed vacancies or application pages; no live provider or employer was contacted.
 
 The search parser now examines up to 500 provider entries per page while retaining at most 100 new candidates. This allows later unique results to be found when earlier entries repeat a previous page; the existing batch, response-size and request limits remain. A fictional loopback provider returned 100 repeated results followed by one new result, which was retained. Pages with unexamined entries are still reported as limited. This does not verify vacancies or establish live-provider coverage.
+- Current checks passed 1,241 ordinary workspace tests (584 opt-in cases ignored), 137 browser fixtures, native caret/frame checks and 52 tool contracts, with Clippy/format/build passing. A packaged-engine observer and inconsistent inline-frame budget were corrected; failed probes remain in the evidence. Final audit found no matching processes or resident models and 33,385,619,456 available physical bytes. Automatic review blocked cleanup of one failed-run temporary profile folder; it remains.
+
 
 ## Fit input coverage — 2026-10-30
 

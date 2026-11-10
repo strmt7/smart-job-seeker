@@ -20,7 +20,9 @@ def main():
     parser.add_argument('--python',type=Path,default=Path(sys.executable))
     parser.add_argument('--frame-churn',action='store_true',help='Replace 80 cross-site recorded frames before continuing the original fixture')
     parser.add_argument('--alias-lifecycle',action='store_true',help='Also verify physical alias closure and fresh attachment on a live target')
+    parser.add_argument('--frame-controls',action='store_true',help='Qualify a recorded child target with actual typed controls')
     args=parser.parse_args()
+    if args.frame_controls and (args.frame_churn or args.alias_lifecycle):parser.error('Frame controls run separately from lifecycle/churn qualification')
     if os.name!='nt' or not args.engine.is_absolute() or not args.python.is_absolute():
         parser.error('Windows and explicit absolute runtime paths required')
     files=inventory(args.engine);args.engine=args.engine.resolve(strict=True)
@@ -29,7 +31,7 @@ def main():
     resources=[]
     def add(url,name,body,mime,method='GET',request=b''):
         data=body.encode() if isinstance(body,str) else body
-        if args.frame_churn and name=='index.html':
+        if (args.frame_churn or args.frame_controls) and name=='index.html':
             data += b'<label>Frame cycles<input id="churn-status" value="0"></label><button id="start-churn" type="button">Start frame cycles</button><label>Interactive frame status<input id="interactive-status" value="idle"></label><button id="open-inspected" type="button">Open interactive frame</button><button id="close-inspected" type="button">Close interactive frame</button><script>(()=>{const status=document.getElementById(\'churn-status\'),button=document.getElementById(\'start-churn\');let frame=null,count=0;const spawn=()=>{frame=document.createElement(\'iframe\');frame.src=\'https://steps.example.invalid/frame\';document.body.append(frame);};window.addEventListener(\'message\',event=>{if(event.origin!==\'https://steps.example.invalid\'||event.source!==frame?.contentWindow||event.data!==\'frame-cycle-ready\')return;frame.remove();frame=null;status.value=String(++count);if(count<80)setTimeout(spawn,15);});button.addEventListener(\'click\',()=>{button.disabled=true;spawn();});let inspected=null;document.getElementById(\'open-inspected\').addEventListener(\'click\',()=>{inspected=document.createElement(\'iframe\');inspected.src=\'https://steps.example.invalid/interactive\';document.body.append(inspected);});window.addEventListener(\'message\',event=>{if(event.origin===\'https://steps.example.invalid\'&&event.source===inspected?.contentWindow&&event.data===\'interactive-frame-ready\')document.getElementById(\'interactive-status\').value=\'ready\';});document.getElementById(\'close-inspected\').addEventListener(\'click\',()=>{inspected?.remove();inspected=null;document.getElementById(\'interactive-status\').value=\'removed\';});})();</script>'
         (content/name).write_bytes(data)
         resources.append({'url':url,'method':method,'request_body_sha256':hashlib.sha256(request).hexdigest(),
@@ -45,23 +47,24 @@ def main():
     add('https://fixture.invalid/worker-data','worker-data.bin','{"value":"recorded-worker"}','application/json')
     if args.frame_churn:
         add('https://steps.example.invalid/frame','frame-cycle.bin','<!doctype html><title>Fictional cycle frame</title><script>parent.postMessage("frame-cycle-ready","https://fixture.invalid")</script>','text/html')
-    if args.frame_churn:
-        add('https://steps.example.invalid/interactive','interactive-frame.bin','<!doctype html><label>Cycle answer<input id="cycle-answer"></label><script>parent.postMessage("interactive-frame-ready","https://fixture.invalid")</script>','text/html')
+    if args.frame_churn or args.frame_controls:
+        add('https://steps.example.invalid/interactive','interactive-frame.bin','<!doctype html><label>Cycle answer<input id="cycle-answer"></label><label>Remote work<input type="checkbox" id="remote"></label><label>Team<select id="team"><option>Choose</option><option>Platform</option></select></label><label>Motivation<textarea id="motivation"></textarea></label><label>Resume<input type="file" id="child-resume" accept=".pdf"></label><button type="button" id="child-next" onclick="document.getElementById(\'child-later\').hidden=false">Continue section</button><section id="child-later" hidden><label>Followup<input id="followup"></label></section><script>parent.postMessage("interactive-frame-ready","https://fixture.invalid")</script>','text/html')
     (content/'fictional.pdf').write_bytes(fictional_pdf())
     manifest={'schema':1,'body_representation':'decoded_http','entry_url':'https://fixture.invalid/form#application','resources':resources}
     (content/'replay.json').write_text(json.dumps(manifest),encoding='utf-8')
     config={'schema':2,'engine_root':str(args.engine),'engine_files':files,'content_root':str(content),
             'content_files':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in content.iterdir()},
-            'entry':'index.html','replay_manifest':'replay.json','seconds':120}
+            'entry':'index.html','replay_manifest':'replay.json','seconds':180 if args.frame_controls else 120}
     path=folder/'configuration.private.json';path.write_text(json.dumps(config),encoding='utf-8')
-    sources=[REPO/p for p in ['crates/waypoint_browser/src/lib.rs','crates/waypoint_browser/src/rehearsal.rs','crates/waypoint_browser/src/rehearsal_worker.py','crates/waypoint_browser/src/rehearsal_replay.py','crates/waypoint_browser/tests/rehearsal_replay_live.rs','tools/owned_process.py','tools/qualify_rehearsal.py','tools/qualify_history_ui.py','tools/qualify_replay.py','crates/waypoint_browser/src/replay_lifecycle_qualification.rs']]
+    sources=[REPO/p for p in ['crates/waypoint_browser/src/lib.rs','crates/waypoint_browser/src/captured_frame.rs','crates/waypoint_browser/src/rehearsal.rs','crates/waypoint_browser/src/rehearsal_worker.py','crates/waypoint_browser/src/rehearsal_replay.py','crates/waypoint_browser/tests/rehearsal_replay_live.rs','tools/owned_process.py','tools/qualify_rehearsal.py','tools/qualify_history_ui.py','tools/qualify_replay.py','crates/waypoint_browser/src/replay_lifecycle_qualification.rs']]
     def hashes():return {str(p.relative_to(REPO)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sources}
-    report={'complete':False,'frame_churn':args.frame_churn,'alias_lifecycle':args.alias_lifecycle,'sources':hashes(),'config_sha256':hashlib.sha256(path.read_bytes()).hexdigest(),'scope':'fictional HTTPS-origin recorded responses only; no general network isolation claim'}
+    report={'complete':False,'frame_churn':args.frame_churn,'alias_lifecycle':args.alias_lifecycle,'frame_controls':args.frame_controls,'sources':hashes(),'config_sha256':hashlib.sha256(path.read_bytes()).hexdigest(),'scope':'fictional HTTPS-origin recorded responses only; no general network isolation claim'}
     environment=os.environ.copy();environment.update(WAYPOINT_REHEARSAL_CONFIG=str(path),WAYPOINT_REHEARSAL_CONFIG_SHA256=report['config_sha256'],WAYPOINT_REHEARSAL_PYTHON=str(args.python),WAYPOINT_REPLAY_FRAME_CHURN='1' if args.frame_churn else '0',CARGO_BUILD_JOBS='2')
     memory=RamSamples();memory.thread.start()
     try:
         log=folder/'native.private.log'
-        report['run']=run([shutil.which('cargo'),'test','-p','waypoint_browser','--test','rehearsal_replay_live','--','--ignored','--nocapture','--test-threads=1'],environment,log,240)
+        selection=['--lib','replay_lifecycle_qualification::recorded_child_scope_preserves_origin_controls_and_parent'] if args.frame_controls else ['--test','rehearsal_replay_live']
+        report['run']=run([shutil.which('cargo'),'test','-p','waypoint_browser',*selection,'--','--ignored','--nocapture','--test-threads=1'],environment,log,240)
         if report['run']['exit_code']:raise RuntimeError('Replay failed; inspect '+str(log))
         report['tests']=test_denominator(log.read_text(encoding='utf-8'),'rust',1)
         native=json.loads((folder/'native.private.json').read_text());assert native['complete'] is True

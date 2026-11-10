@@ -9,6 +9,14 @@ scope.
 
 ## Current results
 
+The latest local [recorded-frame engine check](g1/CAPTURED_FRAME_CONTROLS_2026-11-10.md)
+completed six control criteria, including PDF upload and a section transition,
+with scope/reload/overlay/transform/removal refusals and frame-specific images.
+This is not yet a web-interface or local-model integration. Next connect blind
+frame-specific visual review, explicit scope selection and attempt records in
+contained rehearsal, while keeping the broader isolation gate closed to real
+candidate entry. Developer screenshot inspection is not model qualification.
+
 The latest local [offline lifecycle check](g1/OFFLINE_REPLAY_LIFECYCLE_2026-11-10.md)
 fixes retained closed sessions that exhausted the live-session ceiling. Native
 replay completed 80 cross-site target replacements and continued the existing

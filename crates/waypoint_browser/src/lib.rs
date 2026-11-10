@@ -20,6 +20,8 @@
 //! - Captchas and login walls are reported as walls. Nothing tries to climb
 //!   them.
 
+mod captured_frame;
+pub use captured_frame::{CapturedFrame, CapturedFrames};
 pub mod capture_discovery;
 pub mod capture_privacy;
 pub mod capture_session;
@@ -48,6 +50,89 @@ fn is_stale_inspection_node(error: &CdpError) -> bool {
 fn is_disappeared_node_error(message: &str) -> bool {
     message.contains("DOM.resolveNode: protocol error")
         && message.contains("No node with given id found")
+}
+
+fn history_requires_top_level(error: &CdpError) -> bool {
+    error
+        .0
+        .strip_prefix("Page.getNavigationHistory: protocol error ")
+        .and_then(|body| serde_json::from_str::<Value>(body).ok())
+        .is_some_and(|reply| {
+            reply["code"] == -32000
+                && reply["message"] == "Command can only be executed on top-level targets"
+        })
+}
+
+fn embedded_frame_url(tree: &Value) -> Result<String, DriverError> {
+    let invalid =
+        || DriverError("Embedded document URL could not be verified; review it manually".into());
+    let frame = tree.pointer("/frameTree/frame").ok_or_else(invalid)?;
+    let id = frame["id"]
+        .as_str()
+        .filter(|v| !v.is_empty() && v.len() <= 512)
+        .ok_or_else(invalid)?;
+    let parent = frame["parentId"]
+        .as_str()
+        .filter(|v| !v.is_empty() && v.len() <= 512)
+        .ok_or_else(invalid)?;
+    if id == parent {
+        return Err(invalid());
+    }
+    let raw = frame["url"]
+        .as_str()
+        .filter(|v| {
+            !v.is_empty()
+                && v.len() <= 4096
+                && !v.chars().any(|c| c.is_control() || c.is_whitespace())
+        })
+        .ok_or_else(invalid)?;
+    let parsed = url::Url::parse(raw).map_err(|_| invalid())?;
+    let security = frame["securityOrigin"]
+        .as_str()
+        .and_then(|v| url::Url::parse(v).ok())
+        .ok_or_else(invalid)?;
+    if !matches!(parsed.scheme(), "https" | "http")
+        || parsed.host_str().is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || !security.username().is_empty()
+        || security.password().is_some()
+        || security.path() != "/"
+        || security.query().is_some()
+        || security.fragment().is_some()
+        || parsed.origin() != security.origin()
+    {
+        return Err(invalid());
+    }
+    let fragment = match frame.get("urlFragment") {
+        None => "",
+        Some(Value::String(value))
+            if value.len() <= 4096 && (value.is_empty() || value.starts_with('#')) =>
+        {
+            value.as_str()
+        }
+        _ => return Err(invalid()),
+    };
+    if fragment
+        .chars()
+        .any(|c| c.is_control() || c.is_whitespace())
+    {
+        return Err(invalid());
+    }
+    let result = if fragment.is_empty() {
+        raw.to_string()
+    } else if let Some(at) = raw.find('#') {
+        if &raw[at..] != fragment {
+            return Err(invalid());
+        }
+        raw.to_string()
+    } else {
+        format!("{raw}{fragment}")
+    };
+    if result.len() > 4096 {
+        return Err(invalid());
+    }
+    Ok(result)
 }
 
 pub const CHANGED_DURING_INSPECTION: &str =
@@ -415,6 +500,7 @@ pub struct CdpDriver {
     document_status: Option<(String, String, u64)>,
     // One owned inspector sheet per main-frame document, empty outside captures.
     capture_sheet: Option<(String, String, String)>,
+    captured_scope: Option<captured_frame::CapturedScope>,
 }
 
 impl CdpDriver {
@@ -522,10 +608,17 @@ impl CdpDriver {
     }
     /// Return the current page URL after any redirects.
     pub fn current_url(&mut self) -> Result<String, DriverError> {
-        let history = self
-            .cdp
-            .call("Page.getNavigationHistory", json!({}))
-            .map_err(derr)?;
+        let history = match self.cdp.call("Page.getNavigationHistory", json!({})) {
+            Ok(history) => history,
+            Err(error) if history_requires_top_level(&error) => {
+                let tree = self
+                    .cdp
+                    .call("Page.getFrameTree", json!({}))
+                    .map_err(derr)?;
+                return embedded_frame_url(&tree);
+            }
+            Err(error) => return Err(derr(error)),
+        };
         let index = history
             .get("currentIndex")
             .and_then(Value::as_u64)
@@ -591,6 +684,7 @@ impl CdpDriver {
     /// Inventory a bounded set of rendered button-like controls for advisory
     /// review. This does not expose a click operation or determine side effects.
     pub fn page_controls(&mut self) -> Result<PageControls, DriverError> {
+        self.refresh_captured_form()?;
         let root = self.document()?;
         let references = button_references(&root);
         let mut candidates = Vec::new();
@@ -663,7 +757,7 @@ impl CdpDriver {
                     controls.push(PageControl {
                         label,
                         disabled: disabled || !available,
-                        selector,
+                        selector: self.captured_selector(&selector),
                     });
                 }
                 Ok(_) => (),
@@ -1649,6 +1743,7 @@ impl CdpDriver {
             pointer_position: None,
             document_status: None,
             capture_sheet: None,
+            captured_scope: None,
         };
         driver.cdp.call("Page.enable", json!({})).map_err(derr)?;
         driver.cdp.call("DOM.enable", json!({})).map_err(derr)?;
@@ -1694,7 +1789,7 @@ impl CdpDriver {
     /// inspector sheet is owned by this driver; restoration is checked after every attempt.
     /// A caret inside a separately styled shadow root or another frame can
     /// remain visible; freshness then stays conservative rather than masking it.
-    fn capture_png(&mut self, parameters: Value) -> Result<Value, DriverError> {
+    fn prepare_capture_styles(&mut self) -> Result<String, DriverError> {
         let tree = self
             .cdp
             .call("Page.getFrameTree", json!({}))
@@ -1732,6 +1827,14 @@ impl CdpDriver {
             .ok_or_else(|| DriverError("Capture stylesheet unavailable".into()))?
             .2
             .clone();
+        Ok(sheet)
+    }
+
+    fn with_capture_styles<T>(
+        &mut self,
+        capture: impl FnOnce(&mut Self) -> Result<T, DriverError>,
+    ) -> Result<T, DriverError> {
+        let sheet = self.prepare_capture_styles()?;
         let applied = self
             .cdp
             .call(
@@ -1739,12 +1842,9 @@ impl CdpDriver {
                 json!({"styleSheetId":sheet,"text":"* { caret-color: transparent !important; }"}),
             )
             .map_err(derr);
-        // Attempt restoration even if applying or capturing reports an error.
-        let captured = applied.and_then(|_| {
-            self.cdp
-                .call("Page.captureScreenshot", parameters)
-                .map_err(derr)
-        });
+        let captured = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            applied.and_then(|_| capture(self))
+        }));
         let restored = self
             .cdp
             .call(
@@ -1753,17 +1853,30 @@ impl CdpDriver {
             )
             .map_err(derr);
         if let Err(error) = restored {
-            // Retain ownership of the sheet; never abandon a possibly active
-            // rule or replace an unrelated inspector stylesheet on recovery.
             return Err(DriverError(format!(
                 "Capture caret rendering could not be restored: {error}"
             )));
         }
-        captured
+        match captured {
+            Ok(result) => result,
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
+    }
+
+    fn capture_png(&mut self, parameters: Value) -> Result<Value, DriverError> {
+        self.with_capture_styles(|driver| {
+            driver
+                .cdp
+                .call("Page.captureScreenshot", parameters)
+                .map_err(derr)
+        })
     }
 
     /// Capture the current viewport for the candidate's review.
     pub fn screenshot_base64(&mut self) -> Result<String, DriverError> {
+        if self.captured_scope.is_some() {
+            return self.screenshot_captured_frame();
+        }
         let result = self.capture_png(json!({"format":"png"}))?;
         let data = result
             .get("data")
@@ -1990,6 +2103,10 @@ impl CdpDriver {
     }
 
     fn screenshot_element(&mut self, selector: &str, context: bool) -> Result<String, DriverError> {
+        if self.captured_scope.is_some() {
+            self.scroll_field_into_view(selector)?;
+            return self.screenshot_captured_frame();
+        }
         let node = self
             .node_id(selector)?
             .ok_or_else(|| DriverError("Field is unavailable for visual capture".into()))?;
@@ -2396,6 +2513,9 @@ impl CdpDriver {
         width: f64,
         height: f64,
     ) -> Result<String, DriverError> {
+        if self.captured_scope.is_some() {
+            return Err(DriverError("Review embedded fields individually; full document capture is unavailable in this view".into()));
+        }
         if !x.is_finite()
             || x < 0.0
             || x > 4096.0
@@ -2468,6 +2588,8 @@ impl CdpDriver {
     }
 
     fn node_id(&mut self, selector: &str) -> Result<Option<u64>, DriverError> {
+        let selector = self.decode_captured_selector(selector)?;
+        let selector = selector.as_ref();
         let root = self.document_with_frames(
             selector.starts_with("waypoint-frame:") || selector.starts_with("waypoint-shadow:"),
         )?;
@@ -3373,6 +3495,18 @@ impl CdpDriver {
                     }
                     let access = self.frame_access(frame_id)?;
                     if access == Some(false) {
+                        // Bound opaque-document inspection regardless of whether
+                        // Chromium supplies it inline or through another target.
+                        if isolated_inspections >= 4 {
+                            if !walls
+                                .iter()
+                                .any(|wall| wall == ISOLATED_FRAME_INSPECTION_UNAVAILABLE)
+                            {
+                                walls.push(ISOLATED_FRAME_INSPECTION_UNAVAILABLE.into());
+                            }
+                            continue;
+                        }
+                        isolated_inspections += 1;
                         let mut has_controls = false;
                         let mut isolated_target = None;
                         let mut child_present = false;
@@ -3392,13 +3526,8 @@ impl CdpDriver {
                             true
                         });
                         if !child_present {
-                            let inspected = if isolated_inspections < 4 {
-                                if let Some(target) = isolated_target {
-                                    isolated_inspections += 1;
-                                    self.isolated_frame_has_controls(&target).ok().flatten()
-                                } else {
-                                    None
-                                }
+                            let inspected = if let Some(target) = isolated_target {
+                                self.isolated_frame_has_controls(&target).ok().flatten()
                             } else {
                                 None
                             };
@@ -5760,6 +5889,11 @@ impl CdpDriver {
                 "Click target is outside the viewport; review it manually".into(),
             ));
         }
+        let captured_point = self.captured_pointer_point(node, x, y)?;
+        let (pointer_session, offset_x, offset_y) = captured_point
+            .as_ref()
+            .map(|point| (point.session.clone(), point.x - x, point.y - y))
+            .unwrap_or_else(|| (self.cdp.session.clone(), 0.0, 0.0));
         // The first position is not observable through CDP. Subsequent moves
         // follow a bounded curve from the last point, with no artificial wait.
         let (start_x, start_y) = self.pointer_position.unwrap_or((x, y));
@@ -5782,9 +5916,10 @@ impl CdpDriver {
             let px = (start_x + dx * progress - dy * curve).clamp(0.0, width - 0.01);
             let py = (start_y + dy * progress + dx * curve).clamp(0.0, height - 0.01);
             self.cdp
-                .call(
+                .call_session(
+                    &pointer_session,
                     "Input.dispatchMouseEvent",
-                    json!({"type":"mouseMoved","x":px,"y":py}),
+                    json!({"type":"mouseMoved","x":px+offset_x,"y":py+offset_y}),
                 )
                 .map_err(derr)?;
             self.pointer_position = Some((px, py));
@@ -5815,6 +5950,8 @@ impl CdpDriver {
                 json!({"kind":"option","label":label,"list_id":list_id,"owner_selector":owner_selector})
             }
         };
+        let mut guard_value = guard_value;
+        guard_value["recorded_frame"] = json!(captured_point.is_some());
         let checked = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function(guard) {
             if (!this.isConnected || this.matches(':disabled') || this.closest('[aria-disabled="true" i]')) return false;
             const unsafeTarget = node => {
@@ -5865,7 +6002,7 @@ impl CdpDriver {
                 if (!hit || (hit !== current && !current.contains(hit))) return false;
                 if (guard.kind !== 'ordinary' && unsafeTarget(hit)) return 'unsafe';
                 if (root.nodeType === 11 && root.host) { current = root.host; continue; }
-                if (view === view.top) return true;
+                if (view === view.top || (guard.recorded_frame && view === window)) return true;
                 const frame = view.frameElement;
                 if (!frame || view.parent.getComputedStyle(frame).transform !== 'none') return false;
                 const bounds = frame.getBoundingClientRect();
@@ -5912,16 +6049,22 @@ impl CdpDriver {
         {
             return Err(DriverError("Click target moved; review it manually".into()));
         }
+        let after = self.captured_pointer_point(node, x, y)?;
+        if after != captured_point {
+            return Err(DriverError(
+                "The embedded click position changed; inspect it again".into(),
+            ));
+        }
         self.cdp
-            .call(
-                "Input.dispatchMouseEvent",
-                json!({ "type": "mousePressed", "x": x, "y": y, "button": "left", "clickCount": 1 }),
+            .call_session(
+                &pointer_session,"Input.dispatchMouseEvent",
+                json!({ "type": "mousePressed", "x": x+offset_x, "y": y+offset_y, "button": "left", "clickCount": 1 }),
             )
             .map_err(derr)?;
         self.cdp
-            .call(
-                "Input.dispatchMouseEvent",
-                json!({ "type": "mouseReleased", "x": x, "y": y, "button": "left", "clickCount": 1 }),
+            .call_session(
+                &pointer_session,"Input.dispatchMouseEvent",
+                json!({ "type": "mouseReleased", "x": x+offset_x, "y": y+offset_y, "button": "left", "clickCount": 1 }),
             )
             .map_err(derr)?;
         self.trace.push(format!("clicked {selector}"));
@@ -6108,6 +6251,11 @@ impl BrowserDriver for CdpDriver {
     }
 
     fn open(&mut self, url: &str) -> Result<LiveForm, DriverError> {
+        if self.captured_scope.is_some() {
+            return Err(DriverError(
+                "Return to the parent page before opening another page".into(),
+            ));
+        }
         self.cdp.take_events();
         let navigation = self
             .cdp
@@ -6215,7 +6363,9 @@ impl BrowserDriver for CdpDriver {
     }
 
     fn inspect_current(&mut self) -> Result<LiveForm, DriverError> {
-        self.inspect_with_retry()
+        self.refresh_captured_form()?;
+        let form = self.inspect_with_retry()?;
+        Ok(self.bind_captured_form(form))
     }
 
     fn text_value_snapshot(
@@ -6566,6 +6716,9 @@ impl BrowserDriver for CdpDriver {
                 },
             ),
             BrowserCommand::Click { selector } => {
+                if self.captured_scope.is_some() {
+                    self.scroll_field_into_view(selector)?;
+                }
                 let Some(node) = self.node_id(selector)? else {
                     return Err(DriverError(format!("{selector} not found")));
                 };
@@ -7703,6 +7856,61 @@ mod traversal_tests {
             true
         });
         assert!(control_text);
+    }
+}
+
+#[cfg(test)]
+mod embedded_url_tests {
+    use super::*;
+    fn tree() -> Value {
+        json!({"frameTree":{"frame":{"id":"child","parentId":"parent","url":"https://frame.example.invalid/RoleAbC","securityOrigin":"https://frame.example.invalid","urlFragment":"#StepAbC"}}})
+    }
+    #[test]
+    fn child_url_preserves_case_and_fragment_without_using_the_parent_history() {
+        assert_eq!(
+            embedded_frame_url(&tree()).unwrap(),
+            "https://frame.example.invalid/RoleAbC#StepAbC"
+        );
+        let mut value = tree();
+        value["frameTree"]["frame"]["url"] = json!("https://frame.example.invalid/RoleAbC#StepAbC");
+        assert_eq!(
+            embedded_frame_url(&value).unwrap(),
+            "https://frame.example.invalid/RoleAbC#StepAbC"
+        );
+    }
+    #[test]
+    fn unknown_or_conflicting_child_metadata_never_becomes_a_verified_url() {
+        for (field, bad) in [
+            ("parentId", Value::Null),
+            ("parentId", json!("child")),
+            ("id", json!("")),
+            ("securityOrigin", json!("https://other.example.invalid")),
+            ("securityOrigin", Value::Null),
+            (
+                "url",
+                json!("https://fictional:credential@frame.example.invalid/"),
+            ),
+            (
+                "securityOrigin",
+                json!("https://frame.example.invalid/not-an-origin"),
+            ),
+            ("urlFragment", json!(format!("#{}", "x".repeat(4096)))),
+            ("url", json!("javascript:alert(1)")),
+            ("url", json!("https://frame.example.invalid/a#Different")),
+            ("url", json!(" https://frame.example.invalid/a")),
+            ("urlFragment", json!("missing-marker")),
+            ("urlFragment", json!(17)),
+        ] {
+            let mut value = tree();
+            value["frameTree"]["frame"][field] = bad;
+            assert!(embedded_frame_url(&value).is_err(), "{value}");
+        }
+    }
+    #[test]
+    fn only_the_explicit_top_level_protocol_error_can_select_the_child_fallback() {
+        let native=CdpError("Page.getNavigationHistory: protocol error {\"code\":-32000,\"message\":\"Command can only be executed on top-level targets\"}".into());
+        assert!(history_requires_top_level(&native));
+        for message in ["Page.getNavigationHistory: timed out","Page.getNavigationHistory: protocol error {\"code\":-32000,\"message\":\"Allocation failed\"}","Page.getNavigationHistory: protocol error {\"code\":-32603,\"message\":\"Command can only be executed on top-level targets\"}"] { assert!(!history_requires_top_level(&CdpError(message.into()))); }
     }
 }
 

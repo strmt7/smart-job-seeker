@@ -206,13 +206,23 @@ cargo fmt --all -- --check
 cargo deny check licenses bans sources
 cargo audit --deny warnings
 # real-browser submission tests (Edge/Chrome required; CI runs these too):
-cargo test -p waypoint_browser --test cdp_live -- --ignored --test-threads=1
+cargo test -p waypoint_browser --test cdp_live -- --ignored --test-threads=1 --skip public_listing_navigation_probe --skip identified_public_navigation_probe --skip generic_click_can_trigger_scripted_form_submission_on_loopback --skip inert_private_form_structure_qualification
 #   set WAYPOINT_BROWSER_NO_SANDBOX=1 when the Chromium sandbox is unavailable (containers)
 # live model qualification (needs local Ollama + qwen3.5:9b on 127.0.0.1:11434):
 cargo test -p waypoint_inference --lib -- --ignored
 # live ATS board fetch tests (network):
 cargo test -p waypoint_connectors -- --ignored
 ```
+
+The browser command above matches the fixture-only CI selection. `--ignored`
+alone also selects public-navigation probes, a private-input qualification and a
+scripted-submit diagnostic that demonstrates an open limitation. Those require
+separate inputs and evidence; never count the diagnostic as a passing no-send
+check. Keep their tests and historical results intact. Use the configured
+packaged headless engine as well as supported installed browsers where relevant;
+process observers must bind profile identity, creation time and ancestry rather
+than assume executable names. A failed run is not permission to stop unrelated
+processes or delete unverified profiles.
 
 For Windows workspace validation, prefer
 `./apps/web_app/scripts/build-windows.ps1 -Workspace -Test` and
