@@ -1,3 +1,8 @@
+## Bounded submission diagnostics - 2026-11-10
+
+- The pushed `f77f70c5` checkpoint passed hosted workspace/build/layout, dependency, coverage and CodeQL checks, but its native browser job passed 136 cases and failed initial navigation in one fictional scripted-GET diagnostic. The exact transport cause is not established by that log.
+- Both scripted GET/POST diagnostics now reuse the existing bounded HTTP fixture rather than independent one-read, serial, short-lived TCP servers. A fragmented initial-GET regression, all eight fixture checks, both affected headless browser diagnostics and scoped Clippy/format checks pass locally. [Evidence and limits](docs/BOUNDED_SUBMISSION_DIAGNOSTICS.md) preserve the failure and distinguish test-fixture reliability from the still-open production submission-prevention gate. No real form, application, application email or release was involved.
+
 ## Draft-to-PDF review journey - 2026-11-10
 
 - Connected the actual client and production handlers to local 12B drafting, PDF conversion, text comparison, page rendering, saved visual evidence and stale-source refusal in one fictional workflow. Both one-page documents completed; the local readability report remains an extractor/term check rather than an employer ATS result.

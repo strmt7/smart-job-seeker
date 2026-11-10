@@ -20,7 +20,7 @@ pub struct HttpFixture {
 
 impl HttpFixture {
     pub fn start(body: impl Into<String>) -> Self {
-        Self::start_inner("127.0.0.1:0".parse().unwrap(), body.into(), None)
+        Self::start_inner("127.0.0.1:0".parse().unwrap(), body.into(), None, false)
     }
 
     pub fn start_observing(
@@ -33,10 +33,27 @@ impl HttpFixture {
         address: SocketAddr,
         observer: impl Fn(&str) -> io::Result<()> + Send + Sync + 'static,
     ) -> Self {
-        Self::start_inner(address, String::new(), Some(Arc::new(observer)))
+        Self::start_inner(address, String::new(), Some(Arc::new(observer)), true)
     }
 
-    fn start_inner(address: SocketAddr, body: String, observer: Option<RequestObserver>) -> Self {
+    pub fn start_with_observer(
+        body: impl Into<String>,
+        observer: impl Fn(&str) -> io::Result<()> + Send + Sync + 'static,
+    ) -> Self {
+        Self::start_inner(
+            "127.0.0.1:0".parse().unwrap(),
+            body.into(),
+            Some(Arc::new(observer)),
+            false,
+        )
+    }
+
+    fn start_inner(
+        address: SocketAddr,
+        body: String,
+        observer: Option<RequestObserver>,
+        no_content: bool,
+    ) -> Self {
         assert!(
             address.ip().is_loopback() && address.port() == 0,
             "fictional fixtures require an ephemeral loopback address"
@@ -77,7 +94,7 @@ impl HttpFixture {
                             (worker_stop.clone(), worker_posts.clone(), body.clone());
                         let observer = observer.clone();
                         clients.push(thread::spawn(move || {
-                            serve(stream, &stop, &posts, &body, observer.as_ref())
+                            serve(stream, &stop, &posts, &body, observer.as_ref(), no_content)
                         }));
                     }
                     Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
@@ -145,6 +162,7 @@ fn serve(
     posts: &AtomicUsize,
     body: &str,
     observer: Option<&RequestObserver>,
+    no_content: bool,
 ) -> io::Result<()> {
     stream.set_nonblocking(false)?;
     stream.set_read_timeout(Some(Duration::from_millis(100)))?;
@@ -237,7 +255,7 @@ fn serve(
     if is_post {
         posts.fetch_add(1, Ordering::Relaxed);
     }
-    if observer.is_some() {
+    if no_content {
         // Observed channels measure arrival; 204 terminates SSE without retries.
         stream.write_all(b"HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Private-Network: true\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
     } else {

@@ -148,3 +148,30 @@ fn malformed_or_truncated_requests_surface_as_fixture_failures() {
         assert!(std::thread::spawn(move || fixture.finish()).join().is_err());
     }
 }
+
+#[test]
+fn observed_page_waits_for_complete_headers_with_an_idle_connection() {
+    let observed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let received = observed.clone();
+    let fixture = HttpFixture::start_with_observer("fictional page", move |path| {
+        received.lock().unwrap().push(path.to_owned());
+        Ok(())
+    });
+    let _idle = connect(&fixture);
+    let mut client = connect(&fixture);
+    client.write_all(b"GE").unwrap();
+    std::thread::sleep(Duration::from_millis(30));
+    assert!(observed.lock().unwrap().is_empty());
+    client
+        .write_all(b"T /fixture HTTP/1.1\r\nHost: localhost\r\n")
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(30));
+    assert!(observed.lock().unwrap().is_empty());
+    client.write_all(b"\r\n").unwrap();
+    let mut response = String::new();
+    client.read_to_string(&mut response).unwrap();
+    assert!(response.starts_with("HTTP/1.1 200 OK"));
+    assert!(response.ends_with("fictional page"));
+    assert_eq!(observed.lock().unwrap().as_slice(), &["/fixture"]);
+    fixture.finish();
+}
