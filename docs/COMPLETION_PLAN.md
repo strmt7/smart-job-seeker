@@ -143,9 +143,12 @@ build and configuration.
    fallback. Real-site interaction is not enabled. A [recorded-response replay](RECORDED_RESPONSE_REPLAY.md) now passes a fictional
    multi-step check with scripts, cross-origin frame, dedicated worker and PDF
    upload, retaining exact-request lookup and side-effect refusal. It has no live
-   fallback and is not exposed in the interface. Permitted asset capture,
-   unsupported target/transport lifecycles, server-dependent validation and missing
-   steps still need explicit handling and qualification. No live-form interaction is
+   fallback and is not exposed in the interface. The [HTTP capture bridge](HTTP_CAPTURE_BRIDGE.md) now preserves response
+   metadata and writes a bounded archive, with fictional native integration and
+   a separate public JSON API check. A live per-resource permission/robots-gated
+   coordinator, structural capture/entry phase separation, unsupported target/
+   transport lifecycles, server-dependent validation and missing steps still need
+   implementation and qualification. No live-form interaction is
    authorized by these partial results.
 3. **Prove document and matching quality.** Exercise PDF and DOCX inputs from
    varied, privately retained sources through extraction, factual tailoring,

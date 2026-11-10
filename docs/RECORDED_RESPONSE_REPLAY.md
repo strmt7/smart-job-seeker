@@ -100,8 +100,10 @@ qualification-tool checks passed. These counts are not full workspace coverage.
 
 ## Remaining gates
 
-- No permitted-site capture pipeline exists yet. Archives are explicitly supplied
-  and qualified here only with fictional resources. Do not capture candidate
+- No permitted-site browser capture coordinator exists yet. The new
+  [HTTP capture bridge](HTTP_CAPTURE_BRIDGE.md) supplies a metadata-preserving
+  reader and offline snapshot writer, with a fictional native bridge and separate
+  public JSON API observation. Archives are still explicitly supplied. Do not capture candidate
   credentials, authenticated sessions or arbitrary sites into this format.
 - Worker Fetch is unsupported by the selected engine; this run obtained the
   dedicated worker resources through parent interception. The report still

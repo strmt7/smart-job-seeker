@@ -43,7 +43,11 @@ try { & $script -Test -Ignored } catch {
     if ($_.Exception.Message -notmatch 'requires -Test and a specific -TestFilter') { throw }
     $rejected++
 }
-if ($rejected -ne 3) { throw 'Invalid option combinations were not rejected.' }
+try { & $script -Workspace } catch {
+    if ($_.Exception.Message -notmatch 'requires -Test or -Clippy') { throw }
+    $rejected++
+}
+if ($rejected -ne 4) { throw 'Invalid option combinations were not rejected.' }
 $runtimeDefinition = $ast.Find({
     param($node)
     $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Install-OpenSslRuntime'
@@ -83,6 +87,7 @@ try {
     [IO.File]::WriteAllText((Join-Path $fakeOpenSsl 'lib/libcrypto.lib'), 'fixture')
     [IO.File]::WriteAllText((Join-Path $fakeOpenSsl 'bin/libcrypto-fixture.dll'), 'fixture')
     function cargo {
+        $global:WaypointBuildTestCargoArgs = @($args)
         if ($env:WAYPOINT_TEST_FLAG_MODE -eq 'build') {
             if ($env:WAYPOINT_TEST_EXPECT_CRT -eq 'static' -and $env:CARGO_ENCODED_RUSTFLAGS -cne ('-Copt-level=1' + ([char]0x1f).ToString() + '-Ctarget-feature=+crt-static')) { throw 'Default static CRT flag was not passed to Cargo.' }
             if ($env:WAYPOINT_TEST_EXPECT_CRT -eq 'caller' -and $env:CARGO_ENCODED_RUSTFLAGS -cne '-Copt-level=1') { throw 'Opt-out did not preserve the caller CRT flags.' }
@@ -112,6 +117,11 @@ try {
     $plainWasPresent = Test-Path Env:RUSTFLAGS
     $encodedWasPresent = Test-Path Env:CARGO_ENCODED_RUSTFLAGS
     & $script -OpenSslRoot $fakeOpenSsl -StaticCrt -Test -TestFilter fixture
+    if ($global:WaypointBuildTestCargoArgs -contains '--workspace' -or $global:WaypointBuildTestCargoArgs -notcontains 'waypoint_web') { throw 'Default test package selection changed.' }
+    & $script -OpenSslRoot $fakeOpenSsl -StaticCrt -Workspace -Test -TestFilter fixture
+    if ($global:WaypointBuildTestCargoArgs -notcontains '--workspace' -or $global:WaypointBuildTestCargoArgs -contains '-p' -or $global:WaypointBuildTestCargoArgs -notcontains 'fixture') { throw 'Workspace tests did not preserve scope/filter.' }
+    & $script -OpenSslRoot $fakeOpenSsl -StaticCrt -Workspace -Clippy
+    if ($global:WaypointBuildTestCargoArgs -notcontains '--workspace' -or $global:WaypointBuildTestCargoArgs -notcontains '--all-targets' -or $global:WaypointBuildTestCargoArgs -notcontains '-D') { throw 'Workspace lint lost strict checks.' }
     if ((Test-Path Env:RUSTFLAGS) -ne $plainWasPresent -or (Test-Path Env:CARGO_ENCODED_RUSTFLAGS) -ne $encodedWasPresent -or ($plainWasPresent -and $env:RUSTFLAGS -ne '') -or ($encodedWasPresent -and $env:CARGO_ENCODED_RUSTFLAGS -ne '')) { throw 'Empty or absent flag variables were not restored.' }
     $env:WAYPOINT_TEST_FLAG_MODE = 'encoded'
     $env:RUSTFLAGS = '-C debuginfo=1'
@@ -159,6 +169,7 @@ try {
     }
     if (-not $refused) { throw 'Build without Cargo executable was accepted.' }
 } finally {
+    Remove-Variable -Scope Global -Name WaypointBuildTestCargoArgs -ErrorAction SilentlyContinue
     if (Test-Path -LiteralPath $fixture) {
         $resolved = (Resolve-Path -LiteralPath $fixture).Path
         if ((Split-Path -Parent $resolved) -ne $target -or -not (Split-Path -Leaf $resolved).StartsWith('waypoint-runtime-fixture-')) { throw 'Refusing to remove an unexpected test directory.' }

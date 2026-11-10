@@ -10,12 +10,16 @@
 //! - Every host is resolved first and **every resolved address** must be public.
 //!   This defeats DNS-rebinding: a name that first resolves to a public IP and
 //!   later to 127.0.0.1 / 10.x / link-local / IPv6 unique-local is refused.
-//! - Responses are size-capped and time-bounded; no request ever sends
-//!   `Accept-Encoding`, so no decompression bomb surface.
+//! - Responses are wire-size capped. Public socket/TLS reads and writes check
+//!   a request deadline; the OS DNS resolver remains synchronous. Asset reads
+//!   request identity encoding and refuse encoded bodies; no decompression runs.
 //! - We identify ourselves in `User-Agent` — a politeness/terms requirement for
 //!   public APIs, not an optional nicety.
 //! - TLS uses the OS trust store (schannel on Windows): no vendored crypto
 //!   stack, and certificate validation is the platform's job.
+
+mod http;
+pub use http::{BodyFraming, CapturedResponse, Header};
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
@@ -44,6 +48,8 @@ pub enum NetError {
     /// Response exceeded the configured byte cap.
     BodyTooLarge,
     HttpStatus(u16),
+    IncompleteResponse,
+    InvalidResponse(&'static str),
 }
 
 impl std::fmt::Display for NetError {
@@ -57,6 +63,10 @@ impl std::fmt::Display for NetError {
             NetError::Timeout => write!(f, "request timed out"),
             NetError::BodyTooLarge => write!(f, "response body exceeded the size cap"),
             NetError::HttpStatus(s) => write!(f, "unexpected http status {s}"),
+            NetError::IncompleteResponse => {
+                write!(f, "HTTP response ended before its declared body completed")
+            }
+            NetError::InvalidResponse(reason) => write!(f, "invalid HTTP response: {reason}"),
         }
     }
 }
@@ -93,9 +103,18 @@ pub fn parse_url(url: &str) -> Result<ParsedUrl, NetError> {
         "http" => false,
         other => return Err(NetError::SchemeNotAllowed(other.to_string())),
     };
-    let (authority, target) = match rest.find('/') {
+    if url.len() > 8192 || !url.is_ascii() || url.bytes().any(|c| c <= 32 || c == 127) {
+        return Err(NetError::BadUrl("invalid URL bytes".into()));
+    }
+    let (authority, suffix) = match rest.find(['/', '?', '#']) {
         Some(i) => (&rest[..i], &rest[i..]),
         None => (rest, "/"),
+    };
+    let suffix = suffix.split('#').next().unwrap_or("");
+    let target = if suffix.starts_with('/') {
+        suffix.to_owned()
+    } else {
+        format!("/{suffix}")
     };
     if authority.is_empty() {
         return Err(NetError::BadUrl(url.to_string()));
@@ -142,7 +161,7 @@ pub fn parse_url(url: &str) -> Result<ParsedUrl, NetError> {
         https,
         host,
         port,
-        request_target: target.to_string(),
+        request_target: target,
     })
 }
 
@@ -204,37 +223,153 @@ pub fn get(url: &str, timeout_ms: u64) -> Result<HttpResponse, NetError> {
 }
 
 pub fn get_capped(url: &str, timeout_ms: u64, max_bytes: usize) -> Result<HttpResponse, NetError> {
+    let response = get_response(url, timeout_ms, max_bytes, false)?;
+    Ok(HttpResponse {
+        status: response.status,
+        body: response.body,
+    })
+}
+
+/// Fetch one public resource with original headers and explicit body framing.
+/// No redirects, cookies, authorization, browser headers or compression negotiation.
+/// Callers must check source permissions/robots and candidate-data exclusion first.
+pub fn get_asset_capped(
+    url: &str,
+    timeout_ms: u64,
+    max_bytes: usize,
+) -> Result<CapturedResponse, NetError> {
+    if max_bytes == 0 || max_bytes > DEFAULT_MAX_BYTES || timeout_ms == 0 || timeout_ms > 60_000 {
+        return Err(NetError::InvalidResponse("invalid asset capture budget"));
+    }
+    validate_asset_response(get_response(url, timeout_ms, max_bytes, true)?)
+}
+
+/// Parse an already obtained response stream without opening any connection.
+/// Input is bounded on the handle; this does not authorize its source or fetch it.
+pub fn read_asset_response<S: Read>(
+    stream: &mut S,
+    method: &str,
+    max_bytes: usize,
+) -> Result<CapturedResponse, NetError> {
+    if !matches!(method, "GET" | "HEAD") || max_bytes == 0 || max_bytes > DEFAULT_MAX_BYTES {
+        return Err(NetError::InvalidResponse(
+            "invalid asset response budget or method",
+        ));
+    }
+    validate_asset_response(http::receive(stream, method, max_bytes)?)
+}
+fn validate_asset_response(response: CapturedResponse) -> Result<CapturedResponse, NetError> {
+    if response.headers.iter().any(|h| {
+        h.name.eq_ignore_ascii_case("content-encoding")
+            && !h.value.eq_ignore_ascii_case(b"identity")
+    }) {
+        return Err(NetError::InvalidResponse(
+            "encoded asset body is unsupported",
+        ));
+    }
+    Ok(response)
+}
+
+#[derive(Debug)]
+struct DeadlineStream<S> {
+    stream: S,
+    timer: TcpStream,
+    deadline: std::time::Instant,
+}
+impl<S> DeadlineStream<S> {
+    fn remaining(&self) -> std::io::Result<Duration> {
+        self.deadline
+            .checked_duration_since(std::time::Instant::now())
+            .filter(|d| !d.is_zero())
+            .ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::TimedOut, "request deadline exceeded")
+            })
+    }
+}
+impl<S: Read> Read for DeadlineStream<S> {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        self.timer.set_read_timeout(Some(self.remaining()?))?;
+        self.stream.read(buffer)
+    }
+}
+impl<S: Write> Write for DeadlineStream<S> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.timer.set_write_timeout(Some(self.remaining()?))?;
+        self.stream.write(bytes)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.stream.flush()
+    }
+}
+fn get_response(
+    url: &str,
+    timeout_ms: u64,
+    max_bytes: usize,
+    asset: bool,
+) -> Result<CapturedResponse, NetError> {
     let parsed = parse_url(url)?;
     if !parsed.https {
         return Err(NetError::SchemeNotAllowed(
             "plain http is only allowed for the local inference runtime".into(),
         ));
     }
-    // Fast, cheap refusal for obviously-private host names before any DNS work.
     if !waypoint_connectors::is_public_host_url(url) {
         return Err(NetError::BlockedHost(parsed.host.clone()));
     }
-    let addrs = resolve_public(&parsed)?;
+    if asset && parsed.port != 443 {
+        return Err(NetError::SchemeNotAllowed(
+            "asset capture requires default HTTPS port".into(),
+        ));
+    }
     let timeout = Duration::from_millis(timeout_ms);
-    let mut last_err: Option<NetError> = None;
+    let deadline = std::time::Instant::now()
+        .checked_add(timeout)
+        .ok_or(NetError::Timeout)?;
+    // OS DNS lookup is synchronous. The deadline is checked immediately after it;
+    // this does not claim cancellation of a stalled OS resolver.
+    let addrs = resolve_public(&parsed)?;
+    let mut last_err = None;
     for addr in addrs {
-        match TcpStream::connect_timeout(&addr, timeout.min(Duration::from_secs(15))) {
+        let remaining = deadline
+            .checked_duration_since(std::time::Instant::now())
+            .filter(|v| !v.is_zero())
+            .ok_or(NetError::Timeout)?;
+        match TcpStream::connect_timeout(&addr, remaining.min(Duration::from_secs(15))) {
             Ok(tcp) => {
-                let _ = tcp.set_read_timeout(Some(timeout));
-                let _ = tcp.set_write_timeout(Some(timeout));
+                tcp.set_read_timeout(Some(remaining))
+                    .map_err(|e| NetError::Io(e.to_string()))?;
+                tcp.set_write_timeout(Some(remaining))
+                    .map_err(|e| NetError::Io(e.to_string()))?;
+                let timer = tcp.try_clone().map_err(|e| NetError::Io(e.to_string()))?;
                 let connector =
                     native_tls::TlsConnector::new().map_err(|e| NetError::Tls(e.to_string()))?;
-                let mut tls = connector
-                    .connect(&parsed.host, tcp)
+                let timed = DeadlineStream {
+                    stream: tcp,
+                    timer,
+                    deadline,
+                };
+                let mut stream = connector
+                    .connect(&parsed.host, timed)
                     .map_err(|e| NetError::Tls(e.to_string()))?;
-                return request(
-                    &mut tls,
-                    &parsed.host,
+                let host = if parsed.host.contains(':') {
+                    format!("[{}]", parsed.host)
+                } else {
+                    parsed.host.clone()
+                };
+                let host = if parsed.port == 443 {
+                    host
+                } else {
+                    format!("{host}:{}", parsed.port)
+                };
+                write_request(
+                    &mut stream,
+                    &host,
                     &parsed.request_target,
                     "GET",
                     None,
-                    max_bytes,
-                );
+                    asset,
+                )?;
+                return http::receive(&mut stream, "GET", max_bytes);
             }
             Err(e) => last_err = Some(NetError::Io(format!("connect {addr}: {e}"))),
         }
@@ -278,113 +413,58 @@ pub fn request<S: Read + Write>(
     body: Option<&[u8]>,
     max_bytes: usize,
 ) -> Result<HttpResponse, NetError> {
-    let body_bytes = body.unwrap_or(&[]);
-    let head = format!(
-        "{method} {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: {USER_AGENT}\r\nAccept: application/json\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        body_bytes.len()
-    );
+    write_request(stream, host, path, method, body, false)?;
+    let response = http::receive(stream, method, max_bytes)?;
+    Ok(HttpResponse {
+        status: response.status,
+        body: response.body,
+    })
+}
+
+fn write_request<S: Write>(
+    stream: &mut S,
+    host: &str,
+    path: &str,
+    method: &str,
+    body: Option<&[u8]>,
+    asset: bool,
+) -> Result<(), NetError> {
+    if host.is_empty()
+        || !host.is_ascii()
+        || host.bytes().any(|c| c <= 32 || c == 127)
+        || !path.starts_with('/')
+        || !path.is_ascii()
+        || path.bytes().any(|c| c <= 32 || c == 127)
+        || path.contains('#')
+        || method.is_empty()
+        || method.len() > 32
+        || !method.bytes().all(|c| c.is_ascii_uppercase())
+    {
+        return Err(NetError::BadUrl("invalid request target or method".into()));
+    }
+    let bytes = body.unwrap_or(&[]);
+    let head = if asset {
+        format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: {USER_AGENT}\r\nAccept: */*\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n")
+    } else {
+        format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: {USER_AGENT}\r\nAccept: application/json\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",bytes.len())
+    };
     stream
         .write_all(head.as_bytes())
-        .and_then(|_| stream.write_all(body_bytes))
-        .map_err(|e| NetError::Io(format!("write: {e}")))?;
-
-    let mut raw: Vec<u8> = Vec::with_capacity(16 * 1024);
-    let mut buf = [0u8; 32 * 1024];
-    loop {
-        match stream.read(&mut buf) {
-            Ok(0) => break,
-            Ok(n) => {
-                raw.extend_from_slice(&buf[..n]);
-                if raw.len() > max_bytes {
-                    return Err(NetError::BodyTooLarge);
-                }
-                if let Some(split) = find_headers_end(&raw) {
-                    let headers = String::from_utf8_lossy(&raw[..split]).to_ascii_lowercase();
-                    let body_raw = &raw[split + 4..];
-                    if headers.contains("transfer-encoding: chunked") {
-                        if decode_chunked(body_raw).is_some() {
-                            break;
-                        }
-                    } else if let Some(len) = content_length(&headers) {
-                        if body_raw.len() >= len {
-                            break;
-                        }
-                    } else if headers.contains("connection: close") {
-                        // body runs to EOF; keep reading
-                    }
-                }
+        .and_then(|_| stream.write_all(bytes))
+        .map_err(|e| {
+            if matches!(
+                e.kind(),
+                std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+            ) {
+                NetError::Timeout
+            } else {
+                NetError::Io(format!("write: {e}"))
             }
-            Err(e)
-                if e.kind() == std::io::ErrorKind::WouldBlock
-                    || e.kind() == std::io::ErrorKind::TimedOut =>
-            {
-                return Err(NetError::Timeout)
-            }
-            Err(e) => return Err(NetError::Io(format!("read: {e}"))),
-        }
-    }
-
-    parse_response(&raw)
-}
-
-fn parse_response(raw: &[u8]) -> Result<HttpResponse, NetError> {
-    let split = find_headers_end(raw).ok_or_else(|| NetError::Io("malformed response".into()))?;
-    let head = String::from_utf8_lossy(&raw[..split]);
-    let status: u16 = head
-        .lines()
-        .next()
-        .and_then(|l| l.split_whitespace().nth(1))
-        .and_then(|c| c.parse().ok())
-        .ok_or_else(|| NetError::Io("malformed status line".into()))?;
-    let headers = head.to_ascii_lowercase();
-    let body_raw = &raw[split + 4..];
-    let body = if headers.contains("transfer-encoding: chunked") {
-        decode_chunked(body_raw).ok_or_else(|| NetError::Io("invalid chunked body".into()))?
-    } else {
-        match content_length(&headers) {
-            Some(len) => body_raw[..len.min(body_raw.len())].to_vec(),
-            None => body_raw.to_vec(),
-        }
-    };
-    Ok(HttpResponse { status, body })
-}
-
-fn find_headers_end(raw: &[u8]) -> Option<usize> {
-    raw.windows(4).position(|w| w == b"\r\n\r\n")
-}
-
-fn content_length(headers: &str) -> Option<usize> {
-    headers
-        .lines()
-        .find_map(|l| l.strip_prefix("content-length:"))
-        .and_then(|v| v.trim().parse().ok())
+        })
 }
 
 pub fn decode_chunked(body: &[u8]) -> Option<Vec<u8>> {
-    let mut out = Vec::new();
-    let mut pos = 0;
-    loop {
-        let line_end = body
-            .get(pos..)?
-            .windows(2)
-            .position(|w| w == b"\r\n")?
-            .checked_add(pos)?;
-        let size_str = std::str::from_utf8(&body[pos..line_end]).ok()?;
-        let size = usize::from_str_radix(size_str.trim().split(';').next()?, 16).ok()?;
-        pos = line_end + 2;
-        if size == 0 {
-            let rest = body.get(pos..)?;
-            return (rest.starts_with(b"\r\n") || rest.windows(4).any(|w| w == b"\r\n\r\n"))
-                .then_some(out);
-        }
-        let end = pos.checked_add(size)?;
-        let after = end.checked_add(2)?;
-        if body.get(end..after)? != b"\r\n" {
-            return None;
-        }
-        out.extend_from_slice(body.get(pos..end)?);
-        pos = after;
-    }
+    http::decode_chunks(body)
 }
 
 #[cfg(test)]
@@ -525,6 +605,42 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn query_only_urls_fragments_and_request_injection_are_handled_before_writing() {
+        assert_eq!(
+            parse_url("https://example.org?job=123#apply")
+                .unwrap()
+                .request_target,
+            "/?job=123"
+        );
+        assert_eq!(
+            parse_url("https://example.org/job#apply")
+                .unwrap()
+                .request_target,
+            "/job"
+        );
+        assert!(parse_url("https://example.org/job\r\nX-Fictional: injected").is_err());
+        for (host, path, method) in [
+            ("example.org\r\nX-Fictional: x", "/", "GET"),
+            ("example.org", "/job\r\nX-Fictional: x", "GET"),
+            ("example.org", "/", "GET\r\nPOST"),
+        ] {
+            let mut written = Vec::new();
+            assert!(write_request(&mut written, host, path, method, None, false).is_err());
+            assert!(written.is_empty());
+        }
+        let mut written = Vec::new();
+        write_request(&mut written, "example.org", "/job", "GET", None, true).unwrap();
+        let text = String::from_utf8(written).unwrap();
+        assert!(text.contains("Accept: */*\r\n"));
+        assert!(text.contains("Accept-Encoding: identity\r\n"));
+        assert!(
+            !text.contains("Cookie:")
+                && !text.contains("Authorization:")
+                && !text.contains("Content-Type:")
+        );
+    }
+
     fn spawn_server(response: &'static [u8]) -> SocketAddr {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
@@ -555,10 +671,9 @@ mod tests {
     #[test]
     fn body_cap_is_enforced() {
         let addr = spawn_server(b"HTTP/1.1 200 OK\r\nContent-Length: 5000\r\n\r\n");
-        // server sends no body then closes; cap is not the failure here, but the
-        // parser must not panic and must return a bounded body.
+        // A declared body larger than the wire cap is refused before allocation.
         let r = request_loopback(addr, "GET", "/x", None, 1000, 128);
-        assert!(r.is_ok() || matches!(r, Err(NetError::Timeout)));
+        assert!(matches!(r, Err(NetError::BodyTooLarge)));
     }
 
     /// Live test: real HTTPS fetch of a public ATS board (network required).

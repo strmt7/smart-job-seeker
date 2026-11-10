@@ -16,7 +16,7 @@ Release builds request Rust's static C runtime by default; debug builds retain C
 
 The helper places the OpenSSL runtime and receipt next to the executable reported by Cargo, including with a custom target directory. When a later build uses a different OpenSSL DLL with the same name, the helper replaces it only if the previous Smart Jobseeker build receipt identifies the existing file. It keeps the old DLL in `waypoint-openssl-backups` beside the executable. An unrecognized DLL is left untouched.
 
-Use `./apps/web_app/scripts/build-windows.ps1 -Test` to run the web-app tests or `./apps/web_app/scripts/build-windows.ps1 -Clippy` to lint its targets with warnings treated as errors. Both commands configure the same detected OpenSSL paths as the build.
+Use `./apps/web_app/scripts/build-windows.ps1 -Test` to run the web-app tests or `./apps/web_app/scripts/build-windows.ps1 -Clippy` to lint its targets with warnings treated as errors. Both commands configure the same detected OpenSSL paths as the build. Add `-Workspace` to either command to check the entire Cargo workspace through that same automatic SDK resolution; a package-specific check remains the default.
 
 To run a specific ignored integration test, use `-Test -Ignored -TestFilter <test-name>`. Inspect its prerequisites first: ignored tests can start local browsers, access the network or require installed tools.
 

@@ -4,6 +4,7 @@ param(
     [switch]$Release,
     [switch]$Test,
     [switch]$Clippy,
+    [switch]$Workspace,
     [switch]$StaticCrt,
     [switch]$Ignored,
     [switch]$NoCapture,
@@ -12,6 +13,7 @@ param(
 $ErrorActionPreference = 'Stop'
 if (-not $IsWindows -and $env:OS -ne 'Windows_NT') { throw 'This helper is for Windows builds.' }
 if ($Test -and $Clippy) { throw '-Test and -Clippy cannot be used together.' }
+if ($Workspace -and -not ($Test -or $Clippy)) { throw '-Workspace requires -Test or -Clippy.' }
 if ($TestFilter -and -not $Test) { throw '-TestFilter requires -Test.' }
 if ($Ignored -and (-not $Test -or -not $TestFilter)) { throw '-Ignored requires -Test and a specific -TestFilter.' }
 if ($NoCapture -and -not $Test) { throw '-NoCapture requires -Test.' }
@@ -100,7 +102,7 @@ if ($StaticCrt) {
 Push-Location $repo
 try {
     $operation = if ($Test) { 'test' } elseif ($Clippy) { 'clippy' } else { 'build' }
-    $cargoArgs = @($operation,'-p','waypoint_web')
+    $cargoArgs = if ($Workspace) { @($operation,'--workspace') } else { @($operation,'-p','waypoint_web') }
     if ($Release) { $cargoArgs += '--release' }
     if ($TestFilter) { $cargoArgs += $TestFilter }
     if ($Clippy) { $cargoArgs += @('--all-targets', '--', '-D', 'warnings') }

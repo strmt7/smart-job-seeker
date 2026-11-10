@@ -128,6 +128,14 @@ cargo test -p waypoint_inference --lib -- --ignored
 cargo test -p waypoint_connectors -- --ignored
 ```
 
+For Windows workspace validation, prefer
+`./apps/web_app/scripts/build-windows.ps1 -Workspace -Test` and
+`./apps/web_app/scripts/build-windows.ps1 -Workspace -Clippy`. These resolve or
+provision the same private OpenSSL SDK as the app build. Do not infer its library
+subdirectory from the host or set an unverified `OPENSSL_LIB_DIR`; the helper
+checks supported layouts. Set `RUST_TEST_THREADS=4` for a bounded workspace test
+run; ignored live tests still require explicit selection.
+
 Windows/MSVC is the primary toolchain. The web interface uses JavaScript; document
 operations may use the configured local Python worker. Python and Node are also
 used by development tools and tests. Do not add WSL or Docker as product requirements.

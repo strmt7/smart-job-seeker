@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+httparse = "1.10.1"
 native-tls = "0.2"
 serde_json = "1"
 waypoint_connectors = { path = "../waypoint_connectors" }

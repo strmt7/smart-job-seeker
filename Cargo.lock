@@ -2909,9 +2909,11 @@ dependencies = [
  "processkit",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tokio-stream",
  "tungstenite",
+ "url",
  "waypoint_applications",
  "waypoint_domain",
  "waypoint_net",
@@ -2971,6 +2973,7 @@ dependencies = [
 name = "waypoint_net"
 version = "0.1.0"
 dependencies = [
+ "httparse",
  "native-tls",
  "serde_json",
  "waypoint_connectors",

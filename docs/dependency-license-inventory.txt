@@ -1,6 +1,6 @@
 Rust dependency license inventory
 Scope: cargo metadata --locked --all-features; all resolved target platforms.
-Cargo.lock SHA-256 (LF-normalized): e6933217156a26dd9264ea4e75145489a29a7daead80e932b7318c3adc784036
+Cargo.lock SHA-256 (LF-normalized): 32a0bab2706579b9711f0cf4a95eec46aa2b1371b2786fca2d158d7fc21db724
 Packages: 362 total; 16 workspace; 346 external.
 License expressions are preserved verbatim, including OR alternatives and AND obligations.
 This inventory is not the full license text or a declaration that every alternative is permitted.

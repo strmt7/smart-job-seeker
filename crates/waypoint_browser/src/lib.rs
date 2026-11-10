@@ -22,6 +22,7 @@
 
 pub mod cdp;
 pub mod rehearsal;
+pub mod rehearsal_capture;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
