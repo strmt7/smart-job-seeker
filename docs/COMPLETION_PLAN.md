@@ -15,13 +15,13 @@ just implemented components or a passing unit suite. The [capability coverage
 map](CAPABILITY_COVERAGE.md) adds the current comparison and connected workflow
 acceptance gates. Do not create a release as part of this plan.
 
-The next contained-agent increment is [frame-specific review and integration](g1/CAPTURED_FRAME_CONTROLS_2026-11-10.md):
-qualify the local model on actual recorded-frame captures, connect explicit
-scope selection and fresh review to the existing workflow, then preserve
-scope-bound answers/images in attempt records. Six native control criteria
-already pass; that engine result does not complete the integration or authorize
-live-site entry. Continue the ordered evidence gates below without weakening
-unknown/manual outcomes.
+The [recorded-frame crop and model qualification](g1/RECORDED_FRAME_VISION_2026-11-10.md)
+measured raw, plain focused and DOM-presence-assisted review separately. Next
+connect explicit scope selection, fresh DOM/capture binding and attempt records
+in contained rehearsal. The cue must depend on current verified text presence,
+with expected characters withheld. The local six-criterion result does not
+establish unseen-platform coverage or authorize live-site entry. Continue the
+ordered evidence gates below without weakening unknown/manual outcomes.
 
 ## Operating boundaries
 

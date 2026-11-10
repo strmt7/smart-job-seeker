@@ -156,6 +156,15 @@ fn recorded_child_scope_preserves_origin_controls_and_parent() {
     let frame_origin = selected.origin.clone();
     let mut previous_selector = String::new();
     let mut cases = Vec::new();
+    let mut vision_cases = Vec::new();
+    let save_vision_case = |id: &str,
+                            file: &str,
+                            image: &str,
+                            expected: &[(&str, &str)],
+                            status: &str| {
+        std::fs::write(path.parent().unwrap().join(file), image).unwrap();
+        json!({"id":id,"image_file":file,"image_base64_sha256":waypoint_domain::sha256_hex(image.as_bytes()),"expected":expected,"expected_status":status,"focused_images":[]})
+    };
     let mut covered_refused = false;
     let mut transformed_refused = false;
     let outcome = (|| -> Result<(), super::DriverError> {
@@ -166,10 +175,12 @@ fn recorded_child_scope_preserves_origin_controls_and_parent() {
                 form.origin
             )));
         }
-        for (label, value) in [
+        let text_cases = [
             ("Cycle answer", "Fictional child value"),
             ("Motivation", "Fictional motivation"),
-        ] {
+        ];
+        let choice_cases = [("Remote work", "checked"), ("Team", "Platform")];
+        for (label, value) in text_cases {
             let fields: Vec<_> = form
                 .schema
                 .fields
@@ -206,7 +217,7 @@ fn recorded_child_scope_preserves_origin_controls_and_parent() {
                 .map_err(|e| e.to_string());
             cases.push(json!({"label":label,"result":result}));
         }
-        for label in ["Remote work", "Team"] {
+        for (label, value) in choice_cases {
             let fields: Vec<_> = form
                 .schema
                 .fields
@@ -227,7 +238,7 @@ fn recorded_child_scope_preserves_origin_controls_and_parent() {
             } else {
                 BrowserCommand::SelectOption {
                     selector,
-                    label: "Platform".into(),
+                    label: value.into(),
                 }
             };
             let result = driver
@@ -236,6 +247,23 @@ fn recorded_child_scope_preserves_origin_controls_and_parent() {
                 .map_err(|e| e.to_string());
             cases.push(json!({"label":label,"result":result}));
         }
+        let expected: Vec<_> = text_cases.into_iter().chain(choice_cases).collect();
+        let mut controls=save_vision_case("recorded_controls","controls-screenshot.base64",&driver.screenshot_base64()?,&expected,"matches_transcription");
+        let mut focused_images=Vec::new();
+        for (index,(label,value)) in expected.iter().enumerate() {
+            let fields:Vec<_>=form.schema.fields.iter().filter(|field|field.label.ends_with(label)).collect();
+            if fields.len()!=1 {return Err(super::DriverError("Focused field was not unique".into()));}
+            let field=fields[0];
+            let verified_text_present=matches!(field.field_type,super::FormFieldType::Text|super::FormFieldType::TextArea|super::FormFieldType::Email) && !value.trim().is_empty();
+            if verified_text_present {driver.verify_text_value(&field.selector,value)?;}
+            let image=driver.screenshot_field_context(&field.selector)?;
+            if verified_text_present {driver.verify_text_value(&field.selector,value)?;}
+            let filename=format!("control-focus-{index}.base64");
+            std::fs::write(path.parent().unwrap().join(&filename),&image).unwrap();
+            focused_images.push(json!({"label":label,"image_file":filename,"image_base64_sha256":waypoint_domain::sha256_hex(image.as_bytes()),"verified_text_present":verified_text_present}));
+        }
+        controls["focused_images"]=json!(focused_images);
+        vision_cases.push(controls);
         let files: Vec<_> = form
             .schema
             .fields
@@ -307,11 +335,7 @@ fn recorded_child_scope_preserves_origin_controls_and_parent() {
             .map_err(|e| e.to_string());
         cases.push(json!({"label":"Followup after section change","result":result}));
         let focus = driver.screenshot_field_context(&selector)?;
-        std::fs::write(
-            path.parent().unwrap().join("followup-screenshot.base64"),
-            focus,
-        )
-        .unwrap();
+        vision_cases.push(save_vision_case("recorded_followup","followup-screenshot.base64",&focus,&[("Followup","Fictional followup")],"matches_transcription"));
         Ok(())
     })()
     .map_err(|e| e.to_string());
@@ -398,11 +422,13 @@ fn recorded_child_scope_preserves_origin_controls_and_parent() {
         .unwrap();
     let removed_refused = driver.enter_captured_frame(&fresh_choice).is_err();
     let parent_image = driver.screenshot_base64().unwrap();
-    std::fs::write(
-        path.parent().unwrap().join("replay-screenshot.base64"),
-        parent_image,
-    )
-    .unwrap();
+    vision_cases.push(save_vision_case(
+        "parent_without_child",
+        "replay-screenshot.base64",
+        &parent_image,
+        &[("Followup", "Fictional followup")],
+        "unobserved",
+    ));
     let passed = outcome.is_ok()
         && stale_rejected
         && reload_stale_rejected
@@ -412,13 +438,14 @@ fn recorded_child_scope_preserves_origin_controls_and_parent() {
         && image.is_ok()
         && parent_ok
         && cases.len() == 6
+        && vision_cases.len() == 3
         && cases.iter().all(|case| case["result"].get("Ok").is_some());
     driver.execute(&BrowserCommand::Close).unwrap();
     let profile = PathBuf::from(std::env::var_os("LOCALAPPDATA").unwrap())
         .join("Packages")
         .join(ready.profile_name);
     assert!(!profile.join("AC").exists());
-    std::fs::write(path.parent().unwrap().join("native.private.json"),serde_json::to_vec_pretty(&json!({"complete":passed,"scope":"fictional isolated recorded child controls, upload, section change and reload; no real form or web entry route","frame_key":frame_key,"frame_origin":frame_origin,"stale_selector_rejected":stale_rejected,"reload_stale_selector_rejected":reload_stale_rejected,"covered_click_refused":covered_refused,"transformed_click_refused":transformed_refused,"removed_frame_refused":removed_refused,"outcome":outcome,"cases":cases,"child_png_returned":image.is_ok(),"child_image_error":image.as_ref().err(),"parent_retained":parent_ok,"profile_removed":true})).unwrap()).unwrap();
+    std::fs::write(path.parent().unwrap().join("native.private.json"),serde_json::to_vec_pretty(&json!({"complete":passed,"scope":"fictional isolated recorded child controls, upload, section change and reload; no real form or web entry route","frame_key":frame_key,"frame_origin":frame_origin,"stale_selector_rejected":stale_rejected,"reload_stale_selector_rejected":reload_stale_rejected,"covered_click_refused":covered_refused,"transformed_click_refused":transformed_refused,"removed_frame_refused":removed_refused,"outcome":outcome,"cases":cases,"vision_cases":vision_cases,"child_png_returned":image.is_ok(),"child_image_error":image.as_ref().err(),"parent_retained":parent_ok,"profile_removed":true})).unwrap()).unwrap();
     assert!(
         passed,
         "Child control criteria failed; inspect private native report"

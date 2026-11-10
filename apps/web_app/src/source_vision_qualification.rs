@@ -104,9 +104,7 @@ struct Case {
     manual_allowed: bool,
 }
 
-#[test]
-#[ignore = "requires the isolated owned-runtime controller with --suite vision and an explicit headless browser"]
-fn private_runtime_transcribes_form_values_without_expected_answer_leakage() {
+fn owned_vision_endpoint() -> (std::net::SocketAddr, String, PathBuf) {
     let origin = std::env::var("WAYPOINT_OWNED_OLLAMA_ORIGIN")
         .expect("Use tools/qualify_owned_answers.py --suite vision");
     let url = url::Url::parse(&origin).unwrap();
@@ -116,14 +114,6 @@ fn private_runtime_transcribes_form_values_without_expected_answer_leakage() {
     assert_ne!(port, 11434);
     let addr = format!("127.0.0.1:{port}").parse().unwrap();
     let model = std::env::var("WAYPOINT_OWNED_OLLAMA_MODEL").unwrap();
-    let system = match std::env::var("WAYPOINT_OWNED_VISION_MODE")
-        .unwrap()
-        .as_str()
-    {
-        "raw" => false,
-        "system" => true,
-        _ => panic!("Unknown vision qualification mode"),
-    };
     let output = PathBuf::from(std::env::var_os("WAYPOINT_OWNED_VISION_REPORT").unwrap());
     let root = output.parent().unwrap().canonicalize().unwrap();
     assert!(root.starts_with(
@@ -132,6 +122,230 @@ fn private_runtime_transcribes_form_values_without_expected_answer_leakage() {
             .canonicalize()
             .unwrap()
     ));
+    (addr, model, output)
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecordedVisionInput {
+    schema: u8,
+    native_sha256: String,
+    replay_result_sha256: String,
+    cases: Vec<RecordedVisionCase>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecordedVisionCase {
+    id: String,
+    image: String,
+    image_base64_sha256: String,
+    expected: Vec<(String, String)>,
+    expected_status: String,
+    focused_images: Vec<RecordedFocus>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecordedFocus {
+    label: String,
+    image: String,
+    image_base64_sha256: String,
+    verified_text_present: bool,
+}
+
+#[test]
+#[ignore = "isolated owned model; use --suite vision-frames with a hash-bound fictional rehearsal"]
+fn private_runtime_reviews_recorded_frame_captures() {
+    use std::io::Read;
+    let (addr, model, output) = owned_vision_endpoint();
+    let (system, verified_presence) = match std::env::var("WAYPOINT_OWNED_VISION_MODE").as_deref() {
+        Ok("raw") => (false, false),
+        Ok("system") => (true, false),
+        Ok("confirmed") => (true, true),
+        _ => panic!("Unknown recorded vision mode"),
+    };
+    let input_path = output
+        .parent()
+        .unwrap()
+        .join("frame-vision-input.private.json");
+    let mut bytes = Vec::new();
+    std::fs::File::open(input_path)
+        .unwrap()
+        .take(8 * 1024 * 1024 + 1)
+        .read_to_end(&mut bytes)
+        .unwrap();
+    assert!(bytes.len() <= 8 * 1024 * 1024);
+    assert_eq!(
+        waypoint_domain::sha256_hex(&bytes),
+        std::env::var("WAYPOINT_OWNED_FRAME_VISION_SHA256").unwrap()
+    );
+    let input: RecordedVisionInput = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(input.schema, 1);
+    assert_eq!(input.cases.len(), 3);
+    let mut total = 0;
+    let mut passed = 0;
+    let mut after_focus = 0;
+    let mut remaining_focus = 2;
+    let mut evidence = Vec::new();
+    let hidden_texts: Vec<_> = input
+        .cases
+        .iter()
+        .flat_map(|case| {
+            case.expected.iter().filter_map(|(label, value)| {
+                case.focused_images
+                    .iter()
+                    .any(|focus| focus.label == *label && focus.verified_text_present)
+                    .then_some(value.clone())
+            })
+        })
+        .collect();
+    let mut ids = std::collections::BTreeSet::new();
+    for case in input.cases {
+        assert!(ids.insert(case.id.clone()));
+        let (count, status) = match case.id.as_str() {
+            "recorded_controls" => (4, "matches_transcription"),
+            "recorded_followup" => (1, "matches_transcription"),
+            "parent_without_child" => (1, "unobserved"),
+            _ => panic!("Unexpected recorded vision case"),
+        };
+        assert_eq!(case.expected.len(), count);
+        assert_eq!(case.expected_status, status);
+        assert_eq!(
+            waypoint_domain::sha256_hex(case.image.as_bytes()),
+            case.image_base64_sha256
+        );
+        let started = Instant::now();
+        let observation = crate::visual_review::analyze_with_context(
+            addr,
+            &model,
+            &case.image,
+            &case.expected,
+            Some(4096),
+        );
+        let matched = observation
+            .as_ref()
+            .ok()
+            .and_then(|value| value["comparisons"].as_array())
+            .filter(|items| items.len() == count)
+            .map_or(0, |items| {
+                items.iter().filter(|item| item["status"] == status).count()
+            });
+        total += count;
+        passed += matched;
+        let mut recovered = 0;
+        let mut focused_evidence = Vec::new();
+        if let Some(items) = observation
+            .as_ref()
+            .ok()
+            .and_then(|value| value["comparisons"].as_array())
+            .filter(|items| system && status == "matches_transcription" && items.len() == count)
+        {
+            for (item, expected) in items.iter().zip(&case.expected) {
+                if remaining_focus == 0 {
+                    break;
+                }
+                if item["label"] != expected.0
+                    || !matches!(
+                        item["status"].as_str(),
+                        Some("differs_from_transcription" | "unobserved")
+                    )
+                {
+                    continue;
+                }
+                let Some(focus) = case
+                    .focused_images
+                    .iter()
+                    .find(|focus| focus.label == expected.0)
+                else {
+                    continue;
+                };
+                assert_ne!(focus.image_base64_sha256, case.image_base64_sha256);
+                assert_eq!(
+                    waypoint_domain::sha256_hex(focus.image.as_bytes()),
+                    focus.image_base64_sha256
+                );
+                remaining_focus -= 1;
+                let presence_assisted = verified_presence && focus.verified_text_present;
+                let analyze = if presence_assisted {
+                    crate::visual_review::analyze_targeted_with_verified_text
+                } else {
+                    crate::visual_review::analyze_targeted_with_context
+                };
+                let review = analyze(
+                    addr,
+                    &model,
+                    &focus.image,
+                    &focus.label,
+                    std::slice::from_ref(expected),
+                    Some(4096),
+                );
+                let confirmed = review
+                    .as_ref()
+                    .ok()
+                    .and_then(|value| value["comparisons"].as_array())
+                    .is_some_and(|items| {
+                        items.len() == 1
+                            && items[0]["label"] == focus.label
+                            && items[0]["status"] == "matches_transcription"
+                    });
+                if confirmed {
+                    recovered += 1;
+                }
+                focused_evidence.push(json!({"label":focus.label,"matched":confirmed,"presence_assisted":presence_assisted,"image_base64_sha256":focus.image_base64_sha256,"observation":review}));
+            }
+        }
+        after_focus += matched + recovered;
+        evidence.push(json!({"id":case.id,"matched":matched,"after_focus_matched":matched+recovered,"criteria":count,"expected_status":status,"image_base64_sha256":case.image_base64_sha256,"elapsed_ms":started.elapsed().as_millis(),"observation":observation,"focused":focused_evidence}));
+    }
+    let prompts = std::fs::read_dir(output.parent().unwrap().join("vision-native"))
+        .map_err(|error| error.to_string())
+        .and_then(|entries| {
+            entries
+                .map(|entry| {
+                    let entry = entry.map_err(|error| error.to_string())?;
+                    let receipt: Value = serde_json::from_slice(
+                        &std::fs::read(entry.path()).map_err(|error| error.to_string())?,
+                    )
+                    .map_err(|error| error.to_string())?;
+                    receipt["request"]["prompt"]
+                        .as_str()
+                        .map(|prompt| hidden_texts.iter().all(|value| !prompt.contains(value)))
+                        .ok_or_else(|| "Missing native prompt".into())
+                })
+                .collect::<Result<Vec<_>, String>>()
+        });
+    let native_prompts = prompts.as_ref().map_or(0, Vec::len);
+    let prompts_verified = prompts.as_ref().is_ok_and(|items| {
+        items.len() == 3 + 2 - remaining_focus && items.iter().all(|safe| *safe)
+    });
+    let report = json!({"complete":after_focus==total && prompts_verified,"raw_criteria_passed":passed,"after_focus_criteria_passed":after_focus,"focused_calls":2-remaining_focus,"verified_presence_mode":verified_presence,"native_prompts":native_prompts,"prompts_verified":prompts_verified,"prompt_receipt_error":prompts.as_ref().err(),"raw_criteria_total":total,"native_sha256":input.native_sha256,"replay_result_sha256":input.replay_result_sha256,"scope":"blind local transcription of fictional recorded-frame images; native DOM verification is separate","cases":evidence});
+    std::fs::write(output, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
+    assert!(
+        prompts_verified,
+        "Missing native prompts or expected text reached a prompt; inspect retained evidence"
+    );
+    assert_eq!(
+        after_focus, total,
+        "Recorded frame vision criteria failed; inspect private observations"
+    );
+}
+
+#[test]
+#[ignore = "requires the isolated owned-runtime controller with --suite vision and an explicit headless browser"]
+fn private_runtime_transcribes_form_values_without_expected_answer_leakage() {
+    let (addr, model, output) = owned_vision_endpoint();
+    let origin = format!("http://{addr}");
+    let system = match std::env::var("WAYPOINT_OWNED_VISION_MODE")
+        .unwrap()
+        .as_str()
+    {
+        "raw" => false,
+        "system" => true,
+        _ => panic!("Unknown vision qualification mode"),
+    };
+    let root = output.parent().unwrap();
+
     let cases = vec![
         Case {
             id: "baseline",

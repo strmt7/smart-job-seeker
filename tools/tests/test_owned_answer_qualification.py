@@ -143,4 +143,74 @@ class OwnedAnswerQualification(unittest.TestCase):
             launch.assert_not_called()
 
 
+class RecordedFrameVisionInput(unittest.TestCase):
+    PIXEL = b'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/ZmQAAAAASUVORK5CYII='
+
+    def fixture(self, folder):
+        cases = []
+        for name, (file, count, status) in qualification.FRAME_VISION_CASES.items():
+            (folder / file).write_bytes(self.PIXEL)
+            cases.append({'id':name, 'image_file':file, 'image_base64_sha256':hashlib.sha256(self.PIXEL).hexdigest(),
+                          'expected':[[f'Fictional field {i}',f'Value {i}'] for i in range(count)], 'expected_status':status})
+        native = json.dumps({'complete':True,'profile_removed':True,'vision_cases':cases}).encode()
+        (folder / 'native.private.json').write_bytes(native)
+        path = folder / 'result.private.json'
+        path.write_text(json.dumps({'complete':True,'frame_controls':True,'source_engine_unchanged':True,
+                                    'tests':{'executed_tests':1,'ignored_tests':0},'native_sha256':hashlib.sha256(native).hexdigest()}),encoding='utf-8')
+        return path
+
+    def test_verified_images_are_bound_to_native_controls_and_denominator(self):
+        target = qualification.REPO / 'target'; target.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix='replay-qualification-',dir=target) as temp:
+            path = self.fixture(Path(temp))
+            payload = qualification.recorded_frame_vision(path)
+            self.assertEqual(payload['schema'],1)
+            self.assertEqual(sum(len(case['expected']) for case in payload['cases']),6)
+            self.assertTrue(all(case['image'].encode()==self.PIXEL for case in payload['cases']))
+            self.assertEqual(payload['replay_result_sha256'],qualification.digest(path))
+
+    def test_changed_or_partial_evidence_is_refused_before_model_staging(self):
+        target = qualification.REPO / 'target'; target.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix='replay-qualification-',dir=target) as temp:
+            folder = Path(temp)
+            for variant, pattern in [('image','image digest'),('native','verified native'),('partial','verified native')]:
+                with self.subTest(variant=variant):
+                    path = self.fixture(folder)
+                    if variant=='image': (folder/'controls-screenshot.base64').write_bytes(self.PIXEL+b'A')
+                    elif variant=='native': (folder/'native.private.json').write_bytes(b'{}')
+                    else:
+                        report = json.loads(path.read_text(encoding='utf-8')); report['complete']=False
+                        path.write_text(json.dumps(report),encoding='utf-8')
+                    with self.assertRaisesRegex(ValueError,pattern): qualification.recorded_frame_vision(path)
+
+    def test_unrelated_or_path_traversing_inputs_do_not_stage(self):
+        target = qualification.REPO / 'target'; target.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix='replay-qualification-',dir=target) as temp:
+            folder = Path(temp); path = self.fixture(folder)
+            native_path = folder/'native.private.json'
+            native = json.loads(native_path.read_text(encoding='utf-8')); native['vision_cases'][0]['image_file']='../unrelated.base64'
+            native_path.write_text(json.dumps(native),encoding='utf-8')
+            report = json.loads(path.read_text(encoding='utf-8')); report['native_sha256']=qualification.digest(native_path)
+            path.write_text(json.dumps(report),encoding='utf-8')
+            with self.assertRaisesRegex(ValueError,'Invalid recorded vision criteria'): qualification.recorded_frame_vision(path)
+        with tempfile.TemporaryDirectory() as temp:
+            path = self.fixture(Path(temp))
+            with self.assertRaisesRegex(ValueError,'directly under target'): qualification.recorded_frame_vision(path)
+
+    def test_system_requires_distinct_label_bound_focus_images(self):
+        target = qualification.REPO / 'target'; target.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix='replay-qualification-',dir=target) as temp:
+            folder = Path(temp); path = self.fixture(folder)
+            with self.assertRaisesRegex(ValueError,'lack separate focused captures'):
+                qualification.recorded_frame_vision(path,require_focus=True)
+            native_path = folder/'native.private.json'
+            native = json.loads(native_path.read_text(encoding='utf-8')); controls=native['vision_cases'][0]
+            controls['focused_images']=[{'label':pair[0],'image_file':f'control-focus-{i}.base64','image_base64_sha256':controls['image_base64_sha256']} for i,pair in enumerate(controls['expected'])]
+            native_path.write_text(json.dumps(native),encoding='utf-8')
+            report = json.loads(path.read_text(encoding='utf-8')); report['native_sha256']=qualification.digest(native_path)
+            path.write_text(json.dumps(report),encoding='utf-8')
+            with self.assertRaisesRegex(ValueError,'repeated or mismatched'):
+                qualification.recorded_frame_vision(path,require_focus=True)
+
+
 if __name__ == '__main__': unittest.main()

@@ -6,6 +6,7 @@ Never restarts, reconfigures, loads or unloads the user's existing model server.
 from __future__ import annotations
 
 import argparse
+import base64
 import ctypes
 from ctypes import wintypes
 from datetime import datetime, timezone
@@ -30,7 +31,9 @@ from qualify_rehearsal import run, ensure_host_reserve, test_denominator
 REPO = Path(__file__).resolve().parents[1]
 TEST = 'source_answer_qualification::private_runtime_prepares_grounded_answers_and_refuses_unsupported_experience'
 VISION_TEST = 'source_vision_qualification::private_runtime_transcribes_form_values_without_expected_answer_leakage'
-TESTS = {'answers':TEST, 'vision':VISION_TEST, 'vision-system':VISION_TEST}
+FRAME_VISION_TEST = 'source_vision_qualification::private_runtime_reviews_recorded_frame_captures'
+FRAME_VISION_SUITES = ('vision-frames','vision-frames-system','vision-frames-confirmed')
+TESTS = {'answers':TEST, 'vision':VISION_TEST, 'vision-system':VISION_TEST, **dict.fromkeys(FRAME_VISION_SUITES,FRAME_VISION_TEST)}
 GIB = 1024**3
 PROMPT_CACHE_MIB = 512
 CONTEXT_CHECKPOINTS = 1
@@ -60,6 +63,98 @@ def regular(path):
         raise ValueError('Only regular model files may be copied')
     return path
 
+
+
+FRAME_VISION_CASES = {
+    'recorded_controls': ('controls-screenshot.base64', 4, 'matches_transcription'),
+    'recorded_followup': ('followup-screenshot.base64', 1, 'matches_transcription'),
+    'parent_without_child': ('replay-screenshot.base64', 1, 'unobserved'),
+}
+
+
+def recorded_frame_vision(report_path, require_focus=False, require_verified_text=False):
+    """Bind bounded fictional images to the native rehearsal denominator."""
+    target = (REPO / 'target').resolve(strict=True)
+    report_path = regular(report_path).resolve(strict=True)
+    folder = report_path.parent
+    if folder.parent != target or not folder.name.startswith('replay-qualification-') or report_path.name != 'result.private.json':
+        raise ValueError('Use a retained fictional replay result directly under target')
+
+    def bounded(path, limit):
+        checked = regular(path).resolve(strict=True)
+        if checked.parent != folder:
+            raise ValueError('Recorded input escaped its qualification folder')
+        with checked.open('rb') as stream:
+            data = stream.read(limit + 1)
+        if not data or len(data) > limit:
+            raise ValueError('Recorded input exceeds its byte budget')
+        return data
+
+    report_bytes = bounded(report_path, 512 * 1024)
+    report = json.loads(report_bytes)
+    native_bytes = bounded(folder / 'native.private.json', 128 * 1024)
+    native_sha = hashlib.sha256(native_bytes).hexdigest()
+    if (report.get('complete') is not True or report.get('frame_controls') is not True
+            or report.get('source_engine_unchanged') is not True
+            or report.get('tests') != {'executed_tests': 1, 'ignored_tests': 0}
+            or report.get('native_sha256') != native_sha):
+        raise ValueError('Recorded result lacks verified native frame evidence')
+    native = json.loads(native_bytes)
+    cases = native.get('vision_cases')
+    if (native.get('complete') is not True or native.get('profile_removed') is not True
+            or not isinstance(cases, list) or len(cases) != len(FRAME_VISION_CASES)):
+        raise ValueError('Missing complete recorded vision criteria')
+    def image(filename, expected_digest):
+        encoded = bounded(folder / filename, 1024**2)
+        if hashlib.sha256(encoded).hexdigest() != expected_digest:
+            raise ValueError('Recorded image digest changed')
+        png = base64.b64decode(encoded, validate=True)
+        if len(png) < 24 or png[:16] != b'\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR' or not all(0 < size <= 4096 for size in struct.unpack('>II', png[16:24])):
+            raise ValueError('Recorded image is not a bounded PNG')
+        return encoded.decode('ascii')
+
+    output = []
+    seen = set()
+    keys = {'id','image_file','image_base64_sha256','expected','expected_status'}
+    for case in cases:
+        if not isinstance(case, dict) or set(case) not in (keys,keys | {'focused_images'}):
+            raise ValueError('Unexpected recorded vision case schema')
+        name = case['id']
+        if not isinstance(name, str) or name not in FRAME_VISION_CASES or name in seen:
+            raise ValueError('Unknown or duplicate recorded vision case')
+        seen.add(name)
+        filename, count, status = FRAME_VISION_CASES[name]
+        expected = case['expected']
+        if (case['image_file'] != filename or case['expected_status'] != status
+                or not isinstance(expected, list) or len(expected) != count
+                or any(not isinstance(pair, list) or len(pair) != 2
+                       or not all(isinstance(value, str) and 0 < len(value.encode('utf-8')) <= 1000 for value in pair)
+                       for pair in expected) or len({pair[0] for pair in expected}) != count):
+            raise ValueError('Invalid recorded vision criteria')
+        encoded = image(filename, case['image_base64_sha256'])
+        focused = case.get('focused_images',[])
+        if (not isinstance(focused,list) or (focused and (name!='recorded_controls' or len(focused)!=count))
+                or (require_focus and name=='recorded_controls' and len(focused)!=count)):
+            raise ValueError('Recorded controls lack separate focused captures')
+        focus_images = []
+        focus_keys = {'label','image_file','image_base64_sha256'}
+        hashes = {case['image_base64_sha256']}
+        for index, item in enumerate(focused):
+            filename = f'control-focus-{index}.base64'
+            if (not isinstance(item,dict) or set(item) not in (focus_keys,focus_keys | {'verified_text_present'})
+                    or type(item.get('verified_text_present',False)) is not bool
+                    or item['label']!=expected[index][0] or item['image_file']!=filename
+                    or not isinstance(item['image_base64_sha256'],str) or item['image_base64_sha256'] in hashes):
+                raise ValueError('Focused capture identity is missing, repeated or mismatched')
+            hashes.add(item['image_base64_sha256'])
+            focus_images.append({'label':item['label'],'image_base64_sha256':item['image_base64_sha256'],
+                                 'image':image(filename,item['image_base64_sha256']),
+                                 'verified_text_present':item.get('verified_text_present',False)})
+        if require_verified_text and name=='recorded_controls' and sum(item['verified_text_present'] for item in focus_images)!=2:
+            raise ValueError('Recorded controls lack two independently verified text captures')
+        output.append({k:v for k,v in case.items() if k not in ('image_file','focused_images')}
+                      | {'image':encoded,'focused_images':focus_images})
+    return {'schema':1,'native_sha256':native_sha,'replay_result_sha256':hashlib.sha256(report_bytes).hexdigest(),'cases':output}
 
 def resident_models(origin):
     models = local_json(origin, '/api/ps', 1).get('models')
@@ -279,9 +374,10 @@ def worker(config_path):
                 'WAYPOINT_OWNED_OLLAMA_MODEL': config['model'],
                 'WAYPOINT_OWNED_ANSWER_REPORT': str(folder / 'answers.private.json'),
                 'WAYPOINT_OWNED_VISION_REPORT': str(folder / (suite + '.private.json')),
-                'WAYPOINT_OWNED_VISION_MODE': 'system' if suite=='vision-system' else 'raw',
+                'WAYPOINT_OWNED_VISION_MODE': 'confirmed' if suite=='vision-frames-confirmed' else 'system' if suite in ('vision-system','vision-frames-system') else 'raw',
                 'PATH':str(folder / 'test-runtime') + os.pathsep + os.environ.get('PATH','')}
             if suite in ('vision','vision-system'): environment['WAYPOINT_BROWSER']=config['browser']
+            if suite in FRAME_VISION_SUITES: environment['WAYPOINT_OWNED_FRAME_VISION_SHA256']=config['frame_input_sha256']
             client_log = folder / (suite + '.private.log')
             with client_log.open('xb') as log:
                 client = subprocess.Popen([config['test_binary'], test_name, '--ignored', '--exact', '--nocapture', '--test-threads=1'],
@@ -329,7 +425,11 @@ def main():
     parser.add_argument('--digest', required=True)
     parser.add_argument('--suite', choices=sorted(TESTS), default='answers')
     parser.add_argument('--browser', type=Path)
+    parser.add_argument('--replay-result', type=Path, help='Retained fictional --frame-controls result for vision-frames')
     args = parser.parse_args()
+    if (args.suite in FRAME_VISION_SUITES) != (args.replay_result is not None):
+        parser.error('A replay result is required only for recorded-frame vision suites')
+    frame_input = recorded_frame_vision(args.replay_result, args.suite!='vision-frames', args.suite=='vision-frames-confirmed') if args.replay_result else None
     if os.name != 'nt' or not args.ollama.is_absolute() or not args.ollama.is_file():
         parser.error('Select an explicit existing Windows Ollama executable')
     if args.suite in ('vision','vision-system') and (not args.browser or not args.browser.is_absolute() or not args.browser.is_file()):
@@ -392,6 +492,11 @@ def main():
         copy_model(store, folder / 'models', files)
         config = {'ollama':str(args.ollama), 'shell':shell, 'model':args.model, 'digest':args.digest, 'nonce':uuid.uuid4().hex,
             'version':version, 'test_binary':str(binary),'suite':args.suite,'browser':str(args.browser) if args.browser else None}
+        if frame_input is not None:
+            input_path = folder / 'frame-vision-input.private.json'
+            input_path.write_text(json.dumps(frame_input), encoding='utf-8')
+            config['frame_input_sha256'] = digest(input_path)
+            receipt['frame_input'] = {k:v for k,v in frame_input.items() if k != 'cases'} | {'cases':len(frame_input['cases']), 'sha256':config['frame_input_sha256']}
         config_path = folder / 'runtime-config.private.json'
         config_path.write_text(json.dumps(config), encoding='utf-8')
         environment['WAYPOINT_OWNED_ANSWER_NONCE'] = config['nonce']

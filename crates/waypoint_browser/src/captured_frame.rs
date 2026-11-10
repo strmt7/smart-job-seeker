@@ -51,6 +51,8 @@ pub(super) struct CapturedPointerPoint {
     pub(super) y: f64,
     pub(super) width: f64,
     pub(super) height: f64,
+    child_width: f64,
+    child_height: f64,
 }
 fn review() -> DriverError {
     DriverError("The embedded form changed or could not be verified; inspect it again".into())
@@ -500,7 +502,7 @@ impl CdpDriver {
             .pointer("/object/objectId")
             .and_then(Value::as_str)
             .ok_or_else(review)?;
-        let local=self.cdp.call("Runtime.callFunctionOn",json!({"objectId":object,"functionDeclaration":"function(){const r=this.getBoundingClientRect();return this.isConnected?{x:(r.left+r.right)/2,y:(r.top+r.bottom)/2,width:innerWidth,height:innerHeight}:null;}","returnByValue":true}));
+        let local=self.cdp.call("Runtime.callFunctionOn",json!({"objectId":object,"functionDeclaration":r#"function(){if(!this.isConnected)return null;const r=this.getBoundingClientRect(),x=(r.left+r.right)/2,y=(r.top+r.bottom)/2,root=this.getRootNode();const hit=typeof root.elementFromPoint==="function"?root.elementFromPoint(x,y):null;if(!hit||(hit!==this&&!this.contains(hit)))return null;for(let n=this,depth=0;n;n=n.parentElement){if(++depth>64)return null;const s=getComputedStyle(n);if(s.visibility!=="visible"||Number(s.opacity)===0)return null;}return {x,y,width:innerWidth,height:innerHeight};}"#,"returnByValue":true}));
         let released = self
             .cdp
             .call("Runtime.releaseObject", json!({"objectId":object}));
@@ -544,17 +546,85 @@ impl CdpDriver {
             let checked=checked.pointer("/result/value").ok_or_else(review)?;
             let values:Vec<_>=["x","y","width","height"].iter().filter_map(|key|checked[key].as_f64().filter(|v|v.is_finite())).collect();
             if values.len()!=4 || values[0]<0.0 || values[1]<0.0 || values[0]>=values[2] || values[1]>=values[3] {return Err(review());}
-            Ok(CapturedPointerPoint { session: frame.parent_session.clone(), x:values[0],y:values[1],width:values[2],height:values[3] })
+            Ok(CapturedPointerPoint { session: frame.parent_session.clone(), x:values[0],y:values[1],width:values[2],height:values[3],child_width:numbers[2],child_height:numbers[3] })
         })?;
         Ok(Some(point))
     }
     /// A parent-rendered viewport image, never an asserted full child-document capture.
     pub fn screenshot_captured_frame(&mut self) -> Result<String, DriverError> {
         self.validate_captured_frame(false)?;
-
-        let scope = self.captured_scope.as_ref().ok_or_else(review)?;
-        let frame = scope.frame.clone();
+        let frame = self
+            .captured_scope
+            .as_ref()
+            .ok_or_else(review)?
+            .frame
+            .clone();
         let owner = self.parent_frame_owner(&frame)?;
+        self.with_captured_parent_capture(|driver| {
+            driver
+                .cdp
+                .call("DOM.scrollIntoViewIfNeeded", json!({"nodeId":owner}))
+                .map_err(derr)?;
+            driver.screenshot_node(owner, false, true)
+        })
+    }
+
+    pub(super) fn screenshot_captured_field(
+        &mut self,
+        selector: &str,
+        context: bool,
+    ) -> Result<String, DriverError> {
+        self.scroll_field_into_view(selector)?;
+        let node = self.node_id(selector)?.ok_or_else(review)?;
+        let box_model = |driver: &mut Self| -> Result<[f64; 8], DriverError> {
+            let response = driver
+                .cdp
+                .call("DOM.getBoxModel", json!({"nodeId":node}))
+                .map_err(derr)?;
+            let quad = response
+                .pointer("/model/border")
+                .and_then(Value::as_array)
+                .ok_or_else(review)?;
+            if quad.len() != 8 {
+                return Err(review());
+            }
+            let mut values = [0.0; 8];
+            for (dst, src) in values.iter_mut().zip(quad) {
+                *dst = src.as_f64().filter(|v| v.is_finite()).ok_or_else(review)?;
+            }
+            Ok(values)
+        };
+        let quad = box_model(self)?;
+        let x = (quad[0] + quad[2] + quad[4] + quad[6]) / 4.0;
+        let y = (quad[1] + quad[3] + quad[5] + quad[7]) / 4.0;
+        let point = self
+            .captured_pointer_point(node, x, y)?
+            .ok_or_else(review)?;
+        let bounds = recorded_field_crop(quad, &point, x, y, context)?;
+        let image = self.with_captured_parent_capture(|driver| {
+            driver.screenshot_bounds(&bounds, false, false)
+        })?;
+        if box_model(self)? != quad
+            || self.captured_pointer_point(node, x, y)?.as_ref() != Some(&point)
+        {
+            return Err(DriverError(
+                "The embedded field moved during capture; inspect it again".into(),
+            ));
+        }
+        Ok(image)
+    }
+
+    fn with_captured_parent_capture(
+        &mut self,
+        capture: impl FnOnce(&mut Self) -> Result<String, DriverError>,
+    ) -> Result<String, DriverError> {
+        let parent_session = self
+            .captured_scope
+            .as_ref()
+            .ok_or_else(review)?
+            .frame
+            .parent_session
+            .clone();
         let image = self.with_capture_styles(|driver| {
             let parent_sheet = driver
                 .captured_scope
@@ -564,13 +634,7 @@ impl CdpDriver {
                 .take();
             let child_sheet = std::mem::replace(&mut driver.capture_sheet, parent_sheet);
             let result = catch_unwind(AssertUnwindSafe(|| {
-                driver.with_protocol_session(&frame.parent_session, |driver| {
-                    driver
-                        .cdp
-                        .call("DOM.scrollIntoViewIfNeeded", json!({"nodeId":owner}))
-                        .map_err(derr)?;
-                    driver.screenshot_node(owner, false, true)
-                })
+                driver.with_protocol_session(&parent_session, capture)
             }));
             let parent_sheet = std::mem::replace(&mut driver.capture_sheet, child_sheet);
             driver
@@ -585,5 +649,102 @@ impl CdpDriver {
         })?;
         self.validate_captured_frame(false)?;
         Ok(image)
+    }
+}
+
+fn recorded_field_crop(
+    quad: [f64; 8],
+    point: &CapturedPointerPoint,
+    x: f64,
+    y: f64,
+    context: bool,
+) -> Result<[f64; 8], DriverError> {
+    let left = quad
+        .iter()
+        .step_by(2)
+        .copied()
+        .fold(f64::INFINITY, f64::min);
+    let right = quad
+        .iter()
+        .step_by(2)
+        .copied()
+        .fold(f64::NEG_INFINITY, f64::max);
+    let top = quad
+        .iter()
+        .skip(1)
+        .step_by(2)
+        .copied()
+        .fold(f64::INFINITY, f64::min);
+    let bottom = quad
+        .iter()
+        .skip(1)
+        .step_by(2)
+        .copied()
+        .fold(f64::NEG_INFINITY, f64::max);
+    if left < 0.0
+        || top < 0.0
+        || right > point.child_width
+        || bottom > point.child_height
+        || right <= left
+        || bottom <= top
+    {
+        return Err(DriverError(
+            "The embedded field is not fully visible; review it manually".into(),
+        ));
+    }
+    let (left, top, right, bottom) = if context {
+        // Keep nearby labels, but never include pixels outside this frame.
+        (
+            (left - 180.0).max(0.0),
+            (top - 24.0).max(0.0),
+            (right + 18.0).min(point.child_width),
+            (bottom + 18.0).min(point.child_height),
+        )
+    } else {
+        (left, top, right, bottom)
+    };
+    let (dx, dy) = (point.x - x, point.y - y);
+    let (left, top, right, bottom) = (left + dx, top + dy, right + dx, bottom + dy);
+    Ok([left, top, right, top, right, bottom, left, bottom])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn point() -> CapturedPointerPoint {
+        CapturedPointerPoint {
+            session: "parent".into(),
+            x: 330.0,
+            y: 420.0,
+            width: 1200.0,
+            height: 800.0,
+            child_width: 300.0,
+            child_height: 100.0,
+        }
+    }
+
+    #[test]
+    fn field_context_is_clipped_to_the_bound_child_viewport() {
+        let quad = [20.0, 10.0, 140.0, 10.0, 140.0, 30.0, 20.0, 30.0];
+        assert_eq!(
+            recorded_field_crop(quad, &point(), 80.0, 20.0, true).unwrap(),
+            [250.0, 400.0, 408.0, 400.0, 408.0, 448.0, 250.0, 448.0]
+        );
+        assert_eq!(
+            recorded_field_crop(quad, &point(), 80.0, 20.0, false).unwrap(),
+            [270.0, 410.0, 390.0, 410.0, 390.0, 430.0, 270.0, 430.0]
+        );
+    }
+
+    #[test]
+    fn partially_visible_or_empty_child_control_never_becomes_a_complete_capture() {
+        for quad in [
+            [-1.0, 10.0, 10.0, 10.0, 10.0, 20.0, -1.0, 20.0],
+            [20.0, 90.0, 30.0, 90.0, 30.0, 101.0, 20.0, 101.0],
+            [20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0],
+        ] {
+            assert!(recorded_field_crop(quad, &point(), 80.0, 20.0, true).is_err());
+        }
     }
 }

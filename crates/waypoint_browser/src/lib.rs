@@ -2104,8 +2104,7 @@ impl CdpDriver {
 
     fn screenshot_element(&mut self, selector: &str, context: bool) -> Result<String, DriverError> {
         if self.captured_scope.is_some() {
-            self.scroll_field_into_view(selector)?;
-            return self.screenshot_captured_frame();
+            return self.screenshot_captured_field(selector, context);
         }
         let node = self
             .node_id(selector)?

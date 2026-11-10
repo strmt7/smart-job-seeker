@@ -1,3 +1,8 @@
+## Recorded frame closeups and local vision - 2026-11-10
+
+- Focused images now stay inside the leased child viewport and refuse clipped, covered, moved or stale fields. The actual 12B model met four of six blind criteria, five after plain focused review, and six when its two focused calls received independent DOM text-presence evidence. Plain and assisted passes used identical images; expected values were absent from the prompts. [Measurements and retained failures](docs/g1/RECORDED_FRAME_VISION_2026-11-10.md) keep these results separate from the pending web integration and broader no-send qualification.
+- Hosted CI, coverage and CodeQL passed for pushed `5d071ab1`; all five CI jobs passed, and the three exact-commit CodeQL analyses ingested without errors and reported zero results. The subsequent crop and model qualification are a separate local development batch.
+
 ## Recorded cross-origin controls - 2026-11-10
 
 - The browser engine now offers source-bound frame entry inside isolated frozen-response rehearsal only. Native fictional checks passed text, textarea, checkbox, select, PDF upload and a section/follow-up journey; raw/expired selectors, reloads, click-point overlays, transforms and removed frames were checked separately. Frame images come from the verified parent viewport. Ordinary/live cross-origin forms retain their manual route.

@@ -9,6 +9,13 @@ scope.
 
 ## Current results
 
+[Frame-specific local review](g1/RECORDED_FRAME_VISION_2026-11-10.md) now has
+actual 12B evidence. Blind review met four of six criteria, plain focused review
+met five, and a separately attested DOM presence cue met all six without
+passing expected text to the prompt. The cue remains qualification-only;
+connect it to current verified DOM/capture state and immutable attempt evidence
+before exposing contained frame entry in the web interface.
+
 The latest local [recorded-frame engine check](g1/CAPTURED_FRAME_CONTROLS_2026-11-10.md)
 completed six control criteria, including PDF upload and a section transition,
 with scope/reload/overlay/transform/removal refusals and frame-specific images.
