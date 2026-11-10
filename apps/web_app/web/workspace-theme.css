@@ -8,6 +8,8 @@
 .source-copy-status,.source-copy-result { overflow-wrap: anywhere; font-size: 12px; line-height: 1.5; }
 .source-copy-status:empty { display: none; }
 .source-copy-result { margin-top: 10px; }
+.source-copy-view { display: grid; gap: 5px; margin: 10px 0; }
+.source-copy-view select { width: 100%; min-width: 0; max-width: 100%; }
 .source-form-outline { margin: 10px 0; overflow-wrap: anywhere; }
 .source-form-controls { padding-left: 20px; margin: 10px 0; }
 .source-form-controls li { padding: 10px 0; border-top: 1px solid var(--line); }

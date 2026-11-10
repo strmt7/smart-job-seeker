@@ -15,13 +15,13 @@ just implemented components or a passing unit suite. The [capability coverage
 map](CAPABILITY_COVERAGE.md) adds the current comparison and connected workflow
 acceptance gates. Do not create a release as part of this plan.
 
-The [recorded-frame crop and model qualification](g1/RECORDED_FRAME_VISION_2026-11-10.md)
-measured raw, plain focused and DOM-presence-assisted review separately. Next
-connect explicit scope selection, fresh DOM/capture binding and attempt records
-in contained rehearsal. The cue must depend on current verified text presence,
-with expected characters withheld. The local six-criterion result does not
-establish unseen-platform coverage or authorize live-site entry. Continue the
-ordered evidence gates below without weakening unknown/manual outcomes.
+[Recorded previews](RECORDED_PAGE_PREVIEW.md) now connect saved source copies
+to frame selection, evidence and image review in application history. Expand
+permitted origin collection so saved copies can retain eligible cross-origin
+frame resources. Connect current verified DOM and capture identity to the
+contained candidate-entry workflow, using the measured
+[local vision qualification](g1/RECORDED_FRAME_VISION_2026-11-10.md). Continue
+the ordered isolation and quality gates below.
 
 ## Operating boundaries
 

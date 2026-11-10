@@ -17,8 +17,32 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
 function harness(api, onFinished) {
   const timers = [], window = {};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../web/source-copy.js'), 'utf8'), { window, document: { createElement: tag => new Node(tag) }, setTimeout: callback => { timers.push(callback); } });
-  return { create: id => window.WaypointSourceCopies.create({ id }, { api, element: (tag, text, style) => new Node(tag, text, style), onFinished }), tick: async () => { assert(timers.length, 'Expected a scheduled status poll'); timers.shift()(); await settle(); } };
+  return { preview: (preview, options) => window.WaypointSourceCopies.previewView(preview, (tag, text, style) => new Node(tag, text, style), options), create: id => window.WaypointSourceCopies.create({ id }, { api, element: (tag, text, style) => new Node(tag, text, style), onFinished }), tick: async () => { assert(timers.length, 'Expected a scheduled status poll'); timers.shift()(); await settle(); } };
 }
+(async () => {
+  const digest = 'a'.repeat(64);
+  const preview = { views: [
+    {kind:'page',label:'Page',image:'0001.png',sha256:digest,fields:[{label:'Parent name'}]},
+    {kind:'frame',label:'Qualifications',image:'0002.png',sha256:digest,fields:[{label:'Child answer',required:true}]},
+  ] };
+  let release;
+  const panel = harness(async () => {}).preview(preview,{jobId:'job',attemptId:'attempt',api:async (_route,body) => {
+    if(body.name==='0001.png') return new Promise(resolve => { release=resolve; });
+    return {name:body.name,sha256:'b'.repeat(64),image_base64:'fixture'};
+  }});
+  const select = find(panel,node => node.tag==='select');
+  const show = button(panel,'View image');
+  const first = show.listeners.click();
+  select.value='1'; select.listeners.change();
+  release({name:'0001.png',sha256:digest,image_base64:'fixture'});
+  await first;
+  assert.equal(find(panel,node => node.tag==='img'),undefined,'A previous selection cannot replace the current view');
+  assert(find(panel,node => node.textContent==='Child answer · Required'));
+  await show.listeners.click();
+  assert(find(panel,node => node.textContent==='The saved image differs from its record.'));
+  assert.equal(find(panel,node => node.tag==='img'),undefined);
+})().catch(error=>{console.error(error);process.exitCode=1;});
+
 (async () => {
   let finish, starts = 0, pending = 0;
   const h = harness(async route => {

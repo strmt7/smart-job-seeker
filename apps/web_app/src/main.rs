@@ -77,6 +77,7 @@ mod pdf_probe_task;
 mod pdf_runtime;
 mod pdf_setup;
 mod pdf_transcribe;
+mod recorded_preview;
 mod resident_inference;
 mod runtime_setup;
 mod runtime_start;
@@ -3314,7 +3315,7 @@ fn serve(
             };
             json_reply(stream, "200 OK", value);
         }
-        "/api/job-source/start" => {
+        "/api/job-source/start" | "/api/job-source/preview-start" => {
             if session.is_some()
                 || form_task::busy()
                 || candidate_task::busy()
@@ -3328,7 +3329,18 @@ fn serve(
             let job = JobIdentityId::new(body["id"].as_str().ok_or("Missing job identity")?)
                 .map_err(|e| e.to_string())?;
             let id = random_id()?;
-            job_capture::start(ws, &job, id.clone())?;
+            if path == "/api/job-source/preview-start" {
+                job_capture::start_preview(
+                    ws,
+                    &job,
+                    id.clone(),
+                    body["attempt_id"]
+                        .as_str()
+                        .ok_or("Missing saved page identity")?,
+                )?;
+            } else {
+                job_capture::start(ws, &job, id.clone())?;
+            }
             json_reply(
                 stream,
                 "200 OK",

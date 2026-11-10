@@ -21,12 +21,15 @@ struct Request {
     url: String,
     source: String,
     destination: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    replay: Option<crate::recorded_preview::Source>,
 }
 struct Task {
     id: String,
     job: JobIdentityId,
     workspace: PathBuf,
     source_url: String,
+    replay: bool,
     record: crate::attempt_record::AttemptRecord,
     root: PathBuf,
     cancel: Arc<AtomicBool>,
@@ -70,6 +73,32 @@ fn public_url(raw: &str, profile: &Value) -> Result<(String, String), String> {
     Ok((url.to_string(), source))
 }
 pub fn start(ws: &Workspace, job: &JobIdentityId, id: String) -> Result<(), String> {
+    start_task(ws, job, id, None)
+}
+pub fn start_preview(
+    ws: &Workspace,
+    job: &JobIdentityId,
+    id: String,
+    attempt: &str,
+) -> Result<(), String> {
+    let directory = crate::attempt_record::attempt_directory(ws, job, attempt)?;
+    start_task(
+        ws,
+        job,
+        id,
+        Some(crate::recorded_preview::Source {
+            directory,
+            attempt_id: attempt.to_owned(),
+            job_id: job.as_str().to_owned(),
+        }),
+    )
+}
+fn start_task(
+    ws: &Workspace,
+    job: &JobIdentityId,
+    id: String,
+    replay: Option<crate::recorded_preview::Source>,
+) -> Result<(), String> {
     if !checked_id(&id) {
         return Err("Invalid page-copy identity".into());
     }
@@ -102,16 +131,21 @@ pub fn start(ws: &Workspace, job: &JobIdentityId, id: String) -> Result<(), Stri
             .ok_or("Job has no source URL")?,
         &profile,
     )?;
+    if let Some(source) = &replay {
+        source.validate(&url)?;
+    }
+    let preview = replay.is_some();
     let mut record = crate::attempt_record::AttemptRecord::start(ws, job, &id, crate::now())?
         .ok_or("Page copies require a saved workspace")?;
     let root = record.source_capture_directory();
     std::fs::create_dir(&root).map_err(|_| "Cannot create page-copy folder")?;
-    record.event(json!({"type":"source_capture_started","time":crate::now(),"task_id":id,"scope":"anonymous_public_page_copy"}))?;
+    record.event(json!({"type":"source_capture_started","time":crate::now(),"task_id":id,"scope":if preview {"recorded_page_preview"}else{"anonymous_public_page_copy"}}))?;
     let request = Request {
         task_id: id.clone(),
         url: url.clone(),
         source,
         destination: root.clone(),
+        replay,
     };
     let cancel = Arc::new(AtomicBool::new(false));
     let child_cancel = cancel.clone();
@@ -132,6 +166,7 @@ pub fn start(ws: &Workspace, job: &JobIdentityId, id: String) -> Result<(), Stri
         job: job.clone(),
         workspace,
         source_url: url,
+        replay: preview,
         record,
         root,
         cancel,
@@ -146,7 +181,9 @@ pub fn pending(ws: &Workspace) -> Result<Value, String> {
         .as_ref()
         .filter(|t| ws.db_path.as_ref() == Some(&t.workspace))
     {
-        return Ok(json!({"active":true,"task_id":task.id,"job_id":task.job.as_str()}));
+        return Ok(
+            json!({"active":true,"task_id":task.id,"job_id":task.job.as_str(),"preview":task.replay}),
+        );
     }
     let completed = COMPLETED.lock().map_err(|_| "Page capture unavailable")?;
     if let Some((_, path, value, at)) = completed.as_ref().filter(|(_, path, _, at)| {
@@ -168,7 +205,7 @@ pub fn cancel(ws: &Workspace, id: &str) -> Result<Value, String> {
 }
 fn progress(root: &Path, id: &str) -> Value {
     use std::io::Read;
-    for phase in ["saved", "resources", "reading", "tools"] {
+    for phase in ["saved", "preview", "resources", "reading", "tools"] {
         if let Ok(file) = std::fs::File::open(root.join(format!("phase-{phase}.json"))) {
             let mut bytes = Vec::new();
             if file.take(4097).read_to_end(&mut bytes).is_ok() && bytes.len() <= 4096 {
@@ -205,7 +242,7 @@ pub fn poll(ws: &Workspace, id: &str) -> Result<Value, String> {
         match task.rx.try_recv() {
             Err(mpsc::TryRecvError::Empty) => {
                 return Ok(
-                    json!({"status":"running","task_id":id,"job_id":task.job.as_str(),"phase":progress(&task.root,id),"cancelling":task.cancel.load(Ordering::Acquire)}),
+                    json!({"status":"running","task_id":id,"job_id":task.job.as_str(),"phase":progress(&task.root,id),"preview":task.replay,"cancelling":task.cancel.load(Ordering::Acquire)}),
                 )
             }
             Err(mpsc::TryRecvError::Disconnected) => {
@@ -260,16 +297,20 @@ fn finalize(
             json!({"status":if error==CANCELLED{"cancelled"}else{"failed"},"task_id":id,"job_id":task.job.as_str(),"attempt_id":id,"error":error})
         }
     };
+    if task.replay {
+        value["kind"] = json!("recorded_preview");
+    }
     value["source_url_sha256"] = json!(waypoint_domain::sha256_hex(task.source_url.as_bytes()));
     let event=task.record.event(json!({"type":"source_capture_result","time":crate::now(),"task_id":id,"status":value["status"],"current_source":current,"result":value["result"]}));
     let summary_saved = task.record.source_capture_result(&value).is_ok();
     let status_saved = task.record.status("manual_review", crate::now()).is_ok();
     let saved = event.is_ok() && summary_saved && status_saved;
     value["record_saved"] = json!(saved);
-    if value["status"] != "complete"
-        || value["result"]["needs_review"] == true
-        || !current
-        || !saved
+    if !task.replay
+        && (value["status"] != "complete"
+            || value["result"]["needs_review"] == true
+            || !current
+            || !saved)
     {
         value["review_flag_saved"] = json!(ws
             .mark_manual_review(&task.job, "Saved page copy needs review", crate::now())
@@ -476,6 +517,28 @@ fn worker(request: Request) -> Result<Value, String> {
         .ok_or("Background browser is unavailable")?
         .to_owned();
     let engine_files = inventory(&engine_root)?;
+    if let Some(source) = &request.replay {
+        phase(&request, "preview")?;
+        let screenshots = request
+            .destination
+            .parent()
+            .ok_or("Preview record directory is unavailable")?
+            .join("screenshots");
+        let config = RehearsalConfig {
+            schema: 2,
+            engine_root,
+            engine_files,
+            content_root: PathBuf::new(),
+            content_files: Default::default(),
+            entry: "index.html".into(),
+            seconds: 120,
+            replay_manifest: None,
+        };
+        let preview =
+            crate::recorded_preview::render(source, &request.url, &python, config, &screenshots)?;
+        phase(&request, "saved")?;
+        return Ok(json!({"task_id":request.task_id,"preview":preview}));
+    }
     let archive = request.destination.join("archive");
     let mut capture = CaptureSession::start(
         &archive,
@@ -607,6 +670,11 @@ mod tests {
         let request: Request = serde_json::from_value(valid.clone()).unwrap();
         let value = serde_json::to_value(request).unwrap();
         assert_eq!(value.as_object().unwrap().len(), 4);
+        let mut preview = valid.clone();
+        preview["replay"] =
+            json!({"directory":std::env::temp_dir(),"attempt_id":"fixture","job_id":"fictional"});
+        let request: Request = serde_json::from_value(preview.clone()).unwrap();
+        assert_eq!(serde_json::to_value(request).unwrap(), preview);
         for field in [
             "profile",
             "email",
@@ -618,6 +686,9 @@ mod tests {
         ] {
             let mut bad = valid.clone();
             bad[field] = json!("fictional private value");
+            assert!(serde_json::from_value::<Request>(bad).is_err());
+            let mut bad = preview.clone();
+            bad["replay"][field] = json!("fictional private value");
             assert!(serde_json::from_value::<Request>(bad).is_err());
         }
     }
@@ -667,6 +738,7 @@ mod tests {
             job,
             workspace: ws.db_path.clone().unwrap(),
             source_url: "https://example.org/fictional".into(),
+            replay: false,
             record,
             root,
             cancel: Arc::new(AtomicBool::new(false)),

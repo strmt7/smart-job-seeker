@@ -54,6 +54,19 @@ pub(super) struct CapturedPointerPoint {
     child_width: f64,
     child_height: f64,
 }
+fn frame_caption(raw: &str) -> Option<String> {
+    let raw = raw.trim();
+    if raw.is_empty() || url::Url::parse(raw).is_ok() {
+        return None;
+    }
+    let label: String = raw
+        .chars()
+        .filter(|ch| !ch.is_control())
+        .take(160)
+        .collect();
+    (!label.trim().is_empty()).then_some(label)
+}
+
 fn review() -> DriverError {
     DriverError("The embedded form changed or could not be verified; inspect it again".into())
 }
@@ -245,12 +258,17 @@ impl CdpDriver {
             }
             let name = node["nodeName"].as_str().unwrap_or("");
             if !hidden && matches!(name.to_ascii_lowercase().as_str(), "iframe" | "frame") {
-                if let (Some(node), Some(backend), Some(target)) = (
+                if let (Some(node_id), Some(backend), Some(target)) = (
                     node["nodeId"].as_u64(),
                     node["backendNodeId"].as_u64(),
                     node["frameId"].as_str(),
                 ) {
-                    owners.push((node, backend, target.to_owned()));
+                    let attrs = attributes(node);
+                    let label = [attrs.get("aria-label"), attrs.get("title")]
+                        .into_iter()
+                        .flatten()
+                        .find_map(|label| frame_caption(label));
+                    owners.push((node_id, backend, target.to_owned(), label));
                 }
             }
             owners.len() < 32
@@ -266,7 +284,7 @@ impl CdpDriver {
             truncated: owners.len() >= 32,
         };
         let started = Instant::now();
-        for (node, owner, target) in owners {
+        for (node, owner, target, label) in owners {
             if result.frames.len() >= 4 || started.elapsed() > Duration::from_secs(8) {
                 result.truncated = true;
                 break;
@@ -291,13 +309,9 @@ impl CdpDriver {
             let mut choice = CapturedFrame {
                 id: String::new(),
                 origin,
-                label: matches[0]["title"]
-                    .as_str()
-                    .filter(|s| !s.trim().is_empty())
-                    .unwrap_or("Embedded form")
-                    .chars()
-                    .take(200)
-                    .collect(),
+                label: label
+                    .or_else(|| matches[0]["title"].as_str().and_then(frame_caption))
+                    .unwrap_or_else(|| "Embedded frame".into()),
                 parent_session: self.cdp.session.clone(),
                 parent_frame: parent_frame.clone(),
                 parent_loader: parent_loader.clone(),

@@ -1048,6 +1048,9 @@ fn source_page_copy_summary(root: &std::path::Path) -> Value {
     let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
         return json!({"status":"unreadable"});
     };
+    if value["kind"] == "recorded_preview" {
+        return json!({"kind":"recorded_preview","status":value["status"],"preview":value["result"]["preview"]});
+    }
     let raw = &value["result"]["report"]["discovery"]["form_outline"];
     let outline = if raw.is_null() {
         Value::Null
@@ -1709,7 +1712,9 @@ pub fn screenshot_image(
     if bytes.len() > 6 * 1024 * 1024 || !bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
         return Err("Invalid screenshot content".into());
     }
-    Ok(json!({"name":name,"image_base64":STANDARD.encode(bytes)}))
+    Ok(
+        json!({"name":name,"sha256":waypoint_domain::sha256_hex(&bytes),"image_base64":STANDARD.encode(bytes)}),
+    )
 }
 
 /// The worker records this before subsequent live-value and freshness checks.

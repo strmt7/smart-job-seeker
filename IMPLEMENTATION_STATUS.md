@@ -1,3 +1,7 @@
+## Recorded previews in application history - 2026-11-11
+
+- Saved source copies can now produce a separate recorded preview from the job’s application records. The compiled Windows app and headless UI checked capture, history persistence, frame selection, digest-checked image display and two viewport widths. A completion refresh race was reproduced and corrected. [Evidence and coverage](docs/RECORDED_PAGE_PREVIEW.md) describe the current origin limits and the remaining candidate-entry work.
+
 ## Recorded frame closeups and local vision - 2026-11-10
 
 - Focused images now stay inside the leased child viewport and refuse clipped, covered, moved or stale fields. The actual 12B model met four of six blind criteria, five after plain focused review, and six when its two focused calls received independent DOM text-presence evidence. Plain and assisted passes used identical images; expected values were absent from the prompts. [Measurements and retained failures](docs/g1/RECORDED_FRAME_VISION_2026-11-10.md) keep these results separate from the pending web integration and broader no-send qualification.
