@@ -82,3 +82,32 @@ Six existing qualification-controller checks also pass, including refusal under
 host memory pressure and cleanup of only the owned containment. Product Rust
 and inference code did not change in this follow-up, so their already-passing
 ordinary suites were not rerun locally for a development-controller change.
+
+## Native controller shutdown regression
+
+On 2026-11-10, two additional native Windows checks passed in 1.514 seconds:
+normal controller shutdown and forced controller termination before Python
+`finally` or `atexit` can execute. Each launches fictional sleeping Python child
+and grandchild processes under the real `ChildContainment` implementation.
+Retained process handles establish that both exact descendants were alive and
+then exited. A separate outer job remains open until after the assertions, so
+its fallback cleanup cannot make an ineffective inner job look successful.
+It bounds the experiment to 256 MiB of committed memory, and readiness/shutdown
+waits are bounded. No browser, model, network endpoint or persistent registration
+is involved. Private native output is retained in
+`target/owned-lifecycle-native.private.log`.
+
+Run `python -B -m unittest discover -s tools/tests -p test_owned_process_lifecycle.py -v`.
+The existing agent-tool CI job discovers these tests automatically. They verify
+this Windows process-tree boundary; they do not establish absence of memory
+leaks in every product component or management of a shared model service.
+
+The following read-only host snapshot at 10:59:30 UTC found zero matching
+repository/test workers, services, scheduled tasks or Run/RunOnce entries;
+the private index daemon was already stopped and Ollama reported zero resident
+models. Available physical RAM was 23,604,310,016 bytes. The inventory returned
+no errors and is retained in `target/owned-lifecycle-cleanup.private.json`.
+It checks repository/test identifiers, not every workload on the host, and did
+not stop unrelated processes or change any persistent registration. The six
+existing qualification-controller checks also passed again. No unchanged Rust,
+document, browser or model suite was rerun for these development-only additions.

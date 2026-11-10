@@ -62,6 +62,13 @@ repo up cold. Read this first, then `README.md`, then the references below.
 - Reuse or gracefully stop repository-owned development daemons when idle. Keep
   other repositories' providers/registrations intact. Report unknown ownership,
   failed cleanup or unverified leak behavior instead of claiming a clean host.
+- Before finishing a development checkpoint, check for owned survivors and
+  unexpected persistent registrations, and record available host RAM. Repeat
+  relevant lifecycle checks after changing process ownership or cancellation.
+  A single clean snapshot does not prove absence of memory leaks; distinguish
+  actual teardown evidence from long-running memory behavior. Native controller
+  shutdown checks are in `tools/tests/test_owned_process_lifecycle.py` and run
+  in the existing agent-tool CI job without browsers, models or network access.
 
 ## Findings remain under detector control
 
