@@ -28,14 +28,19 @@ impl Drop for RecordedHttp {
 #[test]
 #[ignore = "explicit private engine, synthetic HTTP resources and owned memory containment"]
 fn coordinator_archive_drives_contained_form() {
-    run_coordinator(false);
+    run_coordinator(false, false);
 }
 #[test]
 #[ignore = "explicit private engine, automatic fictional resource discovery and owned memory containment"]
 fn discovery_archives_transitive_resources_before_candidate_entry() {
-    run_coordinator(true);
+    run_coordinator(true, false);
 }
-fn run_coordinator(discovery: bool) {
+#[test]
+#[ignore = "explicit private engine, fictional private-URL discovery and owned memory containment"]
+fn private_resources_are_not_fetched_before_offline_candidate_entry() {
+    run_coordinator(true, true);
+}
+fn run_coordinator(discovery: bool, privacy: bool) {
     let target =
         std::fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target")).unwrap();
     let path = std::fs::canonicalize(
@@ -56,6 +61,11 @@ fn run_coordinator(discovery: bool) {
         "fetch('/questions').then(r=>r.json()).then(v=>{const label=document.createElement('label');label.textContent=v.label;const input=document.createElement('input');input.id='email';input.type='email';label.append(input);const section=document.getElementById('questions');section.append(label);section.hidden=true;document.getElementById('next').onclick=()=>section.hidden=false;});"
     } else {
         "document.getElementById('next').onclick=()=>fetch('/questions').then(r=>r.json()).then(v=>{const label=document.createElement('label');label.textContent=v.label;const input=document.createElement('input');input.id='email';input.type='email';label.append(input);document.getElementById('questions').append(label);});"
+    };
+    let script = if privacy {
+        format!("{script} fetch('/bootstrap?next=HTTPS%3A%2F%2Ffixture.invalid%2F%3Faccess_token%3Dfictional-private-marker').catch(()=>{{}}); fetch('/who?email=fictional%40fixture.invalid').catch(()=>{{}}); fetch('/account-link').catch(()=>{{}});")
+    } else {
+        script.to_owned()
     };
     let style = if discovery {
         "@import url('/nested.css'); body{font:18px Arial;margin:30px}"
@@ -84,7 +94,7 @@ fn run_coordinator(discovery: bool) {
         ),
         (
             "https://fixture.invalid/app.js",
-            script,
+            script.as_str(),
             "text/javascript",
             "",
         ),
@@ -105,6 +115,10 @@ fn run_coordinator(discovery: bool) {
         let status = if url.ends_with("/form") { 302 } else { 200 };
         let raw=format!("HTTP/1.1 {status} Fixture\r\nContent-Type: {mime}\r\nContent-Length: {}\r\n{extra}\r\n{body}",body.len());
         responses.insert(url.to_owned(), raw.into_bytes());
+    }
+    if privacy {
+        responses.insert("https://fixture.invalid/account-link".into(),
+            b"HTTP/1.1 302 Fixture\r\nContent-Type: text/plain\r\nContent-Length: 0\r\nLocation: /private?session_id=fictional-private-marker\r\n\r\n".to_vec());
     }
     let requests = Arc::new(Mutex::new(vec![]));
     let dropped = Arc::new(AtomicBool::new(false));
@@ -136,7 +150,11 @@ fn run_coordinator(discovery: bool) {
             .unwrap();
         assert_eq!(
             summary.stopped,
-            crate::capture_discovery::DiscoveryStop::NoNewRequests
+            if privacy {
+                crate::capture_discovery::DiscoveryStop::ReviewRequired
+            } else {
+                crate::capture_discovery::DiscoveryStop::NoNewRequests
+            }
         );
         assert_eq!(summary.rounds.len(), 3);
         assert_eq!(
@@ -161,13 +179,41 @@ fn run_coordinator(discovery: bool) {
     }
     let frozen = capture.freeze().unwrap();
     assert!(dropped.load(Ordering::Acquire));
-    let expected_requests = if discovery { 7 } else { 6 };
+    let expected_requests = if privacy {
+        8
+    } else if discovery {
+        7
+    } else {
+        6
+    };
     assert_eq!(requests.lock().unwrap().len(), expected_requests);
     assert_eq!(
         frozen.report.recorded_resources,
         if discovery { 6 } else { 5 }
     );
     assert_eq!(frozen.report.robots.len(), 1);
+    if privacy {
+        assert!(requests
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|url| !url.contains("fictional-private-marker") && !url.contains("/who?")));
+        assert_eq!(
+            frozen
+                .report
+                .records
+                .iter()
+                .filter(|r| r.outcome
+                    == CaptureOutcome::NeedsReview {
+                        reason: CaptureGap::PrivateUrl
+                    })
+                .count(),
+            3
+        );
+        assert!(!serde_json::to_string(&frozen.report)
+            .unwrap()
+            .contains("fictional-private-marker"));
+    }
     config.schema = 2;
     config.content_root = frozen.snapshot.root;
     config.content_files = frozen.snapshot.files;
@@ -224,5 +270,5 @@ fn run_coordinator(discovery: bool) {
     driver.execute(&BrowserCommand::Close).unwrap();
     std::fs::write(folder.join("http-captured.private.json"),serde_json::to_vec_pretty(&serde_json::json!({
         "complete":true,"scope":"fictional transport responses through policy/robots coordinator, frozen archive and contained browser; no public form capture",
-        "capture":frozen.report,"report":replay,"transport_dropped_before_entry":true})).unwrap()).unwrap();
+        "capture":frozen.report,"report":replay,"privacy_guard_exercised":privacy,"transport_dropped_before_entry":true})).unwrap()).unwrap();
 }

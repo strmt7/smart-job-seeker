@@ -15,6 +15,12 @@ arbitrary URL contains no personal information. The worker independently checks
 the URL/source binding and accepts no profile, cookies, credentials, request
 headers or form bodies in its request.
 
+[Shared URL privacy checks](CAPTURE_URL_PRIVACY.md) now also guard redirects,
+robots requests and browser-discovered resources before transport. Known private
+keys/email-like references are refused; decoding and nesting uncertainty remains
+reviewable. The parent checks known candidate identifiers in the bounded decoded
+entry. Unknown opaque identifiers and arbitrary private data remain unassessed.
+
 The collector uses the existing policy/robots/redirect gates, bounded anonymous
 GET transport and separate schema-3 render-only discovery. Only the initial
 origin is declared; another origin remains a review gap. Collection cannot use

@@ -21,6 +21,7 @@
 //!   them.
 
 pub mod capture_discovery;
+pub mod capture_privacy;
 pub mod capture_session;
 pub mod cdp;
 pub mod rehearsal;

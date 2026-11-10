@@ -52,42 +52,15 @@ fn public_url(raw: &str, profile: &Value) -> Result<(String, String), String> {
     {
         return Err("Source page needs a public HTTPS URL".into());
     }
-    let decoded = percent_encoding::percent_decode_str(url.as_str())
-        .decode_utf8()
-        .map_err(|_| "Source page URL needs review")?;
-    if decoded.contains('@')
-        || crate::search_planner::contains_protected(
-            &decoded,
-            &crate::search_planner::protected_identifiers(profile),
-        )
-    {
+    let decoded = waypoint_browser::capture_privacy::checked_reference(url.as_str())
+        .map_err(|_| "Source page URL is private, authenticated or needs review")?;
+    if crate::search_planner::contains_protected(
+        &decoded,
+        &crate::search_planner::protected_identifiers(profile),
+    ) {
         return Err(
             "Source page URL contains personal information; use a public job listing".into(),
         );
-    }
-    for (key, _) in url.query_pairs() {
-        if matches!(
-            key.to_ascii_lowercase().as_str(),
-            "token"
-                | "access_token"
-                | "refresh_token"
-                | "id_token"
-                | "client_secret"
-                | "code"
-                | "ticket"
-                | "session_id"
-                | "sessionid"
-                | "session"
-                | "password"
-                | "auth"
-                | "authorization"
-                | "signature"
-                | "api_key"
-                | "email"
-                | "phone"
-        ) {
-            return Err("Source page URL contains private or authenticated parameters".into());
-        }
     }
     let source =
         crate::manual_job::source(url.host_str().ok_or("Source page has no host")?).to_owned();
@@ -614,6 +587,9 @@ mod tests {
             "https://example.org/?code=private",
             "https://example.org/?id_token=private",
             "https://example.org/?session_id=private",
+            "https://example.org/?user[email]=hidden",
+            "https://example.org/avery%2520invented/jobs",
+            "https://example.org/?next=https%3A%2F%2Fother.invalid%2F%3Ftoken%3Dprivate",
             "http://example.org/jobs",
             "https://user:private@example.org/jobs",
             "https://127.0.0.1/jobs",

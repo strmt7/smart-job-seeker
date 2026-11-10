@@ -132,6 +132,11 @@ communication rules in `AGENTS.md`.
 
 ## Experimental browser qualification
 
+`python -B tools/qualify_capture_replay.py --engine <absolute-private-headless-shell-directory> --privacy`
+adds a fictional private-URL discovery/refusal case before frozen candidate
+entry. It loads no model, uses owned process containment and retains private,
+source/engine-bound evidence; see [scope and limits](CAPTURE_URL_PRIVACY.md).
+
 Experimental Windows browser isolation has a separate, fictional-only
 [qualification command and explicit limits](ISOLATED_REHEARSAL.md). It runs
 headlessly, retains private source-bound evidence under `target/`, and does not

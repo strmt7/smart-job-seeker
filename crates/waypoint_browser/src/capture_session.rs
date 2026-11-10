@@ -66,6 +66,8 @@ pub struct CaptureOrigin {
 #[serde(rename_all = "snake_case")]
 pub enum CaptureGap {
     InvalidUrl,
+    PrivateUrl,
+    UrlPrivacyUncertain,
     OriginNotDeclared,
     SourceNotAllowed,
     RobotsDenied,
@@ -104,6 +106,7 @@ pub struct CaptureReport {
     pub discovery: Option<crate::capture_discovery::DiscoverySummary>,
     pub coverage: &'static str,
     pub server_validation: &'static str,
+    pub url_privacy: &'static str,
 }
 #[derive(Clone, Serialize)]
 pub struct RobotsRecord {
@@ -171,8 +174,16 @@ fn resource_url(raw: &str) -> Result<url::Url, CaptureGap> {
     {
         return Err(CaptureGap::InvalidUrl);
     }
+    crate::capture_privacy::checked_reference(raw).map_err(privacy_gap)?;
     url.set_fragment(None);
     Ok(url)
+}
+fn privacy_gap(error: crate::capture_privacy::UrlPrivacyError) -> CaptureGap {
+    match error {
+        crate::capture_privacy::UrlPrivacyError::Invalid => CaptureGap::InvalidUrl,
+        crate::capture_privacy::UrlPrivacyError::PrivateReference => CaptureGap::PrivateUrl,
+        crate::capture_privacy::UrlPrivacyError::EncodingLimit => CaptureGap::UrlPrivacyUncertain,
+    }
 }
 impl CaptureSession {
     /// Run only on an owned background worker. The template contributes its
@@ -408,6 +419,7 @@ impl CaptureSession {
     fn get(&mut self, url: &url::Url, limit: usize) -> Result<CapturedResponse, CaptureGap> {
         self.check_time()?;
         self.authorize(url)?;
+        crate::capture_privacy::checked_reference(url.as_str()).map_err(privacy_gap)?;
         if self.requests >= self.budget.requests || self.received >= self.budget.received_bytes {
             return Err(CaptureGap::BudgetExceeded);
         }
@@ -612,6 +624,7 @@ impl CaptureSession {
             discovery: self.discovery.clone(),
             coverage: "unassessed; missing resources and server-dependent steps require review",
             server_validation: "not_performed",
+            url_privacy: "known private keys and email-like references refused before transport; opaque identifiers unassessed",
         }
     }
     /// Consumes every fetch-capable object before returning candidate-entry data.
@@ -672,7 +685,10 @@ fn redirect(base: &url::Url, response: &CapturedResponse) -> Result<url::Url, Ca
         return Err(CaptureGap::InvalidRedirect);
     }
     let target = base.join(value).map_err(|_| CaptureGap::InvalidRedirect)?;
-    resource_url(target.as_str()).map_err(|_| CaptureGap::InvalidRedirect)
+    resource_url(target.as_str()).map_err(|reason| match reason {
+        CaptureGap::PrivateUrl | CaptureGap::UrlPrivacyUncertain => reason,
+        _ => CaptureGap::InvalidRedirect,
+    })
 }
 
 #[cfg(test)]
@@ -1058,6 +1074,82 @@ mod tests {
             gap(h.session.capture(url), CaptureGap::InvalidUrl);
             assert!(h.calls.lock().unwrap().is_empty());
         }
+    }
+    #[test]
+    fn private_references_are_refused_even_at_the_transport_boundary() {
+        for raw in [
+            "https://fixture.invalid/?access_token=fictional-private-marker",
+            "https://fixture.invalid/avery%2540fixture.invalid",
+            "https://fixture.invalid/?target=https%3A%2F%2Ffixture.invalid%2F%3Femail%3Dhidden",
+        ] {
+            let mut h = ready();
+            gap(h.session.capture(raw), CaptureGap::PrivateUrl);
+            assert_eq!(
+                h.session
+                    .get(&url::Url::parse(raw).unwrap(), 1024)
+                    .unwrap_err(),
+                CaptureGap::PrivateUrl
+            );
+            assert!(h.calls.lock().unwrap().is_empty());
+            let report = serde_json::to_string(&h.session.report()).unwrap();
+            assert!(!report.contains("fictional-private-marker"));
+            assert!(!report.contains("avery"));
+        }
+    }
+    #[test]
+    fn private_resource_and_robots_redirects_stop_before_the_target_read() {
+        for from_robots in [false, true] {
+            let mut redirected = response(302, "public redirect", "text/plain");
+            redirected.headers.push(waypoint_net::Header {
+                name: "Location".into(),
+                value: b"/flow?t%256fken=fictional-private-marker".to_vec(),
+            });
+            let rows = if from_robots {
+                vec![("https://fixture.invalid/robots.txt", redirected)]
+            } else {
+                vec![
+                    ("https://fixture.invalid/robots.txt", robots("")),
+                    (ENTRY, redirected),
+                ]
+            };
+            let mut h = harness(rows, "user_supplied_url", CaptureBudget::default());
+            gap(h.session.capture_entry(), CaptureGap::PrivateUrl);
+            assert_eq!(
+                h.calls.lock().unwrap().len(),
+                if from_robots { 1 } else { 2 }
+            );
+            assert!(h.session.freeze().is_err());
+            assert!(!h.folder.path().join("capture/replay.json").exists());
+        }
+    }
+    #[test]
+    fn discovery_keeps_privacy_refusals_visible_without_fetching_them() {
+        let mut h = ready();
+        let summary = h
+            .session
+            .discover_with_probe(4, |_, _| {
+                Ok(probe(vec![
+                    "https://fixture.invalid/assets?user[email]=fictional-private-marker",
+                    "https://fixture.invalid/bootstrap?session_id=fictional-private-marker",
+                ]))
+            })
+            .unwrap();
+        assert_eq!(
+            summary.stopped,
+            crate::capture_discovery::DiscoveryStop::ReviewRequired
+        );
+        assert_eq!(summary.rounds.len(), 1);
+        assert_eq!(summary.rounds[0].review_outcomes, 2);
+        assert_eq!(h.calls.lock().unwrap().len(), 2);
+        let frozen = h.session.freeze().unwrap();
+        assert_eq!(frozen.report.recorded_resources, 1);
+        assert!(frozen.report.records.iter().skip(1).all(|r| r.outcome
+            == CaptureOutcome::NeedsReview {
+                reason: CaptureGap::PrivateUrl
+            }));
+        assert!(!serde_json::to_string(&frozen.report)
+            .unwrap()
+            .contains("fictional-private-marker"));
     }
     #[test]
     fn archive_rejection_never_produces_an_activatable_manifest() {

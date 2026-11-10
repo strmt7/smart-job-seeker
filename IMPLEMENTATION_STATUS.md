@@ -1,3 +1,8 @@
+## Capture URL privacy boundary - 2026-11-10
+
+- Shared local checks now screen initial, redirect, robots and browser-discovered URLs before anonymous transport reads. Known private keys/email-like values are refused; bounded decoding feeds the parent's existing candidate-identifier check. Refusals remain review outcomes with hashed URLs. No profile or credentials are sent to the worker.
+- An actual contained discovery/frozen-entry workflow refused three private targets, recorded six public resources and verified a fictional two-step form after consuming the collector. The ordinary workspace passed 1,218 tests with 579 opt-in cases ignored; workspace Clippy, formatting and the managed app build passed. [Evidence and limits](docs/CAPTURE_URL_PRIVACY.md) retain the source/engine binding and distinguish these heuristics from still-unqualified general provenance/no-egress protection. No real form, application, application email or release was involved.
+
 ## Development ownership and layout qualification - 2026-11-10
 
 - Agent instructions now require ownership tracking, bounded resources and verified cleanup on success, failure, cancellation and timeout. Ad-hoc services, scheduled tasks and startup entries are prohibited; unrelated applications and shared servers must remain untouched.

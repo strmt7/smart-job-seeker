@@ -32,13 +32,15 @@ source-reference validation and review of advice that could falsify history.
 Two fictional templates and two separate generated documents remain a small
 sample. Optional advice still needs human source review.
 
-The final ordinary workspace run passed 1,211 tests with 578 opt-in cases ignored;
-all 166 UI scripts, Clippy, formatting and the managed build passed. The earlier
-hosted checkpoint passed 137 browser cases and coverage but exposed an inference
-fixture failure now corrected locally. Follow-up hosted acceptance must be bound
-to the next pushed commit. [Finding-state review](FINDING_STATE_REVIEW.md)
-records open findings and unavailable fresh DeepSource analysis without hiding
-or manually closing anything.
+The latest ordinary workspace run passed 1,218 tests with 579 opt-in cases
+ignored; workspace Clippy, formatting and the managed build passed. A connected contained run now verifies
+[private-URL refusals before frozen candidate entry](CAPTURE_URL_PRIVACY.md).
+The unchanged interface previously passed 166 UI scripts; a separate geometry
+regression passed in the later controller follow-up. The `d68dcd18` hosted ordinary tests/build, browser suite
+and coverage passed; its layout failure has a locally verified controller fix.
+Follow-up hosted acceptance must be bound to the next pushed commit.
+[Finding-state review](FINDING_STATE_REVIEW.md) records open findings and
+unavailable fresh DeepSource analysis without hiding or manually closing anything.
 
 ## Work in order
 
