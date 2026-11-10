@@ -14,6 +14,13 @@ zoom, pan and corner resizing, with compiled narrow-layout/native-zoom evidence.
 Clean-Windows, broader document/model quality and no-write live-form gates remain
 open. No release or real application submission occurred.
 
+Latest history-drafting checkpoint, 2026-11-10: CV/cover-letter drafting now
+uses checked career records with source bindings, unknown-date handling and
+stale-context checks. Actual local-model output exposed and fixed a silent
+extra-section omission; strict schemas now cover both drafting passes. Two
+fictional drafts and a separate compiled preview have [scoped evidence](HISTORY_DOCUMENT_DRAFTS.md),
+not a full HTTP-to-PDF journey or general document-quality claim.
+
 Latest source-copy checkpoint, 2026-11-10: job details now connect anonymous
 public-page collection to a background worker, cancellation, reload recovery
 and durable attempt records. Missing private browser/PDF tools are installed

@@ -19,7 +19,8 @@ year-only intervals overlap. Input is versioned, bounded to 64 KiB, and rejects
 unknown properties, invalid text and duplicate identities across both sections.
 
 Editing a value clears that entry's checked flag. Only saved, checked entries
-appear in the existing saved-value picker for nonsensitive text answers. The
+appear in the existing saved-value picker for nonsensitive text answers and
+are now available as [candidate-entered document-drafting sources](HISTORY_DOCUMENT_DRAFTS.md). The
 user chooses the entry and component explicitly; its exact text is copied into
 the answer editor. This does not fill a website, approve an action, attest a
 qualification claim or authorize submission. Sensitive fields do not gain a

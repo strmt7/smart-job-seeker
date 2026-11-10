@@ -23,3 +23,12 @@ const interactive=vm.runInNewContext(`(${sampleLine})`,{element:node,document:{c
 const interactivePanel=node('div');interactive(interactivePanel,{template_style_sample:'Fictional style',template_sampled_sections:true},{id:'job'},{kind:'cv'},'draft');
 const details=interactivePanel.children[0],label=details.children.find(item=>item.tag==='label'),button=details.children.find(item=>item.tag==='button');label.children[0].value='Exact passage';
 button.listeners.click().then(()=>{assert.equal(sent.template_style_focus,'Exact passage');assert.equal(sent.id,'job');assert.equal(saved.length,1);}).catch(error=>{console.error(error);process.exitCode=1;});
+
+const history=format({method:'all_pool_facts',pool:3,examined:3,used_in_draft:2,history_sources_available:2,history_sources_used:[{fact:2,record_id:'fictional'}]});
+assert.match(history,/1 of 2 checked career records supplied/);
+assert.match(history,/not independently verified claims/);
+assert.match(format({method:'all_pool_facts',pool:1,examined:1,used_in_draft:1,history_sources_available:1}),/source coverage is unavailable/);
+
+const sourceText=vm.runInNewContext('('+src.split('\n').find(x=>x.startsWith('function draftFactText('))+')');
+const entered=JSON.stringify({source_type:'candidate_entered_history',record_type:'education',values:{qualification:'Master of Data Science',institution:'Fictional & Institute',start_date:'2025',end_date:null,description:'Studies in progress.'},ongoing:true});
+const shown=sourceText(entered);assert.match(shown,/Start date: 2025/);assert.match(shown,/End date: not provided/);assert.match(shown,/Ongoing: confirmed/);assert.match(shown,/completion is not verified/);assert.match(shown,/Fictional & Institute/);assert.equal(sourceText('Reviewed plain-text qualification'),'Reviewed plain-text qualification');assert.equal(sourceText('{damaged'),'{damaged');

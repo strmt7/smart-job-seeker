@@ -27,6 +27,7 @@ mod docx_edit;
 mod docx_edit_task;
 mod docx_notes;
 mod docx_revision;
+mod draft_history;
 mod draft_task;
 mod duplicate_compare;
 mod duplicate_search;
@@ -9095,10 +9096,7 @@ fn serve(
             ) {
                 return Err("Shortlist the job before drafting".into());
             }
-            let (all_facts, _) = fit_candidate_context(ws)?;
-            if all_facts.is_empty() {
-                return Err("Add verified qualifications before drafting".into());
-            }
+            let (mut all_facts, _) = fit_candidate_context(ws)?;
             let priority_facts = draft_priority_facts(ws, &body["priority_ids"])?;
             let mut contact_facts = Vec::new();
             let profile: Value = match ws.candidate_profile().map_err(|e| e.to_string())? {
@@ -9107,6 +9105,12 @@ fn serve(
                 }
                 None => json!({}),
             };
+            let history_sources = draft_history::augment(&mut all_facts, &profile)?;
+            if all_facts.is_empty() {
+                return Err(
+                    "Add reviewed qualifications or checked career history before drafting".into(),
+                );
+            }
             if kind == "cv" {
                 for (key, label) in [
                     ("full_name", "Full name"),
@@ -9253,6 +9257,7 @@ fn serve(
                     kind: kind.to_owned(),
                     facts,
                     available_facts: all_facts.len(),
+                    history_sources,
                     contact_facts,
                     priority_facts,
                     selection_listing,
@@ -13977,6 +13982,20 @@ mod tests {
         )
         .unwrap();
         assert_ne!(second, draft_context_digest(&ws, &id, "cv").unwrap());
+        let mut profile = json!({"cv_template_id":"template-b","document_instructions":"Detailed","career_history":json!({"version":1,"employment":[{"id":"a".repeat(32),"employer":"Fictional Lab","title":"Engineer","description":"Original description","reviewed":true}],"education":[]}).to_string()});
+        ws.save_candidate_profile(&profile.to_string()).unwrap();
+        let before_history = draft_context_digest(&ws, &id, "cv").unwrap();
+        let mut history: Value =
+            serde_json::from_str(profile["career_history"].as_str().unwrap()).unwrap();
+        history["employment"][0]["description"] = json!("Corrected description");
+        profile["career_history"] = json!(history.to_string());
+        ws.save_candidate_profile(&profile.to_string()).unwrap();
+        let corrected = draft_context_digest(&ws, &id, "cv").unwrap();
+        assert_ne!(before_history, corrected);
+        history["employment"][0]["reviewed"] = json!(false);
+        profile["career_history"] = json!(history.to_string());
+        ws.save_candidate_profile(&profile.to_string()).unwrap();
+        assert_ne!(corrected, draft_context_digest(&ws, &id, "cv").unwrap());
     }
 
     #[test]

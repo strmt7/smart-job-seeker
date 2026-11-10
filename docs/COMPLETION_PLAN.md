@@ -218,10 +218,12 @@ build and configuration.
    [section-selection checkpoint](HISTORY_SECTION_SELECTION_2026-11-09.md) adds
    model-interpreted intent and repeatable record resolution across checked
    entries, with ten visually/live-verified answers in one repeated-history
-   fixture and seven additional intent cases. Global repeated-row assignment,
-   history-based tailoring and authoritative claim dependencies
+   fixture and seven additional intent cases. [History-backed document drafts](HISTORY_DOCUMENT_DRAFTS.md)
+   now retain checked-record source bindings and have two local-model examples;
+   unknown dates and unfinished education remain explicit. Global repeated-row
+   assignment, authoritative claim dependencies and broader tailoring quality
    still need implementation and local-model evaluation; do not infer them from
-   the editor or its workflow tests. The [answer-source checkpoint](HISTORY_ANSWER_SOURCES.md)
+   the editor or these small checks. The [answer-source checkpoint](HISTORY_ANSWER_SOURCES.md)
    now binds checked history values to reviewed answers and immutable historical
    snapshots, with current-source annotations. [Whole-form history advice](WHOLE_FORM_HISTORY.md)
    now classifies questions independently, resolves checked records and checks each
