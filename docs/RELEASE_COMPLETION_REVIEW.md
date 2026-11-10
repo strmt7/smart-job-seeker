@@ -9,6 +9,13 @@ scope.
 
 ## Current results
 
+The latest [owned local-model qualification](OWNED_ANSWER_QUALIFICATION.md)
+exposed and corrected a concrete factual-revision defect on the selected 12B
+model. The same three fictional criteria pass after bounded correction; this
+remains narrow evidence. The `f4d50769` hosted browser job failed two cases while
+the other jobs, coverage and all three CodeQL analyses passed. Local corrections
+preserve the browser assertions; exact-SHA hosted confirmation is still pending.
+
 [Saved-question preparation](SAVED_QUESTION_DRAFTS.md) now connects bounded public
 observations to the existing answer generator and immutable per-attempt draft
 files. Source/supporting-information changes invalidate results and mark saved

@@ -7,6 +7,7 @@ assert.ok(line);
 const element=(tag,text,cls)=>({tag,textContent:text,className:cls});
 const show=vm.runInNewContext(`(${line})`,{element,selectedFactsDetails:()=>null,factCrossCheckMessage:()=>''});
 const panel=()=>({items:[],append(item){this.items.push(item)}});
+const factualRepair=panel();show(factualRepair,{factual_repair_used:true,evidence_check:{status:'completed',claims:[]}});assert.match(factualRepair.items[0].textContent,/revised after unsupported claims/);assert.equal(factualRepair.items[0].className,'review-label');
 const failed=panel();show(failed,{evidence_check:{status:'invalid'}});assert.match(failed.items[0].textContent,/unavailable or incomplete/);
 const completed=panel();show(completed,{evidence_check:{status:'completed',claims:[{status:'unsupported',excerpt:'five years',explanation:'Not established'}],limit_reached:true}});
 assert.match(completed.items[0].textContent,/claim limit reached/);assert.match(completed.items[1].textContent,/unsupported: five years/);

@@ -166,8 +166,12 @@ fn retry_cosmetic_suggestion(
     initial: Value,
     retry: impl FnOnce() -> Result<Value, String>,
 ) -> (Value, &'static str) {
-    let Ok(candidate) = retry() else {
-        return (initial, "failed");
+    let candidate = match retry() {
+        Ok(candidate) => candidate,
+        Err(error) if error == crate::answer_task::FACTUAL_REVIEW_REQUIRED => {
+            return (initial, "needs_review");
+        }
+        Err(_) => return (initial, "failed"),
     };
     let Some(text) = candidate["text"]
         .as_str()

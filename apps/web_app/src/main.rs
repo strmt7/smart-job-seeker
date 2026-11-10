@@ -83,6 +83,8 @@ mod runtime_start;
 mod search_planner;
 mod smtp_handoff;
 mod source_answer;
+#[cfg(all(test, windows))]
+mod source_answer_qualification;
 mod storage_settings;
 mod suggestions;
 mod template_plan;

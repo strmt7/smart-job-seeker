@@ -1,3 +1,9 @@
+## Owned local-model qualification and factual revision - 2026-11-10
+
+- The selected local 12B model was tested in a separate owned runtime with copied, hash-verified weights and private profile/port. The initial run exposed invented experience under a conflicting writing preference, correctly caught by the model's critic but still returned as text. The generator now uses its existing bounded revision slots to correct known unsupported/numerically unsupported claims and refuses persistent violations. Numeric source markers remain in metadata; successful factual repair is visible in the shared evidence view.
+- The unchanged three-case model corpus passed after the correction, including unsupported-experience abstention and a corrected conflicting preference. Private weights/profile were removed and the process tree drained. [Evidence and limits](docs/OWNED_ANSWER_QUALIFICATION.md) record the failures, model/resource observations, narrow criteria and template review preservation. This does not establish universal model intelligence or employer-form readiness.
+- Hosted `f4d50769` build/test, agent-tool, PDF, supply-chain, coverage and CodeQL passed, but its browser suite had two failures (135 passed). Both affected cases and nine shared fixture checks pass locally after precise request scoping and a bounded routing fixture correction. Full hosted browser acceptance still requires the follow-up commit; no finding was manually closed or hidden.
+
 ## Answer preparation from saved questions - 2026-11-10
 
 - Saved text questions now connect to the existing local answer generator, separate from live form sessions. Source/question/job/qualification bindings are rechecked before starting and returning results. Known sensitive, incomplete, stale or mismatched observations remain manual. Completed drafts have immutable per-task files alongside the original application record, and changed supporting information marks earlier drafts historical.

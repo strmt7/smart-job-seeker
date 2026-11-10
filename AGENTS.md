@@ -18,6 +18,14 @@ repo up cold. Read this first, then `README.md`, then the references below.
   verified results and run checks appropriate to the actual changes. Avoid
   repetitive plans, status recaps, unchanged tests and incidental exploration.
   Brevity must not replace implementation, verification or honest reporting.
+- Keep context economical: request small source ranges, structured summaries and
+  bounded log tails. Do not dump minified assets, whole reports or unchanged files.
+  Retain full evidence privately and reopen only the relevant failure or symbol.
+  Run focused regressions first, then the required integration checks once per
+  coherent change; repeat only for changed behavior, new failures or unresolved
+  concerns. Reuse exact-commit evidence with its scope. Prefer existing shared
+  mechanisms over parallel implementations. Never weaken reasoning, criteria,
+  assertions, coverage, privacy or cleanup to save tokens.
 - Prefer substantial local development batches and reviewable local commits.
   Push tested, coherent checkpoints to `main` less frequently; avoid separate
   pushes for routine status/documentation updates or every small edit unless
@@ -69,6 +77,10 @@ repo up cold. Read this first, then `README.md`, then the references below.
   actual teardown evidence from long-running memory behavior. Native controller
   shutdown checks are in `tools/tests/test_owned_process_lifecycle.py` and run
   in the existing agent-tool CI job without browsers, models or network access.
+- Reuse `tools/audit_development_host.ps1` for a compact read-only checkpoint
+  snapshot instead of rewriting host-enumeration commands. Full observations
+  stay under ignored `target/`; console output is summarized. Matching resources
+  still require ownership review and are never stopped by the audit itself.
 
 ## Findings remain under detector control
 

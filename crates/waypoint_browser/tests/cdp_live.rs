@@ -1225,48 +1225,34 @@ fn http_error_page_is_not_treated_as_an_application_form() {
 #[test]
 #[ignore = "launches one local browser and a fictional local HTTP server"]
 fn redirect_and_failed_subresource_do_not_mask_a_successful_main_page() {
-    use std::io::{Read, Write};
-    use std::sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    };
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-    listener.set_nonblocking(true).unwrap();
-    let stopped = Arc::new(AtomicBool::new(false));
-    let flag = stopped.clone();
-    let server = std::thread::spawn(move || {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
-        while !flag.load(Ordering::Relaxed) && std::time::Instant::now() < deadline {
-            match listener.accept() {
-                Ok((mut stream, _)) => {
-                    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(1)));
-                    let mut request = [0u8; 2048];
-                    let size = stream.read(&mut request).unwrap_or(0);
-                    let first = String::from_utf8_lossy(&request[..size]);
-                    let response = if first.starts_with("GET /redirect ") {
-                        "HTTP/1.1 302 Found\r\nLocation: /form\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned()
-                    } else if first.starts_with("GET /form ") {
-                        let body =
-                            "<html><body><input name='email'><img src='/missing'></body></html>";
-                        format!("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len())
-                    } else {
-                        "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-                            .to_owned()
-                    };
-                    let _ = stream.write_all(response.as_bytes());
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                    std::thread::sleep(std::time::Duration::from_millis(25))
-                }
-                Err(_) => break,
-            }
-        }
-    });
+    use loopback::{HttpFixture, Response};
+    let fixture = HttpFixture::start_routes(vec![
+        (
+            "/redirect",
+            Response {
+                status: 302,
+                location: Some("/form".into()),
+                body: String::new(),
+            },
+        ),
+        (
+            "/form",
+            Response {
+                status: 200,
+                location: None,
+                body: "<html><body><input name='email'><img src='/missing'></body></html>".into(),
+            },
+        ),
+    ]);
+    let port = fixture
+        .origin
+        .rsplit(':')
+        .next()
+        .unwrap()
+        .parse::<u16>()
+        .unwrap();
     let mut driver = CdpDriver::launch(vec![]).unwrap();
     let result = driver.open(&format!("http://127.0.0.1:{port}/redirect"));
-    stopped.store(true, Ordering::Relaxed);
-    server.join().unwrap();
     let form = result.unwrap();
     assert!(
         form.walls.is_empty(),
@@ -1283,6 +1269,8 @@ fn redirect_and_failed_subresource_do_not_mask_a_successful_main_page() {
         "same-document navigation lost verified status: {:?}",
         same_document.walls
     );
+    drop(driver);
+    fixture.finish();
 }
 
 #[test]
@@ -3248,7 +3236,6 @@ fn auto_attached_worker_fetch_domain_qualification() {
 #[ignore = "headless protocol experiment with a paused fictional worker and loopback server"]
 fn parent_fetch_interception_of_worker_request_qualification() {
     use serde_json::json;
-    use std::io::{Read, Write};
     use std::sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -3256,32 +3243,21 @@ fn parent_fetch_interception_of_worker_request_qualification() {
     use std::time::{Duration, Instant};
     use waypoint_browser::cdp::{BrowserProcess, Cdp};
 
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-    listener.set_nonblocking(true).unwrap();
-    let stopped = Arc::new(AtomicBool::new(false));
     let received = Arc::new(AtomicBool::new(false));
-    let (worker_stop, worker_received) = (stopped.clone(), received.clone());
-    let server = std::thread::spawn(move || {
-        let deadline = Instant::now() + Duration::from_secs(15);
-        while !worker_stop.load(Ordering::Relaxed) && Instant::now() < deadline {
-            match listener.accept() {
-                Ok((mut stream, _)) => {
-                    let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
-                    let mut request = [0u8; 4096];
-                    let size = stream.read(&mut request).unwrap_or(0);
-                    if request[..size].starts_with(b"GET /fictional-submit ") {
-                        worker_received.store(true, Ordering::Relaxed);
-                    }
-                    let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    std::thread::sleep(Duration::from_millis(20))
-                }
-                Err(_) => break,
-            }
+    let worker_received = received.clone();
+    let fixture = loopback::HttpFixture::start_with_observer("", move |path| {
+        if path == "/fictional-submit" {
+            worker_received.store(true, Ordering::Relaxed);
         }
+        Ok(())
     });
+    let port = fixture
+        .origin
+        .rsplit(':')
+        .next()
+        .unwrap()
+        .parse::<u16>()
+        .unwrap();
     let browser = BrowserProcess::launch(Duration::from_secs(20)).unwrap();
     let mut cdp = Cdp::new(browser.connect().unwrap()).unwrap();
     cdp.call("Page.enable", json!({})).unwrap();
@@ -3297,7 +3273,7 @@ fn parent_fetch_interception_of_worker_request_qualification() {
     assert!(cdp.saw_event("Page.loadEventFired"));
     cdp.call(
         "Fetch.enable",
-        json!({"patterns":[{"urlPattern":"*","requestStage":"Request"}]}),
+        json!({"patterns":[{"urlPattern":format!("http://127.0.0.1:{port}/fictional-submit"),"requestStage":"Request"}]}),
     )
     .unwrap();
     cdp.call(
@@ -3354,9 +3330,8 @@ fn parent_fetch_interception_of_worker_request_qualification() {
     let outcome = cdp
         .service_paused_requests(Duration::from_secs(2), 4)
         .unwrap();
-    stopped.store(true, Ordering::Relaxed);
     drop(cdp);
-    server.join().unwrap();
+    fixture.finish();
     println!(
         "parent intercepted {}; loopback received {}",
         outcome.rejected,

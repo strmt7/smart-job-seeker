@@ -10,6 +10,13 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 type RequestObserver = Arc<dyn Fn(&str) -> io::Result<()> + Send + Sync>;
+type Routes = std::collections::HashMap<String, Response>;
+
+pub struct Response {
+    pub status: u16,
+    pub location: Option<String>,
+    pub body: String,
+}
 
 pub struct HttpFixture {
     pub origin: String,
@@ -20,7 +27,13 @@ pub struct HttpFixture {
 
 impl HttpFixture {
     pub fn start(body: impl Into<String>) -> Self {
-        Self::start_inner("127.0.0.1:0".parse().unwrap(), body.into(), None, false)
+        Self::start_inner(
+            "127.0.0.1:0".parse().unwrap(),
+            body.into(),
+            None,
+            false,
+            None,
+        )
     }
 
     pub fn start_observing(
@@ -33,7 +46,7 @@ impl HttpFixture {
         address: SocketAddr,
         observer: impl Fn(&str) -> io::Result<()> + Send + Sync + 'static,
     ) -> Self {
-        Self::start_inner(address, String::new(), Some(Arc::new(observer)), true)
+        Self::start_inner(address, String::new(), Some(Arc::new(observer)), true, None)
     }
 
     pub fn start_with_observer(
@@ -45,6 +58,35 @@ impl HttpFixture {
             body.into(),
             Some(Arc::new(observer)),
             false,
+            None,
+        )
+    }
+
+    pub fn start_routes(routes: Vec<(&str, Response)>) -> Self {
+        assert!(
+            !routes.is_empty() && routes.len() <= 16,
+            "fixture route limit"
+        );
+        let mut entries = Routes::new();
+        for (path, response) in routes {
+            assert!(
+                path.starts_with('/') && path.len() <= 256 && !path.chars().any(char::is_control)
+            );
+            assert!((200..=599).contains(&response.status) && response.body.len() <= 65536);
+            assert!(response.location.as_ref().is_none_or(|s| s.len() <= 256
+                && s.starts_with('/')
+                && !s.chars().any(char::is_control)));
+            assert!(
+                entries.insert(path.to_owned(), response).is_none(),
+                "duplicate fixture route"
+            );
+        }
+        Self::start_inner(
+            "127.0.0.1:0".parse().unwrap(),
+            String::new(),
+            None,
+            false,
+            Some(Arc::new(entries)),
         )
     }
 
@@ -53,6 +95,7 @@ impl HttpFixture {
         body: String,
         observer: Option<RequestObserver>,
         no_content: bool,
+        routes: Option<Arc<Routes>>,
     ) -> Self {
         assert!(
             address.ip().is_loopback() && address.port() == 0,
@@ -93,8 +136,17 @@ impl HttpFixture {
                         let (stop, posts, body) =
                             (worker_stop.clone(), worker_posts.clone(), body.clone());
                         let observer = observer.clone();
+                        let routes = routes.clone();
                         clients.push(thread::spawn(move || {
-                            serve(stream, &stop, &posts, &body, observer.as_ref(), no_content)
+                            serve(
+                                stream,
+                                &stop,
+                                &posts,
+                                &body,
+                                observer.as_ref(),
+                                no_content,
+                                routes.as_deref(),
+                            )
                         }));
                     }
                     Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
@@ -163,6 +215,7 @@ fn serve(
     body: &str,
     observer: Option<&RequestObserver>,
     no_content: bool,
+    routes: Option<&Routes>,
 ) -> io::Result<()> {
     stream.set_nonblocking(false)?;
     stream.set_read_timeout(Some(Duration::from_millis(100)))?;
@@ -238,7 +291,8 @@ fn serve(
         }
     }
     let is_post = bytes.starts_with(b"POST ");
-    if let Some(observer) = observer {
+    let mut request_path = None;
+    if observer.is_some() || routes.is_some() {
         let line_end = bytes
             .windows(2)
             .position(|v| v == b"\r\n")
@@ -250,12 +304,23 @@ fn serve(
             .nth(1)
             .filter(|path| path.len() <= 256)
             .ok_or_else(|| io::Error::other("missing or oversized fixture request path"))?;
-        observer(path)?;
+        request_path = Some(path);
+        if let Some(observer) = observer {
+            observer(path)?;
+        }
     }
     if is_post {
         posts.fetch_add(1, Ordering::Relaxed);
     }
-    if no_content {
+    if let Some(routes) = routes {
+        let response = request_path.and_then(|path| routes.get(path));
+        let status = response.map_or(404, |r| r.status);
+        let body = response.map_or("", |r| r.body.as_str());
+        let location = response
+            .and_then(|r| r.location.as_ref())
+            .map_or_else(String::new, |s| format!("Location: {s}\r\n"));
+        write!(stream, "HTTP/1.1 {status} Fixture\r\n{location}Content-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len())
+    } else if no_content {
         // Observed channels measure arrival; 204 terminates SSE without retries.
         stream.write_all(b"HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Private-Network: true\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
     } else {

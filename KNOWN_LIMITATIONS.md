@@ -70,3 +70,13 @@ prevent unrelated software from consuming it between observations.
 
 - No claim of "world's best", no hiring-uplift claims, no "undetectable AI" claims, no exactly-once submission guarantee, no universal ATS support, no immigration/eligibility verdicts.
 - Competitor comparisons in `docs/g0/BASELINE_AND_LICENSE_INVENTORY.md` are API-verified metadata, not executed audits.
+# Local answer qualification follow-up - 2026-11-10
+
+The [private-runtime answer run](docs/OWNED_ANSWER_QUALIFICATION.md) covers three
+fictional cases. It fixed a known path that returned claims the local critic
+had identified as unsupported, but incomplete or uncertain model reviews can
+still miss mistakes and require manual review. It does not establish majority
+coverage on unseen forms. Runtime API memory fields and whole-device WDDM
+samples have different scopes; use independent hardware observations rather
+than treating the resident API's byte count as total GPU usage. The new hosted
+browser corrections still need confirmation on a subsequent pushed commit.

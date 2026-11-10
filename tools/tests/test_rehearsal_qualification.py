@@ -14,6 +14,15 @@ with patch.object(sys, 'path', [str(TOOLS), *sys.path]):
 
 
 class TestQualificationDenominators(unittest.TestCase):
+    def test_explicit_memory_budget_requires_admission_before_launch(self):
+        with tempfile.TemporaryDirectory() as temp, \
+                patch.object(qualification, 'admit_child_memory_bytes', side_effect=ValueError('too large')) as admission, \
+                patch.object(qualification.subprocess, 'Popen') as launch:
+            with self.assertRaises(ValueError):
+                qualification.run(['fictional-child'], {}, Path(temp) / 'run.log', memory_limit_bytes=20 * 1024**3)
+            admission.assert_called_once_with(20 * 1024**3)
+            launch.assert_not_called()
+
     def test_live_reserve_refuses_low_or_unavailable_memory(self):
         with patch.object(qualification, 'available_physical_bytes', return_value=3 * 1024**3):
             qualification.ensure_host_reserve()

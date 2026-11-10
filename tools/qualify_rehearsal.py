@@ -80,10 +80,11 @@ def ensure_host_reserve():
         raise RuntimeError('Qualification stopped to preserve the 3 GiB host RAM reserve')
 
 
-def run(command: list[str], environment: dict[str, str], log: Path, seconds: int = 240) -> dict:
+def run(command: list[str], environment: dict[str, str], log: Path, seconds: int = 240,
+        memory_limit_bytes: int = 4 * 1024**3) -> dict:
     if type(seconds) is not int or not 1 <= seconds <= 1200:
         raise ValueError('Command timeout must be a bounded integer')
-    budget = admit_child_memory_bytes(4 * 1024**3)
+    budget = admit_child_memory_bytes(memory_limit_bytes)
     containment = None
     started = time.monotonic()
     with log.open('xb') as output:

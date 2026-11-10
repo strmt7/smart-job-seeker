@@ -7,6 +7,46 @@ use std::net::TcpStream;
 use std::time::Duration;
 
 #[test]
+fn routed_responses_survive_idle_connections_and_fragmented_redirect_requests() {
+    use loopback::Response;
+    let fixture = HttpFixture::start_routes(vec![
+        (
+            "/redirect",
+            Response {
+                status: 302,
+                location: Some("/form".into()),
+                body: String::new(),
+            },
+        ),
+        (
+            "/form",
+            Response {
+                status: 200,
+                location: None,
+                body: "<input name='email'>".into(),
+            },
+        ),
+    ]);
+    let _idle = connect(&fixture);
+    for (path, status) in [("/redirect", 302), ("/form", 200), ("/missing", 404)] {
+        let mut client = connect(&fixture);
+        client.write_all(b"GE").unwrap();
+        std::thread::sleep(Duration::from_millis(10));
+        write!(client, "T {path} HTTP/1.1\r\nHost: localhost\r\n\r\n").unwrap();
+        let mut text = String::new();
+        client.read_to_string(&mut text).unwrap();
+        assert!(text.starts_with(&format!("HTTP/1.1 {status} ")));
+        if status == 302 {
+            assert!(text.contains("Location: /form\r\n"));
+        }
+        if status == 200 {
+            assert!(text.ends_with("<input name='email'>"));
+        }
+    }
+    fixture.finish();
+}
+
+#[test]
 fn observed_channels_wait_for_complete_bodies_and_tolerate_idle_connections() {
     let observed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let received = observed.clone();

@@ -1,5 +1,18 @@
 # Development agent tools and coverage
 
+## Development host observations
+
+Run `./tools/audit_development_host.ps1 -CheckOllama` at a completed checkpoint.
+It retains a new private JSON snapshot under `target/` and prints compact counts,
+available RAM and inspection errors. The model check is optional and reads only
+the ordinary loopback service's resident-model metadata. Without it the state is
+explicitly not assessed. `-ExtraIdentifier` may add a known task-owned private
+cache identifier to the repository-path filter. Matching processes are candidates
+for ownership review, not proof of staleness. The tool never stops processes,
+unloads models or changes services, tasks or startup entries. Raw command lines,
+registry values and task actions are used for matching but are not written to
+the snapshot. A single snapshot is not a memory-leak qualification.
+
 These tools assist development and research. They are separate from the Rust
 application, do not process candidate data by default, and do not submit jobs.
 
