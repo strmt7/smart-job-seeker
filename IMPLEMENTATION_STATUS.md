@@ -1,3 +1,8 @@
+## Answer preparation from saved questions - 2026-11-10
+
+- Saved text questions now connect to the existing local answer generator, separate from live form sessions. Source/question/job/qualification bindings are rechecked before starting and returning results. Known sensitive, incomplete, stale or mismatched observations remain manual. Completed drafts have immutable per-task files alongside the original application record, and changed supporting information marks earlier drafts historical.
+- Seven focused native checks and the ordinary workspace suite passed: 1,235 tests, 580 opt-in cases ignored. Clippy, formatting and the managed build pass. The compiled headless history/context journey and nine width/actual-zoom cases pass using fictional saved-page/draft fixtures. This qualifies the new binding and presentation path, not new local-model quality or real application completion. [Mechanism and limits](docs/SAVED_QUESTION_DRAFTS.md) preserve those distinctions. No real application, application email or release was involved.
+
 ## Saved-page question/control inventory - 2026-11-10
 
 - Anonymous resource discovery now retains a bounded, checkpoint-bound accessibility outline: labels, group context and exposed flags, excluding AX values and browser handles. Discovery still refuses candidate entry and arbitrary scripts. Failed later passes clear earlier observations. The shared, expandable page-controls view appears in the current copy and validated attempt history; unknown and partial states remain explicit.

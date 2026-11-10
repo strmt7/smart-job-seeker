@@ -260,12 +260,12 @@ fn finalize(
             json!({"status":if error==CANCELLED{"cancelled"}else{"failed"},"task_id":id,"job_id":task.job.as_str(),"attempt_id":id,"error":error})
         }
     };
+    value["source_url_sha256"] = json!(waypoint_domain::sha256_hex(task.source_url.as_bytes()));
     let event=task.record.event(json!({"type":"source_capture_result","time":crate::now(),"task_id":id,"status":value["status"],"current_source":current,"result":value["result"]}));
     let summary_saved = task.record.source_capture_result(&value).is_ok();
     let status_saved = task.record.status("manual_review", crate::now()).is_ok();
     let saved = event.is_ok() && summary_saved && status_saved;
     value["record_saved"] = json!(saved);
-    value["source_url_sha256"] = json!(waypoint_domain::sha256_hex(task.source_url.as_bytes()));
     if value["status"] != "complete"
         || value["result"]["needs_review"] == true
         || !current

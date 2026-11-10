@@ -38,14 +38,18 @@ def copy_runtime(source: Path, destination: Path):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--runtime-control', type=Path, required=True)
+    parser.add_argument('--runtime-control', type=Path)
+    parser.add_argument('--questions-only', action='store_true',
+        help='Render fictional saved-question/draft records without capture or model inference')
     parser.add_argument('--browser', type=Path, required=True)
     args = parser.parse_args()
     if os.name != 'nt' or not args.browser.is_absolute() or not args.browser.is_file():
         parser.error('Windows and an explicit headless-capable Chromium executable are required')
-    source = args.runtime_control.resolve(strict=True)
+    if not args.questions_only and args.runtime_control is None:
+        parser.error('Capture qualification requires a test-owned runtime control folder')
+    source = args.runtime_control.resolve(strict=True) if args.runtime_control else None
     target = (REPO / 'target').resolve(strict=True)
-    if not source.is_relative_to(target) or source.is_symlink() or source.is_junction():
+    if source and (not source.is_relative_to(target) or source.is_symlink() or source.is_junction()):
         parser.error('Only a test-owned runtime folder inside target can be copied')
     node = shutil.which('node')
     if not node:
@@ -59,6 +63,7 @@ def main():
              REPO / 'apps/web_app/web/source-copy.js', REPO / 'apps/web_app/web/workspace-theme.css',
              REPO / 'apps/web_app/web/app.js', REPO / 'apps/web_app/web/index.html',
              REPO / 'apps/web_app/src/main.rs', REPO / 'apps/web_app/src/attempt_record.rs',
+             REPO / 'apps/web_app/src/source_answer.rs', REPO / 'apps/web_app/src/answer_task.rs',
              REPO / 'apps/web_app/src/runtime_setup.rs', REPO / 'tools/qualify_rehearsal.py',
              REPO / 'tools/owned_process.py']
     paths.extend(REPO / name for name in ['crates/waypoint_browser/src/capture_discovery.rs',
@@ -69,7 +74,7 @@ def main():
     memory = RamSamples()
     memory.thread.start()
     try:
-        for pointer, relative in [('tool-browser.json', 'runtime-tools'), ('pdf-runtime.json', 'pdf-runtimes')]:
+        for pointer, relative in ([] if args.questions_only else [('tool-browser.json', 'runtime-tools'), ('pdf-runtime.json', 'pdf-runtimes')]):
             data = (source / pointer).read_bytes()
             if len(data) > 256:
                 raise ValueError('Runtime pointer exceeds its budget')
@@ -83,6 +88,7 @@ def main():
             (control / pointer).write_bytes(data)
         environment = os.environ.copy()
         environment.update(WAYPOINT_SOURCE_QA_FOLDER=str(folder), WAYPOINT_SOURCE_QA_BROWSER=str(args.browser), PYTHONUTF8='1')
+        environment['WAYPOINT_SOURCE_QUESTION_QA'] = '1' if args.questions_only else '0'
         receipt['run'] = run([node, str(REPO / 'apps/web_app/scripts/qualify-source-copy.cjs')], environment, folder / 'native.private.log', 300)
         receipt['rendered'] = json.loads((folder / 'rendered.private.json').read_text(encoding='utf-8'))
         if receipt['run']['exit_code'] or receipt['rendered'].get('complete') is not True:

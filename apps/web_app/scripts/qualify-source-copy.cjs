@@ -7,9 +7,11 @@ const { chromium } = require('../../../target/layout-qa/node_modules/playwright-
 const folder = path.resolve(process.env.WAYPOINT_SOURCE_QA_FOLDER || '');
 const browserPath = process.env.WAYPOINT_SOURCE_QA_BROWSER;
 const executable = path.resolve(__dirname, '../../../target/debug/waypoint_web.exe');
+const questionMode = process.env.WAYPOINT_SOURCE_QUESTION_QA === '1';
 if (!process.env.WAYPOINT_SOURCE_QA_FOLDER || !browserPath) throw Error('Use tools/qualify_source_copy.py');
 let child, context, browser, token, appErrors = '', origin;
 const evidence = { complete: false, scope: 'Anonymous public reference-page copy; no employer form or candidate interaction', cases: [], screenshots: [] };
+if(questionMode)evidence.scope='Fictional saved-question/draft records through compiled UI and native context API; no capture, model inference or employer interaction';
 function assert(condition, message) { if (!condition) throw Error(message); }
 async function bounded(operation, milliseconds = 15000) {
   let timer;
@@ -48,7 +50,20 @@ async function expand(page) {
       child.once('error', reject); child.once('exit', () => reject(Error('App exited before startup')));
     }), 30000);
     origin = new URL(address).origin;
-    const added = await api('/api/jobs/add', { url: 'https://www.rfc-editor.org/rfc/rfc9309.html', title: 'Fictional source-copy qualification', employer: 'Reference fixture', description: 'Fictional local record. Public technical reference used to qualify anonymous resource capture.' });
+    const added = await api('/api/jobs/add', { url: questionMode?'https://example.org/fictional-source-questions':'https://www.rfc-editor.org/rfc/rfc9309.html', title: questionMode?'Platform engineer':'Fictional source-copy qualification', employer: 'Reference fixture', description: 'Fictional local record. Build reliable services using Rust and document recovery procedures.' });
+    let fixtureQuestion;
+    if(questionMode){
+      await api('/api/facts',{text:'Built a fictional Rust service and documented recovery procedures.'});
+      await api('/api/shortlist',{id:added.id});
+      const attempt='rendered-question-fixture', hash=crypto.createHash('sha256').update(added.id).digest('hex').slice(0,16), root=path.join(folder,'workspace','application-records',`${hash}-${attempt}`);
+      fs.mkdirSync(root,{recursive:true});
+      const write=(name,value)=>fs.writeFileSync(path.join(root,name),JSON.stringify(value));
+      write('attempt.json',{job_id:added.id,attempt_id:attempt,status:'manual_review',started_at:1770000000,submitted:false,page_capture_available:false});
+      write('source-page-summary.json',{status:'complete',job_id:added.id,attempt_id:attempt,source_url_sha256:crypto.createHash('sha256').update('https://example.org/fictional-source-questions').digest('hex'),result:{archive_written:true,needs_review:false,report:{recorded_resources:1,requests:1,discovery:{form_outline_snapshot_sha256:'a'.repeat(64),form_outline:{schema:1,scope:'root_frame_accessibility_tree',status:'observed',reason:null,nodes:3,omitted_controls:0,unlabelled_controls:0,omitted_texts:0,controls:[{number:1,role:'textbox',label:'Describe relevant experience',description:'Use a concrete example of your work.',context:['Engineering experience'],context_incomplete:false,required:true,disabled:null}]}}}}});
+      const identity={id:added.id,attempt_id:attempt,number:1}, preview=await api('/api/job-source/question',identity);
+      write('question-draft-rendered-fixture.json',{schema:1,type:'saved_question_draft',source_attempt:attempt,control_number:1,question:preview.question,context_digest:preview.digest,answer:{text:'I built a Rust service and documented its recovery procedures, giving the team a clear reference during incident response.',sources:['Built a fictional Rust service and documented recovery procedures.'],evidence_check:{status:'not_assessed'}},filled:false,submitted:false});
+      fixtureQuestion=identity;
+    }
     const extensionPath = path.join(folder, 'extension'), profile = path.join(folder, 'browser');
     fs.mkdirSync(extensionPath);
     fs.writeFileSync(path.join(extensionPath, 'manifest.json'), JSON.stringify({ manifest_version: 3, name: 'Source copy layout qualification', version: '1.0', permissions: ['tabs'] }));
@@ -65,7 +80,30 @@ async function expand(page) {
     const controller = await context.newPage();
     await controller.goto('chrome-extension://' + extension.id + '/control.html');
     await page.bringToFront();
-    let panel = await expand(page);
+    let panel = await expand(page), outlinePanel;
+    if(questionMode){
+      let modelStarts=0;page.on('request',request=>{if(request.url().endsWith('/api/job-source/answer-start'))modelStarts++;});
+      const history=page.locator('#jobs .attempt-records').first();
+      await history.locator('summary').first().click();
+      const outline=history.locator('.source-form-outline');await outline.evaluate(node=>{node.open=true;});
+      await outline.getByRole('button',{name:'Prepare answer',exact:true}).click();
+      panel=outline.locator('.source-question-review');outlinePanel=panel;
+      await panel.getByRole('textbox',{name:'Prepared answer',exact:true}).waitFor();
+      assert((await panel.textContent()).includes('supporting information unchanged'),'Current saved draft was not identified');
+      assert(await panel.locator('textarea').evaluate(node=>node.readOnly),'Saved draft was not readonly');
+      evidence.cases.push('Compiled history and native source context reopened a fictional current saved draft');
+      await api('/api/facts',{text:'New fictional qualification changes the supporting information.'});
+      await page.reload({waitUntil:'networkidle'});await expand(page);
+      const reloadedHistory=page.locator('#jobs .attempt-records').first();await reloadedHistory.locator('summary').first().click();
+      const reloadedOutline=reloadedHistory.locator('.source-form-outline');await reloadedOutline.evaluate(node=>{node.open=true;});
+      await reloadedOutline.getByRole('button',{name:'Prepare answer',exact:true}).click();
+      panel=reloadedOutline.locator('.source-question-review');outlinePanel=panel;
+      await panel.getByRole('textbox',{name:'Prepared answer',exact:true}).waitFor();
+      assert((await panel.textContent()).includes('Historical draft'),'Changed supporting information did not mark the draft historical');
+      assert((await api('/api/job-source/question',fixtureQuestion)).drafts[0].current===false,'Native API failed to invalidate saved context');
+      assert(modelStarts===0,'Question preview started inference');
+      evidence.cases.push('Reload after a new fact marked the immutable saved draft historical without inference');
+    } else {
     await panel.getByRole('button', { name: 'Save page copy', exact: true }).click();
     const running = await waitFor(async () => { const pending = await api('/api/job-source/pending', {}); return pending.active && pending; }, 30);
     assert(running.job_id === added.id, 'Running capture belongs to another job');
@@ -98,9 +136,10 @@ async function expand(page) {
     evidence.cases.push('Reload recovered terminal copy; history retained cancellation and archive; job remained discovered');
     const captureDetails = panel.locator('.source-copy-result');
     await captureDetails.evaluate(node => { node.open = true; });
-    const outlinePanel=panel.locator('.source-form-outline');
+    outlinePanel=panel.locator('.source-form-outline');
     await outlinePanel.evaluate(node=>{node.open=true;});
     if(outline.controls.length>12){await outlinePanel.getByRole('button',{name:`Show all ${outline.controls.length} controls`,exact:true}).click();assert(await outlinePanel.locator('li').count()===outline.controls.length,'Control expansion lost rows');await outlinePanel.getByRole('button',{name:'Show fewer controls',exact:true}).click();}
+    }
     for (const width of [320, 700, 1280]) {
       await page.setViewportSize({ width, height: 1000 });
       for (const factor of [0.8, 1, 2, 4]) {
@@ -117,7 +156,7 @@ async function expand(page) {
         const measure = await panel.evaluate(node => {
           const rect = node.getBoundingClientRect();
           return { width: innerWidth, document: document.documentElement.scrollWidth, panelWidth: rect.width, clientWidth: node.clientWidth, scrollWidth: node.scrollWidth,
-            clippedControls: [...node.querySelectorAll('button,progress,summary')].filter(el => !el.hidden && el.getClientRects().length).filter(el => { const r = el.getBoundingClientRect(); return r.left < rect.left - 2 || r.right > rect.right + 2; }).length };
+            clippedControls: [...node.querySelectorAll('button,progress,summary,textarea')].filter(el => !el.hidden && el.getClientRects().length).filter(el => { const r = el.getBoundingClientRect(); return r.left < rect.left - 2 || r.right > rect.right + 2; }).length };
         });
         assert(measure.document <= measure.width + 2 && measure.scrollWidth <= measure.clientWidth + 2 && measure.clippedControls === 0, `Capture panel overflow at ${width}px / ${factor} zoom: ${JSON.stringify(measure)}`);
         evidence.cases.push({ viewport_width: width, zoom: actual, ...measure });

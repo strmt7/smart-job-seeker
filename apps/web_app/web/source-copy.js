@@ -10,7 +10,58 @@
     }
   }
   function count(value) { return Number.isSafeInteger(value) && value >= 0 ? value : null; }
-  function outlineView(outline, el) {
+  function questionPreparation(control, el, options) {
+    const root=el('div','','source-question-preparation'), open=el('button','Prepare answer','secondary');
+    open.type='button';root.append(open);
+    const identity={id:options.jobId,attempt_id:options.attemptId,number:control.number};
+    open.addEventListener('click',async()=>{
+      if(open.disabled)return;open.disabled=true;
+      const panel=el('section','','source-question-review'), status=el('p','Loading saved question…','footnote');
+      status.setAttribute('role','status');root.replaceChildren(open,panel);panel.append(status);
+      try {
+        const context=await options.api('/api/job-source/question',identity);
+        if(typeof context.question!=='string'||typeof context.digest!=='string')throw Error('The saved question could not be verified.');
+        panel.replaceChildren(el('h4','Answer preparation'),el('p',context.question,'source-question-text'),el('p',context.notice,'footnote'));
+        function showDraft(answer,caption,container=panel){
+          const value=el('textarea');value.value=typeof answer?.text==='string'?answer.text:'';
+          value.readOnly=true;value.rows=5;value.setAttribute('aria-label','Prepared answer');
+          container.append(el('p',caption,'footnote'),value);
+          if(typeof options.renderEvidence==='function')options.renderEvidence(container,answer);
+          else container.append(el('p','Review every claim against the supporting qualifications.','review-label'));
+          const sources=Array.isArray(answer?.sources)?answer.sources.filter(source=>typeof source==='string').slice(0,10):[];
+          if(sources.length){const facts=el('details'),summary=el('summary',`Cited qualifications (${sources.length})`);facts.append(summary);for(const source of sources)facts.append(el('p',source,'footnote'));container.append(facts);}
+          container.append(el('p','Evidence checks are advisory. Confirm the facts and wording before using this answer.','footnote'));
+        }
+        for(const draft of Array.isArray(context.drafts)?context.drafts.slice(0,8):[])showDraft(draft.answer,draft.current?'Saved draft · supporting information unchanged':'Historical draft · supporting information changed');
+        if(context.drafts_partial)panel.append(el('p','More saved files may be present in this application record.','footnote'));
+        const start=el('button','Draft answer','secondary'), latest=el('div');start.type='button';panel.append(start,status,latest);
+        status.textContent='Review the question above. The draft uses your reviewed qualifications and writing preferences.';
+        start.addEventListener('click',async()=>{
+          if(start.disabled)return;start.disabled=true;status.textContent='Preparing answer with your local model…';
+          try {
+            const started=await options.api('/api/job-source/answer-start',{...identity,digest:context.digest});
+            if(typeof started.task_id!=='string')throw Error('The answer task could not be verified.');
+            // Keep exactly this finite task observed even if its view is
+            // rerendered. Completion archives the draft; no global timer/cache.
+            const deadline=Date.now()+600000;
+            while(Date.now()<deadline){
+              const result=await options.api('/api/job-source/answer-status',{...identity,task_id:started.task_id});
+              if(result.status==='complete'){
+                latest.replaceChildren();showDraft(result.answer,`Saved in this application record: ${result.saved_file}`,latest);
+                status.textContent='Draft saved. Review its accuracy and the current question before use.';return;
+              }
+              if(result.status!=='running')throw Error(result.error||'The answer could not be prepared.');
+              await new Promise(resolve=>setTimeout(resolve,1000));
+            }
+            throw Error('Answer preparation timed out. Check the application record before trying again.');
+          } catch(error){status.textContent=error.message;}
+          finally {start.disabled=false;}
+        });
+      } catch(error){status.textContent=error.message;open.disabled=false;}
+    });
+    return root;
+  }
+  function outlineView(outline, el, options={}) {
     if (!outline) return el('p', 'Controls were not assessed for this copy.', 'footnote');
     if (!['observed','partial'].includes(outline.status) || !Array.isArray(outline.controls) || outline.controls.length>256 || outline.controls.some(c=>!c||typeof c!=='object'))
       return el('p', 'Page controls could not be inspected. Review the saved copy manually.', 'footnote');
@@ -34,6 +85,8 @@
         row.append(el('p',metadata.join(' · '),'footnote'));
         if(typeof control.description==='string'&&control.description)row.append(el('p',control.description,'footnote'));
         if(control.context_incomplete)row.append(el('p','The surrounding question context is incomplete.','footnote'));
+        if(options.api&&options.jobId&&options.attemptId&&control.role==='textbox'&&control.label&&control.disabled!==true&&!control.context_incomplete)
+          row.append(questionPreparation(control,el,options));
         list.append(row);
       }
     }
@@ -114,7 +167,7 @@
         for (const reason of reasons) findings.append(el('p', labels[reason] || 'A resource needs review.', 'footnote'));
         const rounds = report?.discovery?.rounds;
         if (Array.isArray(rounds)) findings.append(el('p', `${rounds.length} resource-discovery pass${rounds.length === 1 ? '' : 'es'} recorded.`, 'footnote'));
-        findings.append(outlineView(report?.discovery?.form_outline,el));
+        findings.append(outlineView(report?.discovery?.form_outline,el,{api:client,jobId:job.id,attemptId:state.result.attempt_id,renderEvidence:dependencies.renderEvidence}));
         findings.append(el('p', `Saved under application record ${state.result.attempt_id}.`, 'footnote'));
       }
     }

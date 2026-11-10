@@ -82,6 +82,7 @@ mod runtime_setup;
 mod runtime_start;
 mod search_planner;
 mod smtp_handoff;
+mod source_answer;
 mod storage_settings;
 mod suggestions;
 mod template_plan;
@@ -3268,6 +3269,46 @@ fn serve(
             ws.clear_gmail_credentials()
                 .map_err(|_| "Cannot clear Gmail credentials")?;
             json_reply(stream, "200 OK", json!({"ok":true}));
+        }
+        "/api/job-source/question"
+        | "/api/job-source/answer-start"
+        | "/api/job-source/answer-status" => {
+            let job = JobIdentityId::new(body["id"].as_str().ok_or("Missing job identity")?)
+                .map_err(|e| e.to_string())?;
+            let attempt = body["attempt_id"]
+                .as_str()
+                .ok_or("Missing page-copy identity")?;
+            let number = body["number"]
+                .as_u64()
+                .filter(|n| (1..=256).contains(n))
+                .ok_or("Choose an observed question")? as usize;
+            let value = if path == "/api/job-source/answer-status" {
+                source_answer::finish(
+                    ws,
+                    &job,
+                    attempt,
+                    number,
+                    body["task_id"].as_str().ok_or("Missing answer task")?,
+                )?
+            } else {
+                let input = source_answer::inputs(ws, &job, attempt, number)?;
+                if path == "/api/job-source/question" {
+                    source_answer::context(ws, &job, attempt, number, &input)?
+                } else {
+                    if body["digest"].as_str() != Some(input.digest.as_str()) {
+                        return Err(
+                            "Question or supporting information changed; review the question again"
+                                .into(),
+                        );
+                    }
+                    let model = resident_model()?
+                        .ok_or("No local model is available within current resource budgets")?;
+                    let task = random_id()?;
+                    answer_task::start(task.clone(), model, input)?;
+                    json!({"task_id":task})
+                }
+            };
+            json_reply(stream, "200 OK", value);
         }
         "/api/job-source/start" => {
             if session.is_some()

@@ -9,6 +9,14 @@ scope.
 
 ## Current results
 
+[Saved-question preparation](SAVED_QUESTION_DRAFTS.md) now connects bounded public
+observations to the existing answer generator and immutable per-attempt draft
+files. Source/supporting-information changes invalidate results and mark saved
+drafts historical. Seven focused tests, 1,235 ordinary workspace tests and a
+contained fictional compiled-UI journey pass. The journey does not run inference
+or interact with employer forms; local-model quality and the isolation gates
+below remain unqualified.
+
 The latest development follow-up adds explicit host-ownership rules and an
 owned, bounded layout controller. All 296 local matrix observations passed;
 [evidence](LAYOUT_QUALIFICATION_LIFECYCLE.md) preserves the earlier hosted/local

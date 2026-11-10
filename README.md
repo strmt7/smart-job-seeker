@@ -16,6 +16,11 @@ question groups under a job's page-copy details and application records.
 Missing states and incomplete coverage remain explicit; this view does not
 enable application filling or submission.
 
+[Answer preparation](docs/SAVED_QUESTION_DRAFTS.md) can use saved text questions
+with reviewed qualifications and the existing local-model drafting pipeline.
+Drafts retain source bindings and separate files in each application record;
+changed supporting information is shown explicitly.
+
 ## Quick start
 
 On Windows, build the local web prototype from the repository root:

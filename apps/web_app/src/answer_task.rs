@@ -26,6 +26,8 @@ struct Task {
     completed_at: Option<std::time::Instant>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
+#[cfg(test)]
+pub(crate) static TEST_LOCK: Mutex<()> = Mutex::new(());
 static COMPLETED: Mutex<Option<(String, Value, std::time::Instant)>> = Mutex::new(None);
 
 pub fn pending_for_session(session: &str) -> bool {
@@ -274,6 +276,35 @@ pub fn poll(id: &str) -> Result<Value, String> {
         }
         Err(error) => json!({"status":"failed","error":error}),
     })
+}
+
+/// Read only the selected preparation's worker/cache. An unrelated polling
+/// request must not consume or invalidate another form/email draft.
+pub fn poll_bound(id: &str, session: &str, selector: &str) -> Result<Value, String> {
+    {
+        let task = TASK.lock().map_err(|_| "Answer drafting unavailable")?;
+        if let Some(task) = task.as_ref().filter(|t| t.id == id) {
+            if task.session_id != session || task.selector != selector {
+                return Err("Answer task belongs to another question".into());
+            }
+        } else {
+            let completed = COMPLETED
+                .lock()
+                .map_err(|_| "Answer drafting unavailable")?;
+            if !completed.as_ref().is_some_and(|(key, value, at)| {
+                key == id
+                    && at.elapsed() <= std::time::Duration::from_secs(600)
+                    && value["session_id"].as_str() == Some(session)
+                    && value["selector"].as_str() == Some(selector)
+            }) {
+                return Err("Answer task belongs to another question or expired".into());
+            }
+        }
+    }
+    let mut result = poll(id)?;
+    result["session_id"] = json!(session);
+    result["selector"] = json!(selector);
+    Ok(result)
 }
 
 /// Release a finished worker only after its result has been checked against
@@ -985,6 +1016,7 @@ mod tests {
 
     #[test]
     fn email_answer_replays_after_lost_response_and_invalidates_changed_inputs() {
+        let _guard = TEST_LOCK.lock().unwrap();
         use std::io::{Read, Write};
         use std::net::{TcpListener, TcpStream};
         use waypoint_domain::{ApplicationState, JobIdentityId};

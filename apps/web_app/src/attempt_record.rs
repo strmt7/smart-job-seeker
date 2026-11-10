@@ -1181,7 +1181,7 @@ pub fn list_page(ws: &Workspace, id: &JobIdentityId, page: usize) -> Result<Valu
     )
 }
 
-fn attempt_directory(
+pub(crate) fn attempt_directory(
     ws: &Workspace,
     job: &JobIdentityId,
     attempt: &str,

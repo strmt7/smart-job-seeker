@@ -6,6 +6,10 @@ states from the anonymous rendering checkpoint. Application records retain the
 same inventory after reload. Controls remain plain text; a label such as
 “Submit application” cannot become an action button in this view.
 
+The subsequent [answer-preparation path](SAVED_QUESTION_DRAFTS.md) offers a
+separate local drafting action for eligible saved text questions. It does not
+turn observed controls into live selectors or application actions.
+
 ## Mechanism and limits
 
 The render-only broker accepts one empty `SmartJobseeker.publicFormOutline`
