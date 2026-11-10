@@ -61,6 +61,9 @@ def main():
              REPO / 'apps/web_app/src/main.rs', REPO / 'apps/web_app/src/attempt_record.rs',
              REPO / 'apps/web_app/src/runtime_setup.rs', REPO / 'tools/qualify_rehearsal.py',
              REPO / 'tools/owned_process.py']
+    paths.extend(REPO / name for name in ['crates/waypoint_browser/src/capture_discovery.rs',
+        'crates/waypoint_browser/src/capture_session.rs','crates/waypoint_browser/src/rehearsal_replay.py',
+        'crates/waypoint_browser/src/rehearsal_worker.py','crates/waypoint_browser/src/rehearsal.rs'])
     hashes = lambda: {str(p.relative_to(REPO)): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
     receipt['sources'] = hashes()
     memory = RamSamples()

@@ -1048,7 +1048,19 @@ fn source_page_copy_summary(root: &std::path::Path) -> Value {
     let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
         return json!({"status":"unreadable"});
     };
-    json!({"status":value["status"],"archive_written":value["result"]["archive_written"],"needs_review":value["result"]["needs_review"],"resources":value["result"]["report"]["recorded_resources"],"requests":value["result"]["report"]["requests"]})
+    let raw = &value["result"]["report"]["discovery"]["form_outline"];
+    let outline = if raw.is_null() {
+        Value::Null
+    } else {
+        serde_json::from_value::<waypoint_browser::capture_discovery::PublicFormOutline>(
+            raw.clone(),
+        )
+        .ok()
+        .filter(|outline| outline.valid())
+        .and_then(|outline| serde_json::to_value(outline).ok())
+        .unwrap_or_else(|| json!({"status":"unavailable"}))
+    };
+    json!({"status":value["status"],"archive_written":value["result"]["archive_written"],"needs_review":value["result"]["needs_review"],"resources":value["result"]["report"]["recorded_resources"],"requests":value["result"]["report"]["requests"],"form_outline":outline})
 }
 
 /// Return one bounded page from the first 2,000 directory entries inspected.

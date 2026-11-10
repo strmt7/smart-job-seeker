@@ -8,6 +8,11 @@ application-completion or submission feature.
 
 ## Collection and records
 
+[Public control outlines](PUBLIC_FORM_OUTLINES.md) add a bounded inventory of
+root-frame labels, descriptions, group context and exposed flags to the saved
+copy and history. Values/handles are excluded; missing data remains unknown.
+The page-controls view does not enable filling or establish application readiness.
+
 The parent checks the selected job's source permission and public HTTPS URL.
 It refuses known candidate identifiers, user information in the URL and common
 authentication parameters. This conservative check is not proof that an

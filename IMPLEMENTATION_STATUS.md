@@ -1,3 +1,9 @@
+## Saved-page question/control inventory - 2026-11-10
+
+- Anonymous resource discovery now retains a bounded, checkpoint-bound accessibility outline: labels, group context and exposed flags, excluding AX values and browser handles. Discovery still refuses candidate entry and arbitrary scripts. Failed later passes clear earlier observations. The shared, expandable page-controls view appears in the current copy and validated attempt history; unknown and partial states remain explicit.
+- The native fictional discovery/frozen-entry case passed. The actual compiled UI retained 176 partial reference-page controls through reload/history, expansion/collapse and nine width/actual-zoom cases. The final three surface screenshots were inspected. The workspace passed 1,228 ordinary tests with 580 opt-in cases ignored, alongside 29 portable broker checks, 168 JavaScript checks, Clippy, formatting and the managed build. [Evidence and limits](docs/PUBLIC_FORM_OUTLINES.md) distinguish anonymous observations from visual verification and application readiness. No model, real employer interaction, application/email or release was involved.
+- The pushed `c05037e1` checkpoint passed hosted CI/coverage/CodeQL. Its five remaining workflow-permission findings resolved automatically; all ten historical CodeQL alerts are now detector-fixed with no dismissal actors. DeepSource's quota/history gap remains documented. This new development batch remains local.
+
 ## Profile-sourced cover-letter signatures - 2026-11-10
 
 - Generated letters now use a source-bound profile name after the existing drafting/revision passes. Canonical text is shared by review, saved-letter reuse and export provenance; missing/invalid names remain explicit. Short final closing/name blocks stay together in PDFs, and older unsigned letter contexts become historical.

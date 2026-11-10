@@ -8,6 +8,10 @@
 .source-copy-status,.source-copy-result { overflow-wrap: anywhere; font-size: 12px; line-height: 1.5; }
 .source-copy-status:empty { display: none; }
 .source-copy-result { margin-top: 10px; }
+.source-form-outline { margin: 10px 0; overflow-wrap: anywhere; }
+.source-form-controls { padding-left: 20px; margin: 10px 0; }
+.source-form-controls li { padding: 10px 0; border-top: 1px solid var(--line); }
+.source-form-controls p { margin: 4px 0; }
 .inspectable-image { cursor: zoom-in; }
 .inspectable-image:hover,.inspectable-image:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
 dialog.image-viewer { width: min(1000px,calc(100vw - 24px)); height: min(720px,calc(100dvh - 24px)); min-width: min(320px,calc(100vw - 16px)); min-height: min(280px,calc(100dvh - 16px)); max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); padding: 0; overflow: auto; resize: both; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }

@@ -191,6 +191,70 @@ class DiscoveryTests(unittest.TestCase):
     def report(self):
         self.assertFalse(self.broker.host({'id':99,'method':'SmartJobseeker.discoveryReport','params':{}}))
         return self.emitted[-1]['result']
+    def outline(self, nodes):
+        self.assertFalse(self.broker.host({'id': 81, 'method': 'SmartJobseeker.publicFormOutline', 'sessionId': 'page', 'params': {}}))
+        command = self.sent[-1]
+        self.assertEqual(command['method'], 'Accessibility.getFullAXTree')
+        self.assertEqual(command['params'], {})
+        self.assertFalse(self.broker.browser({'id':command['id'], 'result':{'nodes':nodes}}))
+        return self.emitted[-1]['result']
+    def test_public_outline_keeps_context_and_unknowns_but_no_values_or_handles(self):
+        nodes = [
+            {'nodeId':'root','ignored':False,'role':{'value':'RootWebArea'}},
+            {'nodeId':'group','parentId':'root','ignored':False,'role':{'value':'group'},'name':{'value':'Applicant details'}},
+            {'nodeId':'field','parentId':'group','ignored':False,'role':{'value':'textbox'},'name':{'value':'Full name'},
+             'value':{'value':'private-marker-not-a-label'},'backendDOMNodeId':123456,
+             'properties':[{'name':'required','value':{'value':True}},{'name':'checked','value':{'value':'private-choice'}}]},
+        ]
+        result = self.outline(nodes)
+        self.assertEqual(result['status'],'observed')
+        self.assertEqual(result['controls'][0]['context'],['Applicant details'])
+        self.assertEqual(result['controls'][0]['label'],'Full name')
+        self.assertIs(result['controls'][0]['required'],True)
+        self.assertIsNone(result['controls'][0]['disabled'])
+        self.assertNotIn('private-',json.dumps(result))
+        self.assertNotIn('backendDOM',json.dumps(result))
+        self.assertNotIn('123456',json.dumps(result))
+        self.assertEqual(self.report()['form_outline'],result)
+        self.assertNotIn('form_outline',self.broker.report())
+    def test_outline_cannot_expand_the_discovery_protocol_or_be_repeated(self):
+        for method,params in [('Accessibility.getFullAXTree',{}),('SmartJobseeker.publicFormOutline',{'candidate':'private'})]:
+            with self.assertRaisesRegex(replay.ReplayError,'discovery_command_refused'):
+                self.broker.host({'id':1,'method':method,'sessionId':'page','params':params})
+        self.assertEqual(self.sent,[])
+        self.outline([{'nodeId':'1','ignored':False,'role':{'value':'RootWebArea'}}])
+        with self.assertRaisesRegex(replay.ReplayError,'outline_session_or_budget_refused'):
+            self.broker.host({'id':2,'method':'SmartJobseeker.publicFormOutline','sessionId':'page','params':{}})
+        regular = replay.Broker(self.fixture.archive(),self.sent.append,self.emitted.append)
+        with self.assertRaisesRegex(replay.ReplayError,'not_resource_discovery'):
+            regular.host({'id':3,'method':'SmartJobseeker.publicFormOutline','sessionId':'page','params':{}})
+    def test_raw_accessibility_updates_and_read_errors_do_not_leak_values(self):
+        self.assertFalse(self.broker.browser({'method':'Accessibility.nodesUpdated','params':{'nodes':[{'value':'private-marker'}]}}))
+        self.assertEqual(self.emitted,[])
+        self.broker.host({'id':1,'method':'SmartJobseeker.publicFormOutline','sessionId':'page','params':{}})
+        self.assertFalse(self.broker.browser({'id':self.sent[-1]['id'],'error':{'message':'private-marker'}}))
+        result=self.emitted[-1]['result']
+        self.assertEqual(result['status'],'unavailable')
+        self.assertNotIn('private-marker',json.dumps(result))
+    def test_outline_bounds_are_explicit_and_do_not_truncate_questions(self):
+        nodes=[{'nodeId':str(i),'ignored':False,'role':{'value':'textbox'},'name':{'value':'Question '+str(i)}} for i in range(257)]
+        result=replay.public_form_outline({'nodes':nodes})
+        self.assertEqual(result['status'],'partial')
+        self.assertEqual(len(result['controls']),256)
+        self.assertEqual(result['omitted_controls'],1)
+        nodes[0]['name']['value']='問'*200
+        result=replay.public_form_outline({'nodes':nodes[:1]})
+        self.assertIsNone(result['controls'][0]['label'])
+        self.assertEqual(result['omitted_texts'],1)
+        self.assertEqual(result['unlabelled_controls'],1)
+        self.assertEqual(replay.public_form_outline({'nodes':nodes*64})['status'],'unavailable')
+    def test_conflicting_flags_and_ancestry_cycles_stay_unknown(self):
+        node={'nodeId':'1','parentId':'1','ignored':False,'role':{'value':'checkbox'},'name':{'value':'Yes'},
+              'properties':[{'name':'required','value':{'value':True}},{'name':'required','value':{'value':False}}]}
+        result=replay.public_form_outline({'nodes':[node]})
+        self.assertEqual(result['status'],'partial')
+        self.assertIsNone(result['controls'][0]['required'])
+        self.assertTrue(result['controls'][0]['context_incomplete'])
     def test_only_anonymous_bodyless_missing_gets_become_sorted_proposals(self):
         for path in ['/z.js','/a.css','/z.js']:
             command=self.frame(url='https://fixture.invalid'+path,method='GET')

@@ -11,6 +11,11 @@ Smart Jobseeker is a Windows-first, local job-search and application-assistance 
 
 The [completion plan](docs/COMPLETION_PLAN.md) records the remaining product work and evidence gates; implementation is ongoing and no readiness date is established.
 
+[Saved-page controls](docs/PUBLIC_FORM_OUTLINES.md) show observed labels and
+question groups under a job's page-copy details and application records.
+Missing states and incomplete coverage remain explicit; this view does not
+enable application filling or submission.
+
 ## Quick start
 
 On Windows, build the local web prototype from the repository root:

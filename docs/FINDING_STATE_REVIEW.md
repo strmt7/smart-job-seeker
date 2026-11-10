@@ -1,5 +1,14 @@
 # Finding-state review
 
+Follow-up, 2026-11-10: exact commit `c05037e1` passed hosted CI, coverage and
+CodeQL. All three language analyses reported empty errors; the Actions analysis
+`2133956763` no longer has the earlier ingestion error. The five permission
+findings resolved automatically. A fresh inventory has zero open CodeQL alerts
+and ten `fixed` alerts, all with null dismissal actors/reasons. No status mutation
+was performed. Native responses are retained under
+`target/finding-state-audit/c050-*.private.json`. This updates the GitHub state
+below; DeepSource's stale-analysis, quota and history limitations remain open.
+
 Reviewed 2026-11-10 against GitHub main `1c411684` and the accessible provider
 state. No finding state was changed through a dashboard or API. The
 [agent instructions](../AGENTS.md#findings-remain-under-detector-control) prohibit

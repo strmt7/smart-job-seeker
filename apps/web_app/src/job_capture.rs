@@ -699,6 +699,30 @@ mod tests {
         );
     }
     #[test]
+    fn public_control_history_is_durable_and_rejects_value_bearing_metadata() {
+        for injected in [false, true] {
+            let (_dir, ws, mut task) = fixture();
+            let mut result = completed();
+            let mut outline = json!({"schema":1,"scope":"root_frame_accessibility_tree","status":"observed","reason":null,"nodes":3,"omitted_controls":0,"unlabelled_controls":0,"omitted_texts":0,"controls":[{"number":1,"role":"textbox","label":"Full name","description":null,"context":["Your details"],"context_incomplete":false,"required":true,"disabled":null}]});
+            if injected {
+                outline["controls"][0]["value"] = json!("private-value-must-not-be-projected");
+            }
+            result["report"]["discovery"] = json!({"form_outline":outline});
+            finalize(&ws, &mut task, Ok(result)).unwrap();
+            let records = crate::attempt_record::list(&ws, &task.job).unwrap();
+            let saved = &records["attempts"][0]["source_page_copy"]["form_outline"];
+            if injected {
+                assert_eq!(saved["status"], "unavailable");
+            } else {
+                assert_eq!(saved["controls"][0]["label"], "Full name");
+                assert!(saved["controls"][0]["disabled"].is_null());
+            }
+            assert!(!saved
+                .to_string()
+                .contains("private-value-must-not-be-projected"));
+        }
+    }
+    #[test]
     fn cached_results_recheck_source_identity_instead_of_trusting_cached_flags() {
         let (_dir, ws, mut task) = fixture();
         let mut value = finalize(&ws, &mut task, Ok(completed())).unwrap();

@@ -82,6 +82,9 @@ async function expand(page) {
     evidence.capture = result;
     assert(result.status === 'complete' && result.record_saved === true && result.result.archive_written === true, 'Public reference copy did not produce an archived record: ' + (result.error || result.status));
     assert(result.current_source === true && result.result.report.recorded_resources >= 1, 'Capture source/resources were not established');
+    const outline=result.result.report.discovery?.form_outline;
+    assert(outline && ['observed','partial'].includes(outline.status) && Array.isArray(outline.controls),'Public page controls were not observed');
+    assert(result.result.report.discovery.form_outline_snapshot_sha256?.length===64,'Public controls lost their checkpoint binding');
     await waitFor(async () => (await panel.locator('[role=status]').textContent()).includes('Page copy saved'));
     evidence.cases.push('Rendered repeat copy used native public GET coordinator and render-only resource discovery');
     await page.reload({ waitUntil: 'networkidle' });
@@ -89,11 +92,15 @@ async function expand(page) {
     await waitFor(async () => (await panel.locator('[role=status]').textContent()).includes('Page copy saved'));
     const history = await api('/api/attempts/list', { id: added.id });
     assert(history.attempts.length === 2 && history.attempts.some(row => row.source_page_copy?.archive_written === true) && history.attempts.some(row => row.source_page_copy?.status === 'cancelled'), 'Attempt history lost a capture outcome');
+    assert(history.attempts.some(row=>row.source_page_copy?.form_outline?.controls?.length===outline.controls.length),'History lost the public control inventory');
     const state = await api('/api/state');
     assert(state.jobs.find(row => row.job.id === added.id)?.job.state === 'discovered', 'Source capture changed application state');
     evidence.cases.push('Reload recovered terminal copy; history retained cancellation and archive; job remained discovered');
     const captureDetails = panel.locator('.source-copy-result');
     await captureDetails.evaluate(node => { node.open = true; });
+    const outlinePanel=panel.locator('.source-form-outline');
+    await outlinePanel.evaluate(node=>{node.open=true;});
+    if(outline.controls.length>12){await outlinePanel.getByRole('button',{name:`Show all ${outline.controls.length} controls`,exact:true}).click();assert(await outlinePanel.locator('li').count()===outline.controls.length,'Control expansion lost rows');await outlinePanel.getByRole('button',{name:'Show fewer controls',exact:true}).click();}
     for (const width of [320, 700, 1280]) {
       await page.setViewportSize({ width, height: 1000 });
       for (const factor of [0.8, 1, 2, 4]) {
@@ -116,7 +123,7 @@ async function expand(page) {
         evidence.cases.push({ viewport_width: width, zoom: actual, ...measure });
         if ((width === 320 && factor === 1) || (width === 1280 && factor === 1) || (width === 1280 && factor === 4)) {
           const name = `source-copy-${width}-${factor}.png`;
-          await panel.evaluate(node => node.scrollIntoView({ block: 'start', behavior: 'instant' }));
+          await outlinePanel.evaluate(node => node.scrollIntoView({ block: 'start', behavior: 'instant' }));
           // Explicit surface capture avoids zoom/scroll clip-coordinate conversion.
           const screen = await context.newCDPSession(page);
           const shot = await screen.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });

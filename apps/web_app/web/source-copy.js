@@ -10,6 +10,38 @@
     }
   }
   function count(value) { return Number.isSafeInteger(value) && value >= 0 ? value : null; }
+  function outlineView(outline, el) {
+    if (!outline) return el('p', 'Controls were not assessed for this copy.', 'footnote');
+    if (!['observed','partial'].includes(outline.status) || !Array.isArray(outline.controls) || outline.controls.length>256 || outline.controls.some(c=>!c||typeof c!=='object'))
+      return el('p', 'Page controls could not be inspected. Review the saved copy manually.', 'footnote');
+    const root=el('details','','source-form-outline'), summary=el('summary',`Page controls (${outline.controls.length} observed)`), list=el('ol','','source-form-controls');
+    root.append(summary,el('p','Controls exposed by the saved page. Later steps, embedded forms and unsupported controls may be missing.','footnote'));
+    if (!outline.controls.length) root.append(el('p','No supported controls were observed. Check the original page for an application link.','footnote'));
+    const roles={textbox:'Text field',searchbox:'Search field',combobox:'Choice',listbox:'Choice list',checkbox:'Checkbox',radio:'Single choice',switch:'Toggle',spinbutton:'Number',slider:'Range',button:'Button',link:'Link'};
+    let expanded=false;
+    function render() {
+      list.replaceChildren();
+      for (const control of outline.controls.slice(0,expanded?256:12)) {
+        const row=el('li');
+        if(Array.isArray(control.context)&&control.context.length)row.append(el('p',control.context.join(' · '),'footnote'));
+        row.append(el('strong',typeof control.label==='string'&&control.label?control.label:'Unlabelled control'));
+        const requirement=control.required===true?'Required':control.required===false?'Optional':'Requirement not exposed';
+        const state=control.disabled===true?'Disabled':control.disabled===false?'Enabled':'State not exposed';
+        const metadata=[typeof roles[control.role]==='string'?roles[control.role]:'Control'];
+        const action=control.role==='link'||control.role==='button';
+        if(!action)metadata.push(requirement);
+        if(!action||typeof control.disabled==='boolean')metadata.push(state);
+        row.append(el('p',metadata.join(' · '),'footnote'));
+        if(typeof control.description==='string'&&control.description)row.append(el('p',control.description,'footnote'));
+        if(control.context_incomplete)row.append(el('p','The surrounding question context is incomplete.','footnote'));
+        list.append(row);
+      }
+    }
+    render();root.append(list);
+    if(outline.controls.length>12){const more=el('button',`Show all ${outline.controls.length} controls`,'secondary');more.type='button';more.setAttribute('aria-expanded','false');more.addEventListener('click',()=>{expanded=!expanded;render();more.textContent=expanded?'Show fewer controls':`Show all ${outline.controls.length} controls`;more.setAttribute('aria-expanded',String(expanded));});root.append(more);}
+    if(outline.status==='partial')root.append(el('p','Some controls, labels or question context could not be retained. Review the original page.','footnote'));
+    return root;
+  }
   function description(value) {
     if (value.status === 'cancelled') return 'Stopped. Available files remain in application records.';
     if (value.status !== 'complete') return value.error || 'The page copy could not finish. Available files remain in application records.';
@@ -82,6 +114,7 @@
         for (const reason of reasons) findings.append(el('p', labels[reason] || 'A resource needs review.', 'footnote'));
         const rounds = report?.discovery?.rounds;
         if (Array.isArray(rounds)) findings.append(el('p', `${rounds.length} resource-discovery pass${rounds.length === 1 ? '' : 'es'} recorded.`, 'footnote'));
+        findings.append(outlineView(report?.discovery?.form_outline,el));
         findings.append(el('p', `Saved under application record ${state.result.attempt_id}.`, 'footnote'));
       }
     }
@@ -104,5 +137,5 @@
     views.set(root, render); render(); recover();
     return root;
   }
-  window.WaypointSourceCopies = { create };
+  window.WaypointSourceCopies = { create, outlineView };
 })();

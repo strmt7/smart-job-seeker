@@ -56,7 +56,7 @@ fn run_coordinator(discovery: bool, privacy: bool) {
     );
     let mut config: RehearsalConfig = serde_json::from_slice(&bytes).unwrap();
     let folder = path.parent().unwrap();
-    let html="<!doctype html><meta charset=utf-8><title>Fictional coordinated form</title><link rel=stylesheet href=/style.css><h1>Fictional coordinated form</h1><label>Name<input id=name></label><button type=button id=next>Continue</button><section id=questions></section><script src=/app.js></script>";
+    let html="<!doctype html><meta charset=utf-8><title>Fictional coordinated form</title><link rel=stylesheet href=/style.css><h1>Fictional coordinated form</h1><fieldset><legend>Your details</legend><label>Full name<input id=name required value=source-default-must-not-be-recorded></label></fieldset><button type=button id=next>Continue</button><section id=questions></section><script src=/app.js></script>";
     let script = if discovery {
         "fetch('/questions').then(r=>r.json()).then(v=>{const label=document.createElement('label');label.textContent=v.label;const input=document.createElement('input');input.id='email';input.type='email';label.append(input);const section=document.getElementById('questions');section.append(label);section.hidden=true;document.getElementById('next').onclick=()=>section.hidden=false;});"
     } else {
@@ -176,6 +176,34 @@ fn run_coordinator(discovery: bool, privacy: bool) {
                 CaptureOutcome::Recorded { .. }
             ));
         }
+    }
+    if discovery {
+        let report = capture.report();
+        let summary = report.discovery.as_ref().unwrap();
+        let outline = summary
+            .form_outline
+            .as_ref()
+            .expect("Public control inventory missing");
+        assert!(outline.valid());
+        let name = outline
+            .controls
+            .iter()
+            .find(|c| c.label.as_deref() == Some("Full name"))
+            .expect("Label not observed");
+        assert_eq!(name.required, Some(true));
+        assert!(name.context.iter().any(|label| label == "Your details"));
+        assert!(outline
+            .controls
+            .iter()
+            .any(|c| c.role == "button" && c.label.as_deref() == Some("Continue")));
+        assert!(!serde_json::to_string(outline)
+            .unwrap()
+            .contains("source-default-must-not-be-recorded"));
+        assert_eq!(summary.form_outline_round, Some(3));
+        assert_eq!(
+            summary.form_outline_snapshot_sha256.as_ref().unwrap().len(),
+            64
+        );
     }
     let frozen = capture.freeze().unwrap();
     assert!(dropped.load(Ordering::Acquire));

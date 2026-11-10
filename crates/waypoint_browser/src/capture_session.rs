@@ -219,6 +219,9 @@ impl CaptureSession {
             rounds: vec![],
             stopped: DiscoveryStop::RoundLimit,
             coverage: "observed requests only; no guarantee of complete page or unseen steps",
+            form_outline: None,
+            form_outline_snapshot_sha256: None,
+            form_outline_round: None,
         };
         if !self.entry_recorded && !matches!(self.capture_entry(), CaptureOutcome::Recorded { .. })
         {
@@ -227,6 +230,9 @@ impl CaptureSession {
             let mut attempted = BTreeSet::new();
             let mut review_seen = false;
             for round in 0..rounds {
+                summary.form_outline = None;
+                summary.form_outline_snapshot_sha256 = None;
+                summary.form_outline_round = None;
                 if self.check_time().is_err() {
                     summary.stopped = DiscoveryStop::CancelledOrExpired;
                     break;
@@ -277,6 +283,9 @@ impl CaptureSession {
                     break;
                 }
                 let unsupported = probe.unsupported();
+                summary.form_outline = probe.form_outline.clone();
+                summary.form_outline_snapshot_sha256 = probe.outline_snapshot_sha256.clone();
+                summary.form_outline_round = summary.form_outline.as_ref().map(|_| round + 1);
                 let mut result = DiscoveryRound {
                     proposed: probe.urls.len(),
                     newly_recorded: 0,
@@ -1150,6 +1159,37 @@ mod tests {
         assert!(!serde_json::to_string(&frozen.report)
             .unwrap()
             .contains("fictional-private-marker"));
+    }
+    #[test]
+    fn later_discovery_failure_does_not_reuse_an_earlier_control_inventory() {
+        let mut h = harness(
+            vec![
+                ("https://fixture.invalid/robots.txt", robots("")),
+                (ENTRY, html()),
+                (
+                    "https://fixture.invalid/app.js",
+                    response(200, "// public asset", "text/javascript"),
+                ),
+            ],
+            "user_supplied_url",
+            CaptureBudget::default(),
+        );
+        let mut calls = 0;
+        let summary=h.session.discover_with_probe(3,|_,_|{
+            calls+=1;
+            if calls>1{return Err("browser unavailable".into());}
+            let mut first=probe(vec!["https://fixture.invalid/app.js"]);
+            first.form_outline=Some(serde_json::from_value(serde_json::json!({"schema":1,"scope":"root_frame_accessibility_tree","status":"observed","reason":null,"nodes":1,"controls":[],"omitted_controls":0,"unlabelled_controls":0,"omitted_texts":0})).unwrap());
+            first.outline_snapshot_sha256=Some("a".repeat(64));
+            Ok(first)
+        }).unwrap();
+        assert_eq!(
+            summary.stopped,
+            crate::capture_discovery::DiscoveryStop::BrowserFailed
+        );
+        assert!(summary.form_outline.is_none());
+        assert!(summary.form_outline_snapshot_sha256.is_none());
+        assert!(summary.form_outline_round.is_none());
     }
     #[test]
     fn archive_rejection_never_produces_an_activatable_manifest() {

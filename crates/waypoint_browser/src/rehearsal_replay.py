@@ -20,6 +20,95 @@ class ReplayError(ValueError):
     pass
 
 
+def public_form_outline(result):
+    """Return labels/context without node value properties, link targets or handles."""
+    base = {'schema': 1, 'scope': 'root_frame_accessibility_tree', 'status': 'unavailable',
+            'reason': None, 'nodes': 0, 'controls': [], 'omitted_controls': 0,
+            'unlabelled_controls': 0, 'omitted_texts': 0}
+    nodes = result.get('nodes') if isinstance(result, dict) else None
+    if not isinstance(nodes, list) or not nodes or len(nodes) > 16384:
+        return {**base, 'reason': 'node_budget_or_invalid_tree'}
+    base['nodes'] = len(nodes)
+    by_id = {}
+    for node in nodes:
+        key = node.get('nodeId') if isinstance(node, dict) else None
+        if (not isinstance(key, str) or not 0 < len(key) <= 128 or key in by_id
+                or any(ord(c) < 32 for c in key)):
+            return {**base, 'reason': 'invalid_node_identity'}
+        by_id[key] = node
+    roles = {'textbox', 'searchbox', 'combobox', 'listbox', 'checkbox', 'radio',
+             'switch', 'spinbutton', 'slider', 'button', 'link'}
+    eligible = []
+    for node in nodes:
+        role = node.get('role', {})
+        role = role.get('value') if isinstance(role, dict) else None
+        if node.get('ignored') is False and isinstance(role, str) and role in roles:
+            eligible.append((role, node))
+    # Question controls precede navigation links, without interpreting intent.
+    eligible.sort(key=lambda item: 2 if item[0] == 'link' else 1 if item[0] == 'button' else 0)
+
+    def text(value, limit):
+        raw = value.get('value') if isinstance(value, dict) else None
+        if raw is None or raw == '':
+            return None
+        if isinstance(raw, str):
+            normalized = ' '.join(raw.split())
+            try:
+                if (normalized and len(normalized.encode('utf-8')) <= limit
+                        and not any(ord(c) < 32 or ord(c) == 127 for c in normalized)):
+                    return normalized
+            except UnicodeError:
+                pass
+        base['omitted_texts'] += 1
+        return None
+
+    used_bytes = 0
+    for position, (role, node) in enumerate(eligible):
+        if position >= 256:
+            base['omitted_controls'] += 1
+            continue
+        properties = node.get('properties', [])
+        if not isinstance(properties, list) or len(properties) > 64:
+            return {**base, 'status': 'unavailable', 'controls': [], 'reason': 'property_budget_or_invalid_tree'}
+        flags = {'required': None, 'disabled': None}
+        for key in flags:
+            values = [p.get('value', {}).get('value') for p in properties if isinstance(p, dict)
+                      and p.get('name') == key and isinstance(p.get('value'), dict)]
+            if values and all(type(v) is bool for v in values) and all(v == values[0] for v in values):
+                flags[key] = values[0]
+        context, visited, parent = [], {node['nodeId']}, node.get('parentId')
+        incomplete = False
+        for _ in range(64):
+            if parent is None or len(context) == 3:
+                break
+            if not isinstance(parent, str) or parent in visited or parent not in by_id:
+                incomplete = True
+                break
+            visited.add(parent)
+            ancestor = by_id[parent]
+            ancestor_role = ancestor.get('role', {})
+            if isinstance(ancestor_role, dict) and ancestor_role.get('value') in ('group', 'radiogroup', 'form'):
+                label = text(ancestor.get('name'), 400)
+                if label and label not in context:
+                    context.append(label)
+            parent = ancestor.get('parentId')
+        else:
+            incomplete = True
+        item = {'number': len(base['controls']) + 1, 'role': role,
+                'label': text(node.get('name'), 400), 'description': text(node.get('description'), 600),
+                'context': list(reversed(context)), 'context_incomplete': incomplete, **flags}
+        size = len(json.dumps(item, ensure_ascii=False, separators=(',', ':')).encode('utf-8'))
+        if used_bytes + size > 65536:
+            base['omitted_controls'] += 1
+            continue
+        used_bytes += size
+        base['unlabelled_controls'] += item['label'] is None
+        base['controls'].append(item)
+    partial = (base['omitted_controls'] or base['unlabelled_controls'] or base['omitted_texts']
+               or any(c['context_incomplete'] for c in base['controls']))
+    return {**base, 'status': 'partial' if partial else 'observed'}
+
+
 def relative(value):
     if (not isinstance(value, str) or not value or len(value) > 512
             or re.search(r'[\\:*?"<>|\x00-\x1f]', value)):
@@ -214,6 +303,7 @@ class Broker:
         self.next_id, self.pending, self.attaching, self.sessions, self.targets = INTERNAL_ID, {}, {}, {}, {}
         self.counts = {'served': 0, 'blocked': 0, 'cached_non_read_replies': 0, 'unreplayed_transports': 0, 'unmanaged_child_sessions':0}
         self.reasons, self.gaps = {}, {}
+        self.outline_requested, self.outline = False, None
 
     def report(self):
         return {'schema': 1, 'mode': 'offline_response_replay', **self.counts,
@@ -235,12 +325,22 @@ class Broker:
             raise ReplayError('replay_control_override')
         if self.discovery:
             self.discovery_command(message)
+        if message['method'] == 'SmartJobseeker.publicFormOutline':
+            if not self.discovery:
+                raise ReplayError('not_resource_discovery')
+            session = message.get('sessionId')
+            if not isinstance(session, str) or self.sessions.get(session) != 'page' or self.outline_requested:
+                raise ReplayError('outline_session_or_budget_refused')
+            self.outline_requested = True
+            self.call('Accessibility.getFullAXTree', {}, session, ('outline', session, 'page', message['id'], False))
+            return False
         if message['method'] == 'SmartJobseeker.discoveryReport':
             if not self.discovery:
                 raise ReplayError('not_resource_discovery')
             self.emit({'id': message['id'], 'result': {**self.report(), 'mode':'resource_discovery',
                 'urls':sorted(self.proposals), 'omitted_requests':self.omitted_proposals,
-                'ineligible_requests':self.ineligible_requests, 'pending_commands':len(self.pending)}})
+                'ineligible_requests':self.ineligible_requests, 'pending_commands':len(self.pending),
+                'form_outline': self.outline}})
             return False
         if message['method'] == 'SmartJobseeker.replayReport':
             self.emit({'id': message['id'], 'result': self.report()})
@@ -260,7 +360,8 @@ class Broker:
         if not isinstance(params, dict):
             raise ReplayError('discovery_command_refused')
         if method in ('Page.enable', 'Network.enable', 'Browser.getVersion',
-                      'SmartJobseeker.discoveryReport', 'SmartJobseeker.replayReport') and not params:
+                      'SmartJobseeker.discoveryReport', 'SmartJobseeker.replayReport',
+                      'SmartJobseeker.publicFormOutline') and not params:
             return
         if method == 'Target.createTarget' and params == {'url':'about:blank'}:
             return
@@ -346,6 +447,12 @@ class Broker:
             if action is None:
                 raise ReplayError('unexpected_replay_reply')
             name, session, kind, original, paused = action
+            if name == 'outline':
+                self.outline = public_form_outline(None if 'error' in message else message.get('result'))
+                if 'error' in message:
+                    self.outline['reason'] = 'browser_read_unavailable'
+                self.emit({'id': original, 'sessionId': session, 'result': self.outline})
+                return False
             if 'error' in message:
                 if name == 'auto' and kind not in ('page', 'iframe'):
                     self.counts['unmanaged_child_sessions'] += 1
@@ -373,6 +480,8 @@ class Broker:
                 self.bind(message.get('result', {}).get('sessionId'), 'page', message, False,target)
                 return False
         method = message.get('method')
+        if self.discovery and isinstance(method, str) and method.startswith('Accessibility.'):
+            return False  # Raw accessibility events may contain control values.
         params = message.get('params', {})
         if method == 'Target.attachedToTarget' and params.get('waitingForDebugger') is True:
             kind = params.get('targetInfo', {}).get('type')
