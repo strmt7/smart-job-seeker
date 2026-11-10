@@ -22,6 +22,8 @@ mod doc_suggest;
 mod document_convert;
 mod document_extract;
 mod document_job_check;
+#[cfg(all(test, windows))]
+mod document_ui_qualification;
 mod document_visual;
 mod docx_edit;
 mod docx_edit_task;
@@ -871,13 +873,25 @@ fn draft_qualifications(
 struct DocumentVisualContext {
     prompt: String,
     digest: String,
+    reference_date_utc: String,
+    source_coverage: Value,
 }
 
 fn document_visual_context(
     ws: &Workspace,
     job: &JobIdentityId,
 ) -> Result<DocumentVisualContext, String> {
-    let (facts, _, listing, _) = fit_inputs(ws, job)?;
+    let reference_date_utc = history_record_choice::current_utc_date()
+        .ok_or("Host UTC date is unavailable for document review")?;
+    document_visual_context_on_date(ws, job, reference_date_utc)
+}
+fn document_visual_context_on_date(
+    ws: &Workspace,
+    job: &JobIdentityId,
+    reference_date_utc: String,
+) -> Result<DocumentVisualContext, String> {
+    let (facts, preferences) = fit_candidate_context(ws)?;
+    let (_, listing, _) = fit_listing_digest(ws, job, &facts, &preferences)?;
     let posting = ws
         .job(job)
         .map_err(|e| e.to_string())?
@@ -896,14 +910,18 @@ fn document_visual_context(
     let instructions = profile_value["document_instructions"]
         .as_str()
         .unwrap_or("");
-    let digest = Sha256Digest::of(&json!({"version":"document-visual-context-v2","title":posting.title,"employer":posting.employer,"location":posting.location,"description":description,"facts_digest":facts_digest,"profile":profile_value}).to_string()).as_str().to_owned();
-    let prompt = format!(
-        "Posting: {}\nReviewed qualifications: {}\nDocument instructions: {}",
-        listing.chars().take(5000).collect::<String>(),
-        facts.join(" | ").chars().take(5000).collect::<String>(),
-        instructions.chars().take(2000).collect::<String>()
-    );
-    Ok(DocumentVisualContext { prompt, digest })
+    let digest=Sha256Digest::of(&json!({"version":"document-visual-context-v6","reference_date_utc":reference_date_utc,"title":posting.title,"employer":posting.employer,"location":posting.location,"description":description,"facts_digest":facts_digest,"profile":profile_value}).to_string()).as_str().to_owned();
+    let sources = draft_history::review_sources(&facts, &profile_value, &listing)?;
+    let source_coverage = json!({"available":sources["available"],"supplied":sources["supplied"],"omitted":sources["omitted"],"checked_history_available":sources["checked_history_available"],"scope":sources["scope"]});
+    let posting_excerpt = answer_task::json_prefix(&listing, 2500);
+    let instruction_excerpt = answer_task::json_prefix(instructions, 750);
+    let prompt=format!("Authoritative reference date from the host clock (UTC): {}. Use this date for temporal comparisons, never a training-time date.\nPosting excerpt (shortened: {}): {}\nCandidate document sources: {}\nDocument instructions (shortened: {}): {}\nOmitted context is unassessed. Do not infer that a claim is false solely because its source is missing from this bounded context.",reference_date_utc,posting_excerpt.len()<listing.len(),posting_excerpt,sources,instruction_excerpt.len()<instructions.len(),instruction_excerpt);
+    Ok(DocumentVisualContext {
+        prompt,
+        digest,
+        reference_date_utc,
+        source_coverage,
+    })
 }
 
 fn verified_visual_review(
@@ -9112,23 +9130,7 @@ fn serve(
                 );
             }
             if kind == "cv" {
-                for (key, label) in [
-                    ("full_name", "Full name"),
-                    ("first_name", "First name"),
-                    ("last_name", "Last name"),
-                    ("email", "Email"),
-                    ("phone", "Phone"),
-                    ("city", "City"),
-                    ("linkedin", "LinkedIn"),
-                    ("website", "Website"),
-                ] {
-                    if let Some(value) = profile[key]
-                        .as_str()
-                        .filter(|value| !value.trim().is_empty() && value.len() <= 500)
-                    {
-                        contact_facts.push(format!("{label}: {value}"));
-                    }
-                }
+                contact_facts = draft_history::contact_facts(&profile);
             }
             let instructions = profile["document_instructions"]
                 .as_str()
@@ -14035,13 +14037,24 @@ mod tests {
         let (mut ws, id) = workspace(&format!("{prefix} old"));
         let (other, other_id) = workspace(&format!("{prefix} new"));
         let baseline = document_visual_context(&ws, &id).unwrap();
+        let previous_day = document_visual_context_on_date(&ws, &id, "2026-11-09".into()).unwrap();
+        let next_day = document_visual_context_on_date(&ws, &id, "2026-11-10".into()).unwrap();
+        assert_ne!(previous_day.digest, next_day.digest);
+        assert!(next_day.prompt.contains("host clock (UTC): 2026-11-10"));
+        assert_eq!(next_day.reference_date_utc, "2026-11-10");
         let changed_listing = document_visual_context(&other, &other_id).unwrap();
         assert_eq!(baseline.prompt, changed_listing.prompt);
         assert_ne!(baseline.digest, changed_listing.digest);
-        ws.add_fact("Unselected extra qualification", FactOrigin::UserAttested)
-            .unwrap();
+        ws.add_fact(
+            "Additional reviewed qualification",
+            FactOrigin::UserAttested,
+        )
+        .unwrap();
         let changed_fact = document_visual_context(&ws, &id).unwrap();
-        assert_eq!(baseline.prompt, changed_fact.prompt);
+        assert_ne!(baseline.prompt, changed_fact.prompt);
+        assert!(changed_fact
+            .prompt
+            .contains("Additional reviewed qualification"));
         assert_ne!(baseline.digest, changed_fact.digest);
         ws.save_candidate_profile(
             &json!({"document_instructions":"Fictional preference"}).to_string(),

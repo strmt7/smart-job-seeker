@@ -1,3 +1,9 @@
+## Draft-to-PDF review journey - 2026-11-10
+
+- Connected the actual client and production handlers to local 12B drafting, PDF conversion, text comparison, page rendering, saved visual evidence and stale-source refusal in one fictional workflow. Both one-page documents completed; the local readability report remains an extractor/term check rather than an employer ATS result.
+- Explicit source IDs and bounded invalid-output repair address bad citations. Missing cover-letter framing gets one language-aware fallback. Visual review receives checked history, contact values and the host UTC date; exact page PNGs are archived. Optional suggestions stay separate from defects, with a bounded second content check preserving original observations and unknowns.
+- The final native journey took 100.697 seconds and sampled at least 10.527 GiB free host RAM. An actual-model repair probe removed an unsupported staffing claim. Ordinary workspace checks passed 1,203 tests with 578 opt-in cases ignored, and all 166 UI scripts passed. [Evidence and limits](docs/DOCUMENT_PDF_JOURNEY.md) retain earlier failures, same-model judgment limitations and remaining template/layout, signature, diverse-document, clean-host and employer-form gates. No application, application email or release was created.
+
 ## Checked career history in document drafts - 2026-11-10
 
 - CV and cover-letter drafting now use checked employment/education without duplicating them into separate qualification claims. Complete source records retain identities, hashes and fact references through style revision and export provenance. Unknown dates/status remain unknown; profile/history changes invalidate earlier draft context. These sources remain candidate-entered rather than attested claims, and full downstream correction propagation is still open.

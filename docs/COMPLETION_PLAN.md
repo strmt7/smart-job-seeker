@@ -162,11 +162,18 @@ build and configuration.
    varied, privately retained sources through extraction, factual tailoring,
    PDF conversion and page-by-page review. Compare ATS-readable text and visual
    layout against the originals, with explicit failures and held-out examples.
+   The [actual draft-to-PDF journey](DOCUMENT_PDF_JOURNEY.md) now covers two
+   fictional single-page outputs through the real client, local 12B model,
+   converter, text comparison and archived page review. Original template-layout
+   fidelity, signatures, diverse held-out documents and independent model-quality
+   measurements remain open; same-model checks do not establish accuracy.
    Evaluate fit estimates against labeled cases and repeat runs; the recent
    lower-bound retrieval change still lacks a live-model qualification.
 4. **Complete the dry-run journey and records.** Verify deduplication, source
    capture, edited PDFs, answers, screenshots, recovery and review state as one
    end-to-end workflow, including changed pages and interrupted sessions.
+   The document journey now saves exact rendered page PNGs with hashes and date/
+   source-bound findings; its records remain separate from form completion.
    A [saved review summary](ATTEMPT_REVIEW_SUMMARY.md) now exposes selected
    interruption and evidence-gap events with bounded reads and explicit unknown
    outcomes; it preserves review flags and does not restore or retry browser

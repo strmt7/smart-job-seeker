@@ -161,3 +161,19 @@ It uses no personal browser profile or employer form. Private evidence stays in
 quality or resource qualification. The shared qualification runner checks host
 RAM every 500 ms and closes only its own containment below a 3 GiB reserve.
 See [scope, evidence and remaining gates](SOURCE_COPY_WORKFLOW.md).
+
+## Document workflow qualification
+
+`tools/qualify_document_journey.py --control <test-owned-folder-under-target>
+--browser <absolute-Chromium-executable>` connects the real HTTP handlers,
+compiled client, installed local model and explicit private Office/PDF tools.
+It saves fictional profile/template inputs, drafts a CV and cover letter,
+exports PDFs, checks text and local visual review, verifies archived page hashes
+and refuses stale exports. It also exercises one source-citation repair with the
+actual model. The development controls require Node and already-provisioned
+test-owned runtimes; they do not imply host-installed product dependencies.
+All interaction stays in the disposable loopback workspace; application/form
+actions and email preparation/sending are refused by the native test allowlist.
+Private output stays in `target/`. The shared ownership, 4 GiB job and monitored
+3 GiB host reserve apply; Ollama remains outside that job. See
+[scope, observations and remaining gates](DOCUMENT_PDF_JOURNEY.md).

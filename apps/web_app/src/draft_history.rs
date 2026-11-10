@@ -82,6 +82,59 @@ pub fn used(sources: &[Source], facts: &[String]) -> Vec<Value> {
         .collect()
 }
 
+/// Shared profile contact values for drafting and final-document comparison.
+pub fn contact_facts(profile: &Value) -> Vec<String> {
+    [
+        ("full_name", "Full name"),
+        ("first_name", "First name"),
+        ("last_name", "Last name"),
+        ("email", "Email"),
+        ("phone", "Phone"),
+        ("city", "City"),
+        ("linkedin", "LinkedIn"),
+        ("website", "Website"),
+    ]
+    .into_iter()
+    .filter_map(|(key, label)| {
+        profile[key]
+            .as_str()
+            .filter(|v| !v.trim().is_empty() && v.len() <= 500)
+            .map(|v| format!("{label}: {v}"))
+    })
+    .collect()
+}
+
+/// Whole-source budget, including JSON escaping. Missing sources remain unknown.
+pub fn review_sources(
+    reviewed: &[String],
+    profile: &Value,
+    listing: &str,
+) -> Result<Value, String> {
+    let mut candidates = reviewed.to_vec();
+    let history = augment(&mut candidates, profile)?;
+    let contacts = contact_facts(profile);
+    let available = candidates.len() + contacts.len();
+    let mut ordered = contacts;
+    ordered.extend(crate::fit_semantic_pool(&candidates, listing));
+    let mut sources = Vec::new();
+    let mut bytes = 2usize;
+    for source in ordered {
+        let size = serde_json::to_string(&source)
+            .map_err(|_| "Cannot encode document source")?
+            .len()
+            + 1;
+        if bytes + size <= 3500 && !sources.contains(&source) {
+            bytes += size;
+            sources.push(source);
+        }
+    }
+    Ok(
+        json!({"sources":sources,"available":available,"supplied":sources.len(),
+        "omitted":available.saturating_sub(sources.len()),"checked_history_available":history.len(),
+        "scope":"Up to 500 reviewed statements, checked career history and profile contact values. Candidate-entered, not independently verified. Missing sources leave factual support unknown."}),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -143,5 +196,35 @@ mod tests {
         assert!(augment(&mut Vec::new(), &json!({"career_history":42})).is_err());
         assert!(augment(&mut Vec::new(), &json!({"career_history":"damaged"})).is_err());
         assert!(augment(&mut Vec::new(), &json!({})).unwrap().is_empty());
+    }
+
+    #[test]
+    fn visual_review_uses_the_same_checked_history_and_contact_values_with_atomic_coverage() {
+        let mut profile = profile();
+        profile["first_name"] = json!("Avery");
+        profile["email"] = json!("avery@fixture.invalid");
+        let review = review_sources(&[], &profile, "Engineer").unwrap();
+        assert_eq!(review["checked_history_available"], 2);
+        assert_eq!(review["available"], 4);
+        assert_eq!(review["supplied"], 4);
+        assert_eq!(review["omitted"], 0);
+        let sources = review["sources"].as_array().unwrap();
+        assert!(sources.iter().any(|v| v == "Email: avery@fixture.invalid"));
+        assert!(sources
+            .iter()
+            .any(|v| v.as_str().unwrap().contains("Fictional North")));
+        assert!(!sources
+            .iter()
+            .any(|v| v.as_str().unwrap().contains("Unreviewed East")));
+        let oversized = "Do not claim clinical expertise. ".repeat(180);
+        let partial =
+            review_sources(std::slice::from_ref(&oversized), &profile, "Clinical").unwrap();
+        assert!(partial["omitted"].as_u64().unwrap() >= 1);
+        assert!(partial["sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|v| !v.as_str().unwrap().starts_with("Do not claim clinical")));
+        assert!(serde_json::to_string(&partial["sources"]).unwrap().len() <= 3500);
     }
 }

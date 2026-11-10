@@ -26,6 +26,18 @@ use crate::{CapabilityReport, Inference, InferenceError, UsageReport};
 /// Passing any other name falls back to generic JSON mode.
 pub const KNOWN_SCHEMAS: &[(&str, &str)] = &[
     (
+        "document_content_check",
+        r#"{"type":"object","properties":{"items":{"type":"array","minItems":1,"maxItems":3,"items":{"type":"object","properties":{"id":{"type":"integer","minimum":1,"maximum":12},"verdict":{"type":"string","enum":["confirmed","not_issue","suggestion","unknown"]},"reason":{"type":"string","minLength":1,"maxLength":250}},"required":["id","verdict","reason"],"additionalProperties":false}}},"required":["items"],"additionalProperties":false}"#,
+    ),
+    (
+        "cover_letter_framing",
+        r#"{"type":"object","properties":{"opening":{"type":"string","minLength":1,"maxLength":200},"closing":{"type":"string","minLength":1,"maxLength":200}},"required":["opening","closing"],"additionalProperties":false}"#,
+    ),
+    (
+        "cover_letter_output_repair",
+        include_str!("document_draft.schema.json"),
+    ),
+    (
         "cover_letter_draft",
         include_str!("document_draft.schema.json"),
     ),
@@ -139,6 +151,12 @@ impl OllamaInference {
     pub fn with_resident_context(mut self) -> Self {
         self.context_window = None;
         self.resident_context = true;
+        self
+    }
+
+    /// Share an operation's cancellation without replacing its resource guard.
+    pub fn with_cancel_flag(mut self, flag: Arc<AtomicBool>) -> Self {
+        self.cancel_flag = flag;
         self
     }
 
@@ -816,6 +834,17 @@ mod tests {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let flag = AtomicBool::new(true);
+        let shared = Arc::new(AtomicBool::new(true));
+        let mut model = OllamaInference::new(
+            &format!("http://{}", listener.local_addr().unwrap()),
+            "fixture",
+        )
+        .unwrap()
+        .with_cancel_flag(shared);
+        assert!(matches!(
+            model.generate_structured("fixture", "fixture", 10),
+            Err(InferenceError::Cancelled)
+        ));
         assert_eq!(
             http_request_guarded(
                 listener.local_addr().unwrap(),

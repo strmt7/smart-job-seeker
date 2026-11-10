@@ -69,16 +69,32 @@ pub fn validate_section(fields: &[FormField]) -> Result<(), String> {
 pub(crate) fn current_utc_month() -> Option<u32> {
     utc_month(std::time::SystemTime::now())
 }
+pub(crate) fn current_utc_date() -> Option<String> {
+    utc_date(std::time::SystemTime::now())
+}
+fn utc_date(now: std::time::SystemTime) -> Option<String> {
+    utc_civil_date(now).map(|date| {
+        format!(
+            "{:04}-{:02}-{:02}",
+            date.year().extended_year(),
+            date.month().ordinal,
+            date.day_of_month().0
+        )
+    })
+}
 fn utc_month(now: std::time::SystemTime) -> Option<u32> {
+    let date = utc_civil_date(now)?;
+    let year = u32::try_from(date.year().extended_year()).ok()?;
+    Some(year * 12 + u32::from(date.month().ordinal) - 1)
+}
+fn utc_civil_date(now: std::time::SystemTime) -> Option<icu_calendar::Date<icu_calendar::Iso>> {
     let seconds = now.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
     if seconds > 253_402_300_799 {
         return None;
     }
     let epoch = icu_calendar::Date::try_new_iso(1970, 1, 1).ok()?;
     let day = epoch.to_rata_die() + i64::try_from(seconds / 86_400).ok()?;
-    let date = icu_calendar::Date::from_rata_die(day, icu_calendar::Iso);
-    let year = u32::try_from(date.year().extended_year()).ok()?;
-    Some(year * 12 + u32::from(date.month().ordinal) - 1)
+    Some(icu_calendar::Date::from_rata_die(day, icu_calendar::Iso))
 }
 
 fn resolve<'a>(
@@ -334,6 +350,25 @@ mod tests {
             Some(2000 * 12 + 1)
         );
         assert!(utc_month(std::time::UNIX_EPOCH - std::time::Duration::from_secs(1)).is_none());
+    }
+    #[test]
+    fn utc_reference_dates_preserve_leap_days_and_reject_unknown_clocks() {
+        use std::time::{Duration, UNIX_EPOCH};
+        assert_eq!(utc_date(UNIX_EPOCH).as_deref(), Some("1970-01-01"));
+        assert_eq!(
+            utc_date(UNIX_EPOCH + Duration::from_secs(951_868_799)).as_deref(),
+            Some("2000-02-29")
+        );
+        assert_eq!(
+            utc_date(UNIX_EPOCH + Duration::from_secs(951_868_800)).as_deref(),
+            Some("2000-03-01")
+        );
+        assert_eq!(
+            utc_date(UNIX_EPOCH + Duration::from_secs(253_402_300_799)).as_deref(),
+            Some("9999-12-31")
+        );
+        assert!(utc_date(UNIX_EPOCH + Duration::from_secs(253_402_300_800)).is_none());
+        assert!(utc_date(UNIX_EPOCH - Duration::from_secs(1)).is_none());
     }
     #[test]
     fn model_choice_requires_grounded_context_and_one_structural_section() {

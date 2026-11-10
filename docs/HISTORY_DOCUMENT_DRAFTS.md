@@ -1,5 +1,11 @@
 # Career history in document drafts
 
+Follow-up: the [draft-to-PDF qualification](DOCUMENT_PDF_JOURNEY.md) now connects
+the real HTTP/client journey to PDF export, saved page images and local visual
+review for two fictional one-page documents. The evidence below remains the
+earlier generator/preview checkpoint; its missing integration gate is narrowed
+by that follow-up, not a claim of universal template or document quality.
+
 Checkpoint: 2026-11-10. CV and cover-letter drafting now includes saved,
 checked employment and education records alongside reviewed qualification
 statements. A candidate with checked history can start drafting without copying
@@ -115,6 +121,6 @@ These two fictional drafts do not establish unseen-document reliability,
 multilingual quality, source recall, chronology reasoning, correct omission of
 irrelevant records, full template fidelity, ATS compatibility, final-PDF visual
 quality or complete source-correction propagation. Reviewed fact dependencies,
-the full HTTP/UI/export journey and diverse held-out documents still need
-qualification. No employer form, application delivery, application email or
+diverse held-out documents still need qualification. The follow-up qualifies
+only the two fictional HTTP/UI/export examples linked above. No employer form, application delivery, application email or
 release was used or created.

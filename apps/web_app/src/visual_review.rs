@@ -990,6 +990,21 @@ impl VisionIdentityGuard {
         let model = self.model.clone();
         self.checked(|| generate_vision_with_context(addr, &model, image, prompt, None))
     }
+    pub(crate) fn generate_with_schema(
+        &mut self,
+        addr: std::net::SocketAddr,
+        image: &str,
+        prompt: &str,
+        schema: &Value,
+    ) -> Result<Value, String> {
+        if addr != "127.0.0.1:11434".parse().expect("literal address") {
+            return Err("Visual inference requires the verified local runtime".into());
+        }
+        let model = self.model.clone();
+        self.checked(|| {
+            generate_vision_with_format(addr, &model, image, prompt, None, Some(schema))
+        })
+    }
 }
 
 pub(crate) fn generate_vision(
@@ -1058,6 +1073,16 @@ fn generate_vision_with_context(
     prompt: &str,
     context: Option<u32>,
 ) -> Result<Value, String> {
+    generate_vision_with_format(addr, model, image, prompt, context, None)
+}
+fn generate_vision_with_format(
+    addr: std::net::SocketAddr,
+    model: &str,
+    image: &str,
+    prompt: &str,
+    context: Option<u32>,
+    schema: Option<&Value>,
+) -> Result<Value, String> {
     if image.is_empty() || image.len() > 4 * 1024 * 1024 || prompt.len() > 24_000 {
         return Err("Vision input exceeds limits".into());
     }
@@ -1079,6 +1104,9 @@ fn generate_vision_with_context(
         return Err("The resident model did not report vision capability; inspect manually".into());
     }
     let mut body = json!({"model":model,"prompt":prompt,"images":[image],"stream":false,"format":"json","think":false,"options":{"num_predict":1024,"temperature":0}});
+    if let Some(schema) = schema {
+        body["format"] = schema.clone();
+    }
     body["options"]["num_ctx"] = context.into();
     let bytes = serde_json::to_vec(&body).map_err(|e| e.to_string())?;
     let memory_guard = || -> Result<(), String> {

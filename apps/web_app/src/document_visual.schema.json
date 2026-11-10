@@ -1,0 +1,18 @@
+{
+  "type": "object",
+  "properties": {
+    "issues": {
+      "type": "array", "maxItems": 12,
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": { "type": "string", "enum": ["layout", "content", "legibility", "other"] },
+          "description": { "type": "string", "minLength": 1, "maxLength": 600 }
+        },
+        "required": ["category", "description"], "additionalProperties": false
+      }
+    },
+    "suggestions": { "type": "array", "maxItems": 4, "items": { "type": "string", "minLength": 1, "maxLength": 250 } }
+  },
+  "required": ["issues", "suggestions"], "additionalProperties": false
+}

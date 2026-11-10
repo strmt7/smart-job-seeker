@@ -1,5 +1,13 @@
 # Browser-interface prototype checkpoint
 
+Latest document checkpoint, 2026-11-10: the actual client/handler/local-model
+workflow now drafts a fictional CV and cover letter, exports each to PDF,
+compares text and archives page images with local visual findings. Checked
+history, source coverage, UTC-date context and stale export/review checks are
+connected. [Evidence and limits](DOCUMENT_PDF_JOURNEY.md) retain false model
+observations and the bounded second check; generic layout fidelity, diverse
+documents, signatures and independent model accuracy remain open.
+
 Latest history checkpoint, 2026-11-10: application records provide a bounded
 [saved review summary](ATTEMPT_REVIEW_SUMMARY.md), with interruption guidance,
 missing-log coverage and explicit unknown resolution/submission status. Actual
