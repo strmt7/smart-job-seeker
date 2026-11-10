@@ -66,9 +66,11 @@ build and configuration.
    source; preserve its provenance guard and complete component notices.
    The old/new fictional database readback and integrity results are narrow
    compatibility evidence, not qualification of every historical workspace.
-   The local audit passes without ignores. Current changes are being accumulated
-   locally; require exact-SHA hosted confirmation at the next substantial tested
-   checkpoint. Historical native-GUI gates and the earlier intermittent browser
+   The local audit passes without ignores. The accumulated batch was pushed through `275aadc4`; coverage and several
+   hosted checks passed, while build-and-test exposed a cache/SDK lifetime issue.
+   The [dependency lifetime correction](CI_DEPENDENCY_LIFETIME.md) keeps CI SDKs
+   outside Cargo output and has before/after regressions. Require exact-SHA
+   hosted confirmation for each tested checkpoint. Historical native-GUI gates and the earlier intermittent browser
    failures are documented in `IMPLEMENTATION_STATUS.md`; do not repeat resolved
    investigations without a new failure or material change.
 2. **Measure the local application agent.** The

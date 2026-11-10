@@ -1,3 +1,8 @@
+## Hosted native dependency lifetime correction - 2026-11-10
+
+- The tested 17-commit batch through `275aadc4` was pushed to main without rewriting history. Its coverage upload, CodeQL, agent-tool, PDF and supply-chain checks passed; build-and-test exposed a native SDK lifetime problem after a partial Rust cache restore. The cache action recursively removed SDK files placed under Cargo output, despite successful provisioning. The same run also recorded four browser failures (133 passes); those remain under investigation and are not attributed to the SDK issue.
+- CI and coverage now keep the pinned SDK in runner-owned dependency storage outside `target`. Two regressions execute the actual workflow setup, remove only their isolated Cargo output, and verify retained headers; both failed before the fix and pass afterward. All 24 development-tool checks pass. [Root cause and evidence](docs/CI_DEPENDENCY_LIFETIME.md) distinguish this hosted failure from the earlier local command path error. Follow-up Actions results remain bound to their exact commit; no source check or compiler failure was suppressed, and no host installation or release was performed.
+
 ## HTTP capture and offline replay bridge - 2026-11-10
 
 - Replaced permissive shared response framing with a bounded `httparse`-based reader that retains headers, trailers and request method. Incomplete bodies now fail; chunking uses actual fields rather than substring matches. Added credential-free metadata-preserving asset GETs with remaining socket/TLS deadlines, preserving pinned public addresses and explicit limits. OS DNS cancellation remains unqualified.
