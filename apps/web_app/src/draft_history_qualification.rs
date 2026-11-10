@@ -68,6 +68,7 @@ fn resource_gated_history_backed_document_drafts() {
                 job_id:"fictional-history-document".into(), digest:"fictional-context".into(),
                 job:json!({"title":"Research software engineer","employer":"Fictional Research Centre","description":"Build reliable measurement tools, maintain software and write clear guides."}),
                 kind:kind.into(), available_facts:facts.len(), facts, history_sources,
+                signature: Default::default(),
                 contact_facts:Vec::new(), priority_facts:Vec::new(), selection_listing:"Measurement software and operating guides".into(),
                 instructions:"Use concise, concrete language. Preserve unknowns and the exact precision of dates.".into(),
                 template:None, reviewed_template:None, template_style_focus:None, template_scan_page:None,

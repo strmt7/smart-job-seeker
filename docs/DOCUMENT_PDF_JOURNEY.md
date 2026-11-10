@@ -1,5 +1,9 @@
 # Document drafting through saved PDF review
 
+Later follow-up: [profile-sourced signatures and pagination](LETTER_SIGNATURES.md)
+addresses the generated-letter signature gap noted below. Its fixed-body tests
+load no model; the earlier actual-model measurements remain historical evidence.
+
 Follow-up: [template tailoring and revised content/advice review](TEMPLATE_TAILORING.md)
 adds original-template workflows, citation-contamination validation and a v7
 review context. The measurements below remain the earlier scoped checkpoint;

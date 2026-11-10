@@ -71,53 +71,9 @@ try:
         textpage = None
         try:
             textpage = page.get_textpage()
-            count_chars = textpage.count_chars()
-            if count_chars == 0:
-                geometry['status'] = 'no_selectable_text'
-            elif count_chars <= 5000:
-                boxes = []
-                page_bounds = page.get_bbox()
-                if (not all(math.isfinite(v) for v in page_bounds)
-                        or page_bounds[2] <= page_bounds[0] or page_bounds[3] <= page_bounds[1]):
-                    raise ValueError('Invalid page bounds')
-                clipped_chars = 0
-                for i in range(count_chars):
-                    left, bottom, right, top = textpage.get_charbox(i)
-                    if not all(math.isfinite(v) for v in (left, bottom, right, top)):
-                        raise ValueError('Invalid text geometry')
-                    if right > left and top > bottom:
-                        boxes.append((left, right, bottom, top, i))
-                        # Ignore tiny glyph metric excursions at the page edge.
-                        if (left < page_bounds[0] - .5 or bottom < page_bounds[1] - .5
-                                or right > page_bounds[2] + .5 or top > page_bounds[3] + .5):
-                            clipped_chars += 1
-                boxes.sort()
-                if not boxes:
-                    geometry['status'] = 'no_selectable_text'
-                active = []
-                comparisons = 0
-                overlaps = 0
-                for left, right, bottom, top, i in boxes:
-                    active = [b for b in active if b[1] > left]
-                    for other in active:
-                        comparisons += 1
-                        if comparisons > 100000:
-                            break
-                        l2, r2, b2, t2, j = other
-                        if abs(i - j) <= 1:
-                            continue
-                        intersection = max(0, min(right, r2) - left) * max(0, min(top, t2) - max(bottom, b2))
-                        smaller = min((right-left)*(top-bottom), (r2-l2)*(t2-b2))
-                        if intersection >= 0.35 * smaller:
-                            overlaps += 1
-                    if comparisons > 100000:
-                        break
-                    active.append((left, right, bottom, top, i))
-                if boxes and comparisons <= 100000:
-                    geometry = {'status': 'checked', 'overlapping_pairs': overlaps,
-                                'clipped_chars': clipped_chars}
+            geometry = inspect_text_geometry(textpage, page.get_bbox())
         except Exception:
-            pass  # An unavailable geometric observation is never a clean result.
+            geometry = {'status': 'unavailable', 'reason': 'inspection_failed'}
         finally:
             if textpage is not None:
                 textpage.close()

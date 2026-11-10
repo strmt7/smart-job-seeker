@@ -32,9 +32,12 @@ source-reference validation and review of advice that could falsify history.
 Two fictional templates and two separate generated documents remain a small
 sample. Optional advice still needs human source review.
 
-The latest ordinary workspace run passed 1,218 tests with 579 opt-in cases
+The latest ordinary workspace run passed 1,224 tests with 580 opt-in cases
 ignored; workspace Clippy, formatting and the managed build passed. A connected contained run now verifies
 [private-URL refusals before frozen candidate entry](CAPTURE_URL_PRIVACY.md).
+Generated letters now have [profile-sourced signatures and closing-block
+pagination](LETTER_SIGNATURES.md), with three fixed-body PDF cases and updated
+editor/reuse checks. All 167 JavaScript checks and 302 layout observations pass.
 The unchanged interface previously passed 166 UI scripts; a separate geometry
 regression passed in the later controller follow-up. The `d68dcd18` hosted ordinary tests/build, browser suite
 and coverage passed; its layout failure has a locally verified controller fix.
@@ -48,7 +51,7 @@ unavailable fresh DeepSource analysis without hiding or manually closing anythin
 | --- | --- | --- |
 | No-send isolation | Captured-resource/offline entry exists; candidate-data provenance and complete isolation/integration remain unqualified. | One connected workflow proving that candidate entry cannot reach external writers across pages, frames, workers, requests, sockets, navigation, crashes and recovery. Use owned sinks and adversarial fixtures before real-form interaction. |
 | Local application intelligence | Some reviewed filling, navigation and history workflows work; majority coverage on unseen multistep platforms is unmeasured. | A held-out corpus plus permitted real-page captures, including Workable/shared platforms. Measure wrong/missed fields, visual verification, navigation, repeated runs and correct pending/manual outcomes. Never submit real applications. |
-| Documents | Two template examples work; generic PDF/DOCX fidelity, scanned inputs, generated signatures and full correction propagation remain incomplete. | Diverse privately retained real CVs/letters, multipage/font/layout cases, natural-language revision, source checks, final PDF text/visual comparisons and explicit ATS limitations. Keep original ads, documents, answers and page captures in each attempt. |
+| Documents | Two template examples work; profile-sourced generated signatures and short closing-block pagination have three fictional PDF cases. Generic PDF/DOCX fidelity, scanned inputs, clean-host fonts and full correction propagation remain incomplete. | Diverse privately retained real CVs/letters, multipage/font/layout cases, natural-language revision, source checks, final PDF text/visual comparisons and explicit ATS limitations. Keep original ads, documents, answers and page captures in each attempt. |
 | Discovery, fit and duplicates | General search/providers, source checks and semantic assistance exist; worldwide recall, stale-link classification and score calibration are not established. | Run the actual search UI using varied role/query variants and qualification-only queries. Verify application routes read-only; label expired, inaccessible and duplicate ads despite minor title changes. Evaluate repeatable fit criteria and distinct openings without keyword-only decisions or destructive merges. |
 | Learned lessons | Scoped reusable form lessons exist; transfer and negative-transfer limits need broader evidence. | Versioned, source/platform-bound corrections with expiry, confidence, changed-page invalidation and held-out evaluations. Unknown/sensitive facts must not be learned as reusable answers. |
 | Delivery capability | Real application submission and application-email delivery remain disabled in the prototype. | Implement and qualify explicit per-application approval, content/destination binding, one-use grants, receipts, idempotency and ambiguous-write recovery using loopback forms/mail sinks only. Development must not send a real application. This capability is required for the requested final product, not redefined out of scope. |

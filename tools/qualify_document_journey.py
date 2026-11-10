@@ -16,15 +16,15 @@ REPO = Path(__file__).resolve().parent.parent
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--control', type=Path, required=True, help='Test-owned private Office/PDF runtime directory in target')
-    parser.add_argument('--browser', type=Path, required=True)
+    parser.add_argument('--browser', type=Path)
     parser.add_argument('--model', default='gemma4:12b-it-q4_K_M')
-    parser.add_argument('--flow', choices=['documents','template','template-letter'], default='documents')
+    parser.add_argument('--flow', choices=['documents','template','template-letter','signature'], default='documents')
     args = parser.parse_args()
     control = args.control.resolve(strict=True)
     if os.name != 'nt' or not control.is_relative_to((REPO / 'target').resolve(strict=True)):
         parser.error('Windows and an explicit test-owned target runtime are required')
     node, shell = shutil.which('node'), shutil.which('pwsh') or shutil.which('powershell')
-    if not node or not shell or not args.browser.is_absolute() or not args.browser.is_file():
+    if not shell or (args.flow != 'signature' and (not node or not args.browser or not args.browser.is_absolute() or not args.browser.is_file())):
         parser.error('Node, PowerShell and an explicit Chromium executable are required')
     paths = {}
     for filename, relative, binary in [('tool-office.json','runtime-tools','app/dependencies/libreoffice/program/soffice.com'),('pdf-runtime.json','pdf-runtimes','python.exe')]:
@@ -36,13 +36,13 @@ def main():
     sources = [Path(__file__), *[REPO / path for path in [
         'apps/web_app/src/main.rs','apps/web_app/src/document_ui_qualification.rs',
         'apps/web_app/scripts/qualify-document-journey.cjs','apps/web_app/src/draft_task.rs',
-        'apps/web_app/src/draft_history.rs','apps/web_app/src/document_visual.rs',
+        'apps/web_app/src/draft_history.rs','apps/web_app/src/draft_identity.rs','apps/web_app/src/document_visual.rs',
         'apps/web_app/src/document_visual.schema.json','apps/web_app/src/template_plan.rs',
         'apps/web_app/src/template_suggest.rs','apps/web_app/src/answer_task.rs','apps/web_app/src/fit_task.rs','apps/web_app/src/doc_suggest.rs','apps/web_app/src/docx_edit.rs','apps/web_app/src/docx_edit_task.rs',
         'crates/waypoint_inference/src/template_edit_plan.schema.json','apps/web_app/scripts/qualify-template-journey.cjs',
         'apps/web_app/src/letter_export.rs','apps/web_app/src/document_convert.rs',
         'apps/web_app/src/history_record_choice.rs','apps/web_app/src/candidate_history.rs',
-        'apps/web_app/src/pdf_extract.rs','apps/web_app/src/pdf_extract.py','apps/web_app/src/pdf_render.py',
+        'apps/web_app/src/pdf_extract.rs','apps/web_app/src/pdf_extract.py','apps/web_app/src/pdf_render.py','apps/web_app/src/pdf_text_geometry.py',
         'apps/web_app/src/pdf_visual_guard.py','apps/web_app/src/pdf_job.rs',
         'apps/web_app/src/document_extract.rs','apps/web_app/src/attempt_record.rs',
         'apps/web_app/src/document_job_check.rs','apps/web_app/src/ats_check.rs',
@@ -53,17 +53,20 @@ def main():
         'crates/waypoint_inference/src/ollama.rs','crates/waypoint_inference/src/document_draft.schema.json',
         'tools/qualify_rehearsal.py','tools/owned_process.py']]]
     hashes = lambda: {p.relative_to(REPO).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in sources}
-    receipt = {'complete':False,'sources':hashes(),'model':args.model,'flow':args.flow,'scope':'Actual fictional profile/template, drafting, PDF export, text/visual checks and stale-source refusal; no employer forms'}
-    receipt['selected_files']={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in [args.browser,paths['pdf-runtime.json'],paths['tool-office.json'],control/'fictional.docx']}
+    receipt = {'complete':False,'sources':hashes(),'model':None if args.flow == 'signature' else args.model,'flow':args.flow,'scope':'Fixed fictional bodies, profile signatures, canonical text, PDF export/pagination and rendered geometry; no inference or forms' if args.flow == 'signature' else 'Actual fictional profile/template, drafting, PDF export, text/visual checks and stale-source refusal; no employer forms'}
+    selected = [paths['pdf-runtime.json'],paths['tool-office.json']]
+    if args.flow != 'signature': selected.extend([args.browser,control/'fictional.docx'])
+    receipt['selected_files']={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in selected}
     memory = RamSamples(); memory.thread.start()
     try:
         env = os.environ.copy()
         env.update(WAYPOINT_DOCUMENT_UI_FLOW=args.flow,APPDATA=str(folder/'appdata'),WAYPOINT_DOCUMENT_UI_CONTAINED='1',WAYPOINT_DOCUMENT_UI_NODE=node,
-            WAYPOINT_DOCUMENT_UI_BROWSER=str(args.browser),WAYPOINT_DOCUMENT_UI_TEMPLATE=str(control/'fictional.docx'),
+            WAYPOINT_DOCUMENT_UI_BROWSER=str(args.browser or ''),WAYPOINT_DOCUMENT_UI_TEMPLATE=str(control/'fictional.docx'),
             WAYPOINT_PDF_PYTHON=str(paths['pdf-runtime.json']),WAYPOINT_SOFFICE=str(paths['tool-office.json']),
             WAYPOINT_VISION_BENCHMARK_MODEL=args.model,CARGO_BUILD_JOBS='1',PYTHONUTF8='1')
         log = folder/'native.private.log'
-        receipt['run'] = run([shell,'-NoProfile','-File',str(REPO/'apps/web_app/scripts/build-windows.ps1'),'-Test','-TestFilter','resource_gated_rendered_document_pdf_journey','-Ignored','-NoCapture'],env,log,600)
+        test = 'contained_profile_signature_pdf_journey' if args.flow == 'signature' else 'resource_gated_rendered_document_pdf_journey'
+        receipt['run'] = run([shell,'-NoProfile','-File',str(REPO/'apps/web_app/scripts/build-windows.ps1'),'-Test','-TestFilter',test,'-Ignored','-NoCapture'],env,log,600)
         text = log.read_text(encoding='utf-8'); matches = re.findall(r'Document journey evidence: (.+)',text)
         if len(matches)==1:
             native=Path(matches[0].strip()).resolve(strict=True)

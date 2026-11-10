@@ -10,7 +10,8 @@ from pypdf import PdfWriter
 
 src = Path(__file__).resolve().parents[1] / 'src'
 extract = (src / 'pdf_extract.py').read_text(encoding='utf-8')
-render = (src / 'pdf_render.py').read_text(encoding='utf-8')
+render = '\n'.join((src / name).read_text(encoding='utf-8') for name in
+                   ('pdf_text_geometry.py', 'pdf_render.py'))
 edit = '\n'.join((src / name).read_text(encoding='utf-8') for name in
                  ('pdf_visual_guard.py', 'pdf_stream_edit.py', 'pdf_edit.py'))
 
@@ -24,15 +25,17 @@ def document(count):
 
 def run(program, payload, *args):
     return subprocess.run([sys.executable, '-c', program, *args], input=payload,
-                          capture_output=True, timeout=30, check=False)
+                          capture_output=True, timeout=30, check=False,
+                          creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0)
 
 accepted, rejected = document(50), document(51)
 result = run(extract, accepted, 'allow-empty')
 assert result.returncode == 0, result.stdout
 assert json.loads(result.stdout)['page_count'] == 50
-result = run(render, accepted, '49')
+result = run(render, accepted, '49:geometry')
 assert result.returncode == 0, result.stdout
 assert json.loads(result.stdout)['page'] == 49
+assert json.loads(result.stdout)['text_geometry']['status'] == 'no_selectable_text'
 for program, payload, args in (
     (extract, rejected, ('allow-empty',)),
     (render, rejected, ('0',)),

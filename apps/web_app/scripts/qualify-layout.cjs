@@ -609,6 +609,31 @@ async function bounded(operation, label, milliseconds = 15000) {
       !(await page.locator('#layout-preferences-status').innerText()).includes('Saved for this tab')
     )
       throw Error('Preference status did not recover after storage became available');
+    for(const [width,height,factor] of [[1440,900,1],[768,1024,1],[320,844,1],[1280,960,4]]){
+      await page.setViewportSize({width,height});
+      await zoom(factor);
+      const expected=await page.evaluate(job=>{
+        const name='Avery'+ 'x'.repeat(175);
+        const text='Dear hiring team,\n\nI built fictional measurement tools.\n\nKind regards,\n'+name;
+        showLetter(job,{kind:'cover_letter',notice:'Fictional signature layout check.',paragraphs:[{text:'I built fictional measurement tools.',facts:[1]}],facts:['Built fictional measurement tools.'],framing:{opening:'Dear hiring team,',closing:'Kind regards,'},signature:{status:'available',text:name},text},'fictional-context');
+        return text;
+      },jobs[0].job);
+      const workspaceButton=page.getByRole('button',{name:'Workspace',exact:true});
+      if(await workspaceButton.isVisible())await workspaceButton.click();
+      await page.locator('#packet p').filter({hasText:/^Averyx+$/}).scrollIntoViewIfNeeded();
+      if(await page.locator('textarea[aria-label="Editable Cover letter draft"]').inputValue()!==expected)throw Error('Canonical signature text was lost in the editor');
+      await audit('profile-signature-'+width+'@'+factor);
+      if(width===1440||width===320)await page.screenshot({path:path.join(scratch,'signature-'+width+'.png')});
+    }
+    for(const status of ['missing','invalid']){
+      await page.setViewportSize({width:320,height:844});
+      await zoom(1);
+      await page.evaluate(({job,status})=>showLetter(job,{kind:'cover_letter',notice:'Fictional missing-name check.',paragraphs:[{text:'I built fictional measurement tools.',facts:[1]}],facts:['Built fictional measurement tools.'],signature:{status}},'fictional-context'),{job:jobs[0].job,status});
+      const workspaceButton=page.getByRole('button',{name:'Workspace',exact:true});
+      if(await workspaceButton.isVisible())await workspaceButton.click();
+      if(!await page.locator('#packet .review-label').filter({hasText:status==='invalid'?'profile name could not be used':'Add your name in Profile'}).isVisible())throw Error('Missing or invalid signature was not disclosed');
+      await audit('profile-signature-'+status);
+    }
     build = {
       executableSha256: crypto
         .createHash('sha256')

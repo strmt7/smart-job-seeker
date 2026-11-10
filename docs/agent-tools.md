@@ -132,6 +132,11 @@ communication rules in `AGENTS.md`.
 
 ## Experimental browser qualification
 
+`python -B tools/qualify_document_journey.py --control <absolute-test-owned-runtime-directory-in-target> --flow signature`
+checks fixed-body profile signatures, PDF pagination and archived page geometry
+using the private Office/PDF tools. It loads no model and needs no browser or
+Node runtime. See [evidence and limitations](LETTER_SIGNATURES.md).
+
 `python -B tools/qualify_capture_replay.py --engine <absolute-private-headless-shell-directory> --privacy`
 adds a fictional private-URL discovery/refusal case before frozen candidate
 entry. It loads no model, uses owned process containment and retains private,

@@ -44,6 +44,8 @@ jobs:
         run: python -B apps/web_app/tests/pdf-edit-selection.test.py
       - name: Check fictional PDF page limits
         run: python -B apps/web_app/tests/pdf-page-limit.test.py
+      - name: Check bounded PDF text geometry
+        run: python -B apps/web_app/tests/pdf-text-geometry.test.py
       - name: Check PDF text-review modes and image coverage
         run: python -B apps/web_app/tests/pdf-text-mode.test.py
 

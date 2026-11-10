@@ -30,6 +30,7 @@ mod docx_edit_task;
 mod docx_notes;
 mod docx_revision;
 mod draft_history;
+mod draft_identity;
 mod draft_task;
 mod duplicate_compare;
 mod duplicate_search;
@@ -974,7 +975,11 @@ fn draft_context_digest(
     } else {
         None
     };
-    Ok(Sha256Digest::of(&json!({"job":job,"description":description,"facts_digest":facts_digest,"profile":profile,"template_hash":template_hash,"kind":kind}).to_string()).as_str().to_owned())
+    let mut context = json!({"job":job,"description":description,"facts_digest":facts_digest,"profile":profile,"template_hash":template_hash,"kind":kind});
+    if kind == "cover_letter" {
+        context["letter_structure_version"] = json!(2);
+    }
+    Ok(Sha256Digest::of(&context.to_string()).as_str().to_owned())
 }
 
 fn load_draft_result(ws: &Workspace, job: &JobIdentityId, id: &str) -> Result<Value, String> {
@@ -9338,6 +9343,7 @@ fn serve(
                     available_facts: all_facts.len(),
                     history_sources,
                     contact_facts,
+                    signature: draft_identity::Signature::from_profile(&profile),
                     priority_facts,
                     selection_listing,
                     instructions,

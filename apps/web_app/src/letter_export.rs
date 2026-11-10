@@ -144,7 +144,7 @@ pub fn start(
     *task = Some(Task {
         id: id.clone(),
         job_id,
-        kind,
+        kind: kind.clone(),
         digest,
         reviewed_text: text.clone(),
         draft_provenance,
@@ -153,7 +153,7 @@ pub fn start(
     drop(task);
     std::thread::spawn(move || {
         let result = std::panic::catch_unwind(|| {
-            let docx = build_docx(&text)?;
+            let docx = build_docx(&text, &kind)?;
             let pdf = crate::document_convert::docx_to_pdf(&docx)?;
             let check = crate::convert_task::compare_docx_to_pdf(&docx, &pdf);
             Ok((pdf, check))
@@ -380,12 +380,36 @@ pub(crate) fn record_generated_fixture(
     )
 }
 
-fn build_docx(text: &str) -> Result<Vec<u8>, String> {
+fn build_docx(text: &str, kind: &str) -> Result<Vec<u8>, String> {
+    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+    let lines: Vec<_> = normalized.split('\n').collect();
+    // Keep a short final closing/signature block on one page. This is layout
+    // only: it never identifies a name, changes text or signs a document.
+    let ending = lines
+        .iter()
+        .rposition(|line| !line.trim().is_empty())
+        .and_then(|last| {
+            let first = lines[..last]
+                .iter()
+                .rposition(|line| line.trim().is_empty())
+                .map_or(0, |index| index + 1);
+            (kind == "cover_letter"
+                && last + 1 - first <= 3
+                && lines[first..=last].iter().all(|line| line.len() <= 200))
+            .then_some((first, last))
+        });
     let mut body = String::new();
-    for line in text.replace("\r\n", "\n").replace('\r', "\n").split('\n') {
-        let escaped = quick_xml::escape::escape(line);
+    for (index, line) in lines.iter().enumerate() {
+        let escaped = quick_xml::escape::escape(*line);
+        let properties = match ending {
+            Some((first, last)) if index >= first && index < last => {
+                "<w:pPr><w:keepNext/><w:keepLines/></w:pPr>"
+            }
+            Some((_, last)) if index == last => "<w:pPr><w:keepLines/></w:pPr>",
+            _ => "",
+        };
         body.push_str(&format!(
-            "<w:p><w:r><w:t xml:space=\"preserve\">{escaped}</w:t></w:r></w:p>"
+            "<w:p>{properties}<w:r><w:t xml:space=\"preserve\">{escaped}</w:t></w:r></w:p>"
         ));
     }
     let document = format!(
@@ -905,9 +929,137 @@ mod tests {
     }
     #[test]
     fn document_preserves_unicode_and_xml_characters() {
-        let doc = super::build_docx("Résumé & systems\nSecond paragraph").unwrap();
+        let doc = super::build_docx("Résumé & systems\nSecond paragraph", "cv").unwrap();
         let text = crate::document_extract::extract("letter.docx", &doc).unwrap();
         assert_eq!(text, "Résumé & systems\nSecond paragraph");
+    }
+    #[test]
+    fn closing_block_stays_together_without_changing_reviewed_text_or_cv_layout() {
+        use std::io::Read;
+        let text = "Reviewed body\n\nCordialement,\nAvery O’Connor\n";
+        for kind in ["cover_letter", "cv"] {
+            let bytes = super::build_docx(text, kind).unwrap();
+            assert_eq!(
+                crate::document_extract::extract("fixture.docx", &bytes)
+                    .unwrap()
+                    .trim_end(),
+                text.trim_end()
+            );
+            let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+            let mut xml = String::new();
+            archive
+                .by_name("word/document.xml")
+                .unwrap()
+                .read_to_string(&mut xml)
+                .unwrap();
+            assert_eq!(
+                xml.matches("<w:keepNext/>").count(),
+                usize::from(kind == "cover_letter")
+            );
+            assert_eq!(
+                xml.matches("<w:keepLines/>").count(),
+                if kind == "cover_letter" { 2 } else { 0 }
+            );
+        }
+    }
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "owned private Office/PDF runtimes; fictional profile signatures, pagination and archived PDF pages; no inference"]
+    fn contained_profile_signature_pdf_journey() {
+        use base64::Engine;
+        use waypoint_domain::{ApplicationState, JobIdentityId};
+        use waypoint_store::StoredJob;
+        assert_eq!(
+            std::env::var("WAYPOINT_DOCUMENT_UI_CONTAINED").as_deref(),
+            Ok("1"),
+            "Use tools/qualify_document_journey.py --flow signature"
+        );
+        let _guard = TASK_TEST_LOCK.lock().unwrap();
+        let root = tempfile::Builder::new()
+            .prefix("letter-signature-native-")
+            .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target"))
+            .unwrap()
+            .keep();
+        println!("Document journey evidence: {}", root.display());
+        let mut ws = waypoint_workspace::Workspace::open(&root.join("workspace")).unwrap();
+        let job = JobIdentityId::new("fictional-profile-signature").unwrap();
+        ws.import_job(StoredJob {
+            id: job.clone(),
+            title: "Measurement engineer".into(),
+            employer: "Fictional Research Centre".into(),
+            location: String::new(),
+            state: ApplicationState::Shortlisted,
+            canonical_url: None,
+            content_hash: None,
+            first_seen: None,
+            last_seen: None,
+            remote: false,
+            source: "user_supplied_url".into(),
+            requisition_id: None,
+            posted_at: None,
+        })
+        .unwrap();
+        let mut results = Vec::new();
+        let mut saved = Vec::new();
+        for (label, profile, opening, closing, body, long) in [
+            ("latin", json!({"first_name":"Avery","last_name":"O’Connor"}), "Dear hiring team,", "Kind regards,", "I built measurement tools and documented their operation.".to_owned(), false),
+            ("cjk", json!({"full_name":"李明"}), "招聘团队：", "此致，", "我为测量系统编写了测试程序，并整理了操作指南。".to_owned(), false),
+            ("long", json!({"full_name":"Sukarno"}), "Dear hiring team,", "Kind regards,", "This fictional layout fixture repeats supplied text to exercise page flow, not writing quality. ".repeat(16), true),
+        ] {
+            ws.save_candidate_profile(&profile.to_string()).unwrap();
+            let digest = crate::draft_context_digest(&ws, &job, "cover_letter").unwrap();
+            let signature = crate::draft_identity::Signature::from_profile(&profile);
+            let mut draft = json!({"kind":"cover_letter","paragraphs":(0..if long { 6 } else { 1 }).map(|_|json!({"text":body,"facts":[1]})).collect::<Vec<_>>(),"framing":{"opening":opening,"closing":closing},"facts":[body]});
+            crate::draft_identity::attach(&mut draft, "cover_letter", &signature).unwrap();
+            let text = draft["text"].as_str().unwrap().to_owned();
+            let cached = json!({"status":"complete","job_id":job.as_str(),"kind":"cover_letter","digest":digest,"draft":draft});
+            let provenance = crate::draft_task::export_provenance(&cached, label, job.as_str(), "cover_letter", &digest, &text).unwrap();
+            assert_eq!(provenance["edited"], false);
+            super::start(label.into(), job.as_str().into(), "cover_letter".into(), text.clone(), digest.clone(), Some(provenance)).unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+            let result = loop {
+                let result = super::poll(label, &ws).unwrap();
+                if result["status"] != "running" { break result; }
+                assert!(std::time::Instant::now() < deadline, "PDF export timed out");
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            };
+            assert_eq!(result["status"], "complete", "{result}");
+            assert_eq!(result["text_check"]["status"], "matches");
+            assert_eq!(result["record_saved"], true);
+            assert_eq!(result["draft_provenance_saved"], true);
+            let id = result["id"].as_str().unwrap().to_owned();
+            let pdf = ws.document_content(&id).unwrap().unwrap();
+            std::fs::write(root.join(format!("{label}.pdf")), &pdf).unwrap();
+            let (_, coverage, pages) = crate::pdf_extract::scan_coverage_with_pages(&pdf).unwrap();
+            assert!(!long || pages.len() > 1, "Pagination fixture did not span pages");
+            let compact = |text:&str| text.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+            let name = compact(draft["signature"]["text"].as_str().unwrap());
+            let signature_page = pages.iter().position(|text| compact(text).contains(&name)).expect("Signature absent from PDF");
+            assert_eq!(pages.iter().map(|text|compact(text).matches(&name).count()).sum::<usize>(), 1);
+            assert!(compact(&pages[signature_page]).contains(&compact(closing)), "Closing and signature split across pages");
+            let mut captures = Vec::new();
+            for page in 0..pages.len() {
+                let mut capture = crate::pdf_extract::render_page_for_review(&pdf, page).unwrap();
+                assert_eq!(capture["text_geometry"]["status"], "checked");
+                assert_eq!(capture["text_geometry"]["clipped_chars"], 0);
+                assert_eq!(capture["text_geometry"]["overlapping_pairs"], 0);
+                let image = base64::engine::general_purpose::STANDARD.decode(capture["image"].as_str().unwrap()).unwrap();
+                capture.as_object_mut().unwrap().remove("image");
+                let filename = format!("{label}-page-{}.png", page + 1);
+                std::fs::write(root.join(&filename), &image).unwrap();
+                captures.push(json!({"file":filename,"sha256":waypoint_domain::sha256_hex(&image),"observation":capture}));
+            }
+            saved.push((id, pdf.clone()));
+            results.push(json!({"case":label,"signature":draft["signature"],"pdf_sha256":waypoint_domain::sha256_hex(&pdf),"pages":pages.len(),"signature_page":signature_page+1,"coverage":coverage,"export":result,"captures":captures}));
+            ws.save_candidate_profile(&json!({"full_name":"Corrected Fictional Name"}).to_string()).unwrap();
+            assert_ne!(crate::draft_context_digest(&ws, &job, "cover_letter").unwrap(), digest);
+            for (id, bytes) in &saved { assert_eq!(ws.document_content(id).unwrap().as_ref(), Some(bytes)); }
+        }
+        assert_eq!(
+            ws.job(&job).unwrap().unwrap().state,
+            ApplicationState::Shortlisted
+        );
+        std::fs::write(root.join("result.private.json"), serde_json::to_vec_pretty(&json!({"complete":true,"scope":"Fictional fixed body, source-bound profile signature, canonical text, production PDF export, saved provenance, pagination and rendered geometry; no inference or form interactions","cases":results})).unwrap()).unwrap();
     }
     #[test]
     #[ignore = "requires LibreOffice, PDF extraction tools and a fictional output path"]

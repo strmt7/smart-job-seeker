@@ -38,6 +38,7 @@ pub struct Inputs {
     pub available_facts: usize,
     pub history_sources: Vec<crate::draft_history::Source>,
     pub contact_facts: Vec<String>,
+    pub signature: crate::draft_identity::Signature,
     pub priority_facts: Vec<String>,
     pub selection_listing: String,
     pub instructions: String,
@@ -629,6 +630,7 @@ fn generate_with_selection(
         &template_excerpt,
     )?;
     draft["selection"] = selection;
+    crate::draft_identity::attach(&mut draft, &input.kind, &input.signature)?;
     Ok(draft)
 }
 // Snapshot without consuming the result, so the UI can still collect it.
@@ -715,35 +717,13 @@ pub fn export_provenance(
         return Err("The selected draft does not match this job and document context".into());
     }
     let draft = &cached["draft"];
-    let paragraphs = draft["paragraphs"]
-        .as_array()
-        .filter(|items| !items.is_empty() && items.len() <= 8)
-        .ok_or("Stored draft is invalid")?;
-    let mut pieces = Vec::new();
-    if let Some(opening) = draft["framing"]["opening"]
-        .as_str()
-        .filter(|text| !text.is_empty())
+    let generated = crate::draft_identity::compose(draft, kind)?;
+    if draft
+        .get("text")
+        .is_some_and(|text| text.as_str() != Some(generated.as_str()))
     {
-        pieces.push(opening);
+        return Err("Stored draft text does not match its source-bound document structure".into());
     }
-    for paragraph in paragraphs {
-        pieces.push(
-            paragraph["text"]
-                .as_str()
-                .filter(|text| !text.is_empty())
-                .ok_or("Stored draft is invalid")?,
-        );
-    }
-    if let Some(closing) = draft["framing"]["closing"]
-        .as_str()
-        .filter(|text| !text.is_empty())
-    {
-        pieces.push(closing);
-    }
-    let generated = pieces
-        .join("\n\n")
-        .replace("\r\n", "\n")
-        .replace('\r', "\n");
     let mut provenance_draft = draft.clone();
     if let Some(vision) = provenance_draft
         .get_mut("template_vision")
@@ -760,7 +740,7 @@ pub fn export_provenance(
             vision.insert("image_note".into(), json!("The image is not included in this bounded export record; the saved draft retains it when available."));
         }
     }
-    let result = json!({"draft_id":draft_id,"generated_text_sha256":waypoint_domain::sha256_hex(generated.as_bytes()),"reviewed_text_sha256":waypoint_domain::sha256_hex(reviewed_text.as_bytes()),"edited":generated != reviewed_text,"draft":provenance_draft,"note":"Evidence checks apply only to the generated paragraphs, not later edits or generated opening and closing."});
+    let result = json!({"draft_id":draft_id,"generated_text_sha256":waypoint_domain::sha256_hex(generated.as_bytes()),"reviewed_text_sha256":waypoint_domain::sha256_hex(reviewed_text.as_bytes()),"edited":generated != reviewed_text,"draft":provenance_draft,"note":"Evidence checks apply only to the generated paragraphs, not later edits or generated opening and closing. Signature metadata records candidate-entered profile fields, not independent identity verification."});
     if serde_json::to_vec(&result)
         .map_err(|_| "Could not serialize draft provenance")?
         .len()
@@ -2061,6 +2041,7 @@ mod tests {
                 kind: "cover_letter".into(),
                 facts: vec!["Built reliable software with a small team.".into()],
                 available_facts: 1,
+                signature: Default::default(),
                 contact_facts: vec![],
                 priority_facts: vec![],
                 selection_listing: "Develop reliable software.".into(),
@@ -2322,6 +2303,7 @@ mod tests {
             available_facts: facts.len(),
             facts,
             history_sources,
+            signature: Default::default(),
             contact_facts: Vec::new(),
             priority_facts: Vec::new(),
             selection_listing: "Measurement".into(),
@@ -2399,6 +2381,7 @@ mod tests {
             kind: "cv".into(),
             facts: vec!["Built reliable systems.".into()],
             available_facts: 1,
+            signature: Default::default(),
             contact_facts: vec![],
             priority_facts: vec![],
             selection_listing: "Build systems".into(),
@@ -2447,6 +2430,7 @@ mod tests {
             kind: "cv".into(),
             facts: facts.clone(),
             available_facts: facts.len(),
+            signature: Default::default(),
             contact_facts: vec!["Email: fictional@example.invalid".into()],
             priority_facts: Vec::new(),
             selection_listing: "Role".into(),
@@ -2568,6 +2552,7 @@ mod tests {
             job: json!({"title":"Rust developer", "employer":"Example", "description":"Build Rust services."}),
             facts: vec![fact.clone()],
             available_facts: 1,
+            signature: Default::default(),
             contact_facts: vec![],
             priority_facts: vec![fact],
             selection_listing: "Rust developer: build Rust services".into(),
@@ -2665,6 +2650,7 @@ mod tests {
             job: json!({"title":"Rust developer", "employer":"Example", "description":"Build Rust services."}),
             facts: vec![fact.clone()],
             available_facts: 1,
+            signature: Default::default(),
             contact_facts: vec![],
             priority_facts: vec![fact],
             selection_listing: "Rust developer: build Rust services".into(),
@@ -2827,6 +2813,7 @@ mod tests {
             job: json!({"title":"Product engineer","employer":"Example","description":"Make digital services usable by people with visual disabilities."}),
             available_facts: facts.len(),
             facts,
+            signature: Default::default(),
             contact_facts: vec![],
             priority_facts: vec![priority.clone()],
             selection_listing:
@@ -2881,6 +2868,7 @@ mod tests {
             kind: "cv".into(),
             available_facts: facts.len(),
             facts,
+            signature: Default::default(),
             contact_facts: vec!["Email: fictional@example.invalid".into()],
             priority_facts: Vec::new(),
             selection_listing: "Frontend engineer: improve accessibility for disabled users".into(),
@@ -3080,6 +3068,88 @@ mod tests {
         assert_eq!(cv["kind"], "cv");
         assert!(cv["framing"].is_null());
         assert!(validate(&json!({"paragraphs":[{"text":"x","facts":[2]}]}), &facts).is_err());
+    }
+    #[test]
+    fn signature_is_added_after_generation_and_shared_with_export_provenance() {
+        struct Model(Fake);
+        impl Inference for Model {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                task: &str,
+                prompt: &str,
+                limit: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                assert!(
+                    !prompt.contains("Avery O’Connor"),
+                    "Profile signature entered the model prompt"
+                );
+                self.0.generate_structured(task, prompt, limit)
+            }
+        }
+        let input = Inputs {
+            job_id: "fictional".into(),
+            digest: "context".into(),
+            job: json!({"title":"Engineer"}),
+            kind: "cover_letter".into(),
+            facts: vec!["Built reliable systems.".into()],
+            available_facts: 1,
+            history_sources: Vec::new(),
+            contact_facts: Vec::new(),
+            signature: crate::draft_identity::Signature::from_profile(
+                &json!({"full_name":"Avery O’Connor"}),
+            ),
+            priority_facts: Vec::new(),
+            selection_listing: "Build reliable systems.".into(),
+            instructions: String::new(),
+            template: None,
+            reviewed_template: None,
+            template_style_focus: None,
+            template_scan_page: None,
+        };
+        let mut model = Model(Fake { calls: 0 });
+        let draft = generate_with_selection(&mut model, &input, "", None).unwrap();
+        assert!(model.0.calls >= 4);
+        assert!(draft["text"]
+            .as_str()
+            .unwrap()
+            .ends_with("\nAvery O’Connor"));
+        let mut cached = json!({"status":"complete","job_id":"fictional","kind":"cover_letter","digest":"context","draft":draft});
+        let provenance = export_provenance(
+            &cached,
+            "draft",
+            "fictional",
+            "cover_letter",
+            "context",
+            draft["text"].as_str().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(provenance["edited"], false);
+        assert_eq!(provenance["draft"]["signature"], draft["signature"]);
+        assert_eq!(
+            export_provenance(
+                &cached,
+                "draft",
+                "fictional",
+                "cover_letter",
+                "context",
+                "User edited text"
+            )
+            .unwrap()["edited"],
+            true
+        );
+        cached["draft"]["text"] = json!("Corrupt cached composition");
+        assert!(export_provenance(
+            &cached,
+            "draft",
+            "fictional",
+            "cover_letter",
+            "context",
+            "Corrupt cached composition"
+        )
+        .is_err());
     }
     #[test]
     fn letter_framing_uses_bounded_single_line_job_details() {

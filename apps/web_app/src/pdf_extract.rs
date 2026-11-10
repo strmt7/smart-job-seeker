@@ -478,7 +478,11 @@ fn render_page_inner(bytes: &[u8], page: usize, region: &str) -> Result<serde_js
     let data = run(
         bytes,
         bytes,
-        include_str!("pdf_render.py"),
+        &format!(
+            "{}\n{}",
+            include_str!("pdf_text_geometry.py"),
+            include_str!("pdf_render.py")
+        ),
         Some(&argument),
         4 * 1024 * 1024,
         InputKind::Pdf,

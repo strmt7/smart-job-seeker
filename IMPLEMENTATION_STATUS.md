@@ -1,3 +1,8 @@
+## Profile-sourced cover-letter signatures - 2026-11-10
+
+- Generated letters now use a source-bound profile name after the existing drafting/revision passes. Canonical text is shared by review, saved-letter reuse and export provenance; missing/invalid names remain explicit. Short final closing/name blocks stay together in PDFs, and older unsigned letter contexts become historical.
+- A contained fixed-body qualification passed Latin, CJK and two-page cases, preserving prior PDFs after profile corrections. It exposed and fixed inefficient geometric comparison using a bounded spatial lookup without increasing the work limits. All four PDF pages and desktop/mobile UI captures were inspected. The ordinary workspace passed 1,224 tests with 580 opt-in cases ignored; 167 JavaScript checks, 302 layout observations, geometry/page-boundary checks, Clippy, formatting and build passed. [Evidence and limits](docs/LETTER_SIGNATURES.md) separate this deterministic change from local-model and clean-host qualification. No model was loaded, real form interacted with, application/email sent or release created.
+
 ## Capture URL privacy boundary - 2026-11-10
 
 - Shared local checks now screen initial, redirect, robots and browser-discovered URLs before anonymous transport reads. Known private keys/email-like values are refused; bounded decoding feeds the parent's existing candidate-identifier check. Refusals remain review outcomes with hashed URLs. No profile or credentials are sent to the worker.

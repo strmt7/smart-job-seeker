@@ -22,6 +22,15 @@ function checkDraftFraming(){
  show({id:'fixture',title:'Scientist',employer:'Example Lab'},body,'fixture');
  assert.equal(children.find(item=>item.tag==='textarea').value,'I am applying for the Scientist position at Example Lab.\n\nI used Python.\n\nThank you for considering my application.');
  assert.equal(children.filter(item=>String(item.text).startsWith('Cited qualifications:')).length,1);
+ children.length=0;
+ const signed={...body,text:'Dear hiring team,\n\nI used Python.\n\nKind regards,\nAvery O’Connor',signature:{status:'available',text:'Avery O’Connor'}};
+ show({id:'fixture',title:'Scientist',employer:'Example Lab'},signed,'fixture');
+ assert.equal(children.find(item=>item.tag==='textarea').value,signed.text);
+ assert.ok(children.some(item=>item.text==='Avery O’Connor'));
+ assert.ok(children.some(item=>String(item.text).includes('saved profile name')));
+ children.length=0;
+ show({id:'fixture',title:'Scientist',employer:'Example Lab'},{...body,signature:{status:'invalid'}},'fixture');
+ assert.ok(children.some(item=>String(item.text).includes('profile name could not be used')));
 }
 async function fixture(active, saved){
  const storage=new Map(saved ? [['waypoint-letter-export',JSON.stringify(saved)]] : []), calls=[], shown=[];
