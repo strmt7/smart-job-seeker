@@ -6,6 +6,7 @@ const config = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const origin = new URL(config.url).origin, token = new URL(config.url).hash.slice(1), folder = config.output;
 let browser, context;
 const evidence = { complete: false, scope: 'Fictional saved profile/template through actual UI/model, PDF export and local vision; no employer interaction', documents: [], requests: [], errors: [], blocked: [] };
+evidence.model_identity=config.model_identity;
 async function response(route, body, extra = {}) {
   const r = await fetch(origin + route, { method: body ? 'POST' : 'GET', headers: { 'X-Workspace-Token': token, ...(body ? {'Content-Type':'application/json'} : {}), ...extra.headers }, body: body ? JSON.stringify(body) : undefined, ...extra });
   return r;

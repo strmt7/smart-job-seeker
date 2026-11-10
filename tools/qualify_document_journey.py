@@ -18,6 +18,7 @@ def main():
     parser.add_argument('--control', type=Path, required=True, help='Test-owned private Office/PDF runtime directory in target')
     parser.add_argument('--browser', type=Path, required=True)
     parser.add_argument('--model', default='gemma4:12b-it-q4_K_M')
+    parser.add_argument('--flow', choices=['documents','template','template-letter'], default='documents')
     args = parser.parse_args()
     control = args.control.resolve(strict=True)
     if os.name != 'nt' or not control.is_relative_to((REPO / 'target').resolve(strict=True)):
@@ -36,7 +37,9 @@ def main():
         'apps/web_app/src/main.rs','apps/web_app/src/document_ui_qualification.rs',
         'apps/web_app/scripts/qualify-document-journey.cjs','apps/web_app/src/draft_task.rs',
         'apps/web_app/src/draft_history.rs','apps/web_app/src/document_visual.rs',
-        'apps/web_app/src/document_visual.schema.json',
+        'apps/web_app/src/document_visual.schema.json','apps/web_app/src/template_plan.rs',
+        'apps/web_app/src/template_suggest.rs','apps/web_app/src/answer_task.rs','apps/web_app/src/fit_task.rs','apps/web_app/src/doc_suggest.rs','apps/web_app/src/docx_edit.rs','apps/web_app/src/docx_edit_task.rs',
+        'crates/waypoint_inference/src/template_edit_plan.schema.json','apps/web_app/scripts/qualify-template-journey.cjs',
         'apps/web_app/src/letter_export.rs','apps/web_app/src/document_convert.rs',
         'apps/web_app/src/history_record_choice.rs','apps/web_app/src/candidate_history.rs',
         'apps/web_app/src/pdf_extract.rs','apps/web_app/src/pdf_extract.py','apps/web_app/src/pdf_render.py',
@@ -50,12 +53,12 @@ def main():
         'crates/waypoint_inference/src/ollama.rs','crates/waypoint_inference/src/document_draft.schema.json',
         'tools/qualify_rehearsal.py','tools/owned_process.py']]]
     hashes = lambda: {p.relative_to(REPO).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in sources}
-    receipt = {'complete':False,'sources':hashes(),'model':args.model,'scope':'Actual fictional profile/template, drafting, PDF export, text/visual checks and stale-source refusal; no employer forms'}
+    receipt = {'complete':False,'sources':hashes(),'model':args.model,'flow':args.flow,'scope':'Actual fictional profile/template, drafting, PDF export, text/visual checks and stale-source refusal; no employer forms'}
     receipt['selected_files']={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in [args.browser,paths['pdf-runtime.json'],paths['tool-office.json'],control/'fictional.docx']}
     memory = RamSamples(); memory.thread.start()
     try:
         env = os.environ.copy()
-        env.update(APPDATA=str(folder/'appdata'),WAYPOINT_DOCUMENT_UI_CONTAINED='1',WAYPOINT_DOCUMENT_UI_NODE=node,
+        env.update(WAYPOINT_DOCUMENT_UI_FLOW=args.flow,APPDATA=str(folder/'appdata'),WAYPOINT_DOCUMENT_UI_CONTAINED='1',WAYPOINT_DOCUMENT_UI_NODE=node,
             WAYPOINT_DOCUMENT_UI_BROWSER=str(args.browser),WAYPOINT_DOCUMENT_UI_TEMPLATE=str(control/'fictional.docx'),
             WAYPOINT_PDF_PYTHON=str(paths['pdf-runtime.json']),WAYPOINT_SOFFICE=str(paths['tool-office.json']),
             WAYPOINT_VISION_BENCHMARK_MODEL=args.model,CARGO_BUILD_JOBS='1',PYTHONUTF8='1')

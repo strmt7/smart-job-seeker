@@ -1,0 +1,8 @@
+{
+  "type":"object",
+  "properties":{"selections":{"type":"array","maxItems":5,"items":{
+    "type":"object","properties":{"id":{"type":"integer","minimum":1,"maximum":80},"reason":{"type":"string","minLength":1,"maxLength":300}},
+    "required":["id","reason"],"additionalProperties":false
+  }}},
+  "required":["selections"],"additionalProperties":false
+}

@@ -1,5 +1,10 @@
 # Document drafting through saved PDF review
 
+Follow-up: [template tailoring and revised content/advice review](TEMPLATE_TAILORING.md)
+adds original-template workflows, citation-contamination validation and a v7
+review context. The measurements below remain the earlier scoped checkpoint;
+the follow-up records the newer invocations and bounds.
+
 Checkpoint: 2026-11-10. One headless Windows journey now connects the real web
 client and production HTTP handlers to the local 12B model, PDF conversion,
 extracted-text comparison, page rendering, local visual review and durable

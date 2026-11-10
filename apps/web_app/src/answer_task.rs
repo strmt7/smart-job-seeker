@@ -514,7 +514,7 @@ fn generate_for_context(
     let limit_instruction = format!("{limit_instruction}{minimum_instruction}{number_instruction}");
     let data = json!({"question":input.question,"listing":input.listing,"facts":input.facts,"writing_preferences":input.instructions});
     let voice_instruction = if template {
-        " The first candidate fact contains the original template passage. Unless writing preferences explicitly request otherwise, preserve its grammatical person and tense: if it begins with I, keep I; if it omits a subject pronoun, do not introduce I or we. Rewrite only the original passage: other candidate facts are context and must not be introduced as new experiences or qualifications unless the writing preferences explicitly request them."
+        " The first candidate fact contains the original template passage. Unless writing preferences explicitly request otherwise, preserve its grammatical person and tense: if it begins with I, keep I; if it omits a subject pronoun, do not introduce I or we. Keep numeric source references only in the JSON facts array. Never add inline citation markers such as [1] to replacement text; preserve citation markers already present in the original passage. Rewrite only the original passage: other candidate facts are context and must not be introduced as new experiences or qualifications unless the writing preferences explicitly request them."
     } else {
         ""
     };
@@ -530,6 +530,18 @@ fn generate_for_context(
                 .into(),
         );
     }
+    let validate_output = |value: &Value| -> Result<Value, String> {
+        let answer = validate(value, &input.facts)?;
+        if template
+            && introduced_numeric_citations(
+                input.facts.first().map(String::as_str).unwrap_or_default(),
+                answer["text"].as_str().unwrap_or_default(),
+            )
+        {
+            return Err("New inline source annotations are not part of the original passage; keep citations only in the JSON facts array".into());
+        }
+        Ok(answer)
+    };
     let mut first = None;
     for attempt in 0..2 {
         let request = if attempt == 0 {
@@ -552,7 +564,7 @@ fn generate_for_context(
                         "The model returned no answer; review this question manually".into(),
                     );
                 }
-                if let Ok(answer) = validate(&value, &input.facts) {
+                if let Ok(answer) = validate_output(&value) {
                     if !input.numeric_only
                         || answer["text"]
                             .as_str()
@@ -601,7 +613,7 @@ fn generate_for_context(
                 {
                     return Err("The model could not produce an answer within the field limits; review this question manually".into());
                 }
-                match validate(&value, &input.facts) {
+                match validate_output(&value) {
                     Ok(answer)
                         if input.numeric_only
                             && !answer["text"]
@@ -663,7 +675,7 @@ fn generate_for_context(
         }
     }
     if let Some((draft, length, reason)) = length_repair {
-        let mut answer = validate(&draft, &input.facts)?;
+        let mut answer = validate_output(&draft)?;
         answer["evidence_check"] = check_evidence(llm, &answer);
         answer["length_review"] = json!({"status":"needs_edit","reason":reason,"used_utf16":length,"min_utf16":input.min_length_utf16,"max_utf16":input.max_length_utf16});
         if let Some(limit) = input.max_length_utf16 {
@@ -678,6 +690,24 @@ fn generate_for_context(
         "Answer revision could not be validated after one repair: {last_error}"
     ))
 }
+fn introduced_numeric_citations(original: &str, replacement: &str) -> bool {
+    fn markers(text: &str) -> std::collections::BTreeSet<&str> {
+        text.split('[')
+            .skip(1)
+            .filter_map(|part| {
+                let (inside, _) = part.split_once(']')?;
+                (inside.len() <= 80
+                    && inside.chars().any(|c| c.is_ascii_digit())
+                    && inside.chars().all(|c| {
+                        c.is_ascii_digit() || matches!(c, ' ' | ',' | ';' | '-' | '–' | '—')
+                    }))
+                .then_some(inside)
+            })
+            .collect()
+    }
+    !markers(replacement).is_subset(&markers(original))
+}
+
 #[cfg(test)]
 mod tests {
     #[cfg(windows)]
@@ -797,6 +827,90 @@ mod tests {
     }
     use super::*;
     use waypoint_inference::{CapabilityReport, UsageReport};
+    #[test]
+    fn template_references_stay_in_metadata_and_existing_references_are_preserved() {
+        assert!(introduced_numeric_citations(
+            "Built tools.",
+            "Built tools [1]."
+        ));
+        assert!(introduced_numeric_citations("Paper [1]", "Paper [1, 2]"));
+        assert!(!introduced_numeric_citations(
+            "Paper [1]",
+            "Published paper [1]."
+        ));
+        assert!(!introduced_numeric_citations(
+            "Worked on [draft]",
+            "Worked on [draft]"
+        ));
+        struct Model {
+            draft: usize,
+            style: usize,
+            persistent: bool,
+        }
+        impl Inference for Model {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                schema: &str,
+                prompt: &str,
+                _: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                let value = match schema {
+                    "application_answer" => {
+                        self.draft += 1;
+                        assert!(prompt.contains("Never add inline citation"));
+                        json!({"text":if self.draft==1||self.persistent{"Built tools [1]."}else{"Built tools."},"facts":[1]})
+                    }
+                    "application_answer_style" => {
+                        self.style += 1;
+                        assert!(prompt.contains("Never add inline citation"));
+                        json!({"text":if self.style==1||self.persistent{"Built tools [1]."}else{"Built tools."},"facts":[1]})
+                    }
+                    _ => {
+                        json!({"claims":[{"excerpt":"Built tools","status":"supported","explanation":"Supplied passage"}]})
+                    }
+                };
+                Ok((
+                    value,
+                    UsageReport {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        wall_time_ms: 0,
+                    },
+                ))
+            }
+        }
+        let input = Inputs {
+            numeric_only: false,
+            session_id: String::new(),
+            selector: String::new(),
+            digest: String::new(),
+            question: "Rewrite the original passage".into(),
+            listing: "Tooling role".into(),
+            facts: vec!["Built tools.".into()],
+            available_facts: 1,
+            instructions: String::new(),
+            max_length_utf16: None,
+            min_length_utf16: None,
+        };
+        let mut repaired = Model {
+            draft: 0,
+            style: 0,
+            persistent: false,
+        };
+        let result = generate_template_with_selection(&mut repaired, input.clone()).unwrap();
+        assert_eq!(result["text"], "Built tools.");
+        assert_eq!((repaired.draft, repaired.style), (2, 2));
+        let mut persistent = Model {
+            draft: 0,
+            style: 0,
+            persistent: true,
+        };
+        assert!(generate_template_with_selection(&mut persistent, input).is_err());
+        assert_eq!((persistent.draft, persistent.style), (2, 0));
+    }
 
     #[test]
     fn first_draft_repairs_invalid_output_but_respects_abstention_and_runtime_failure() {

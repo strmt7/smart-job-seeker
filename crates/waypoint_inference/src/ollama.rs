@@ -26,8 +26,12 @@ use crate::{CapabilityReport, Inference, InferenceError, UsageReport};
 /// Passing any other name falls back to generic JSON mode.
 pub const KNOWN_SCHEMAS: &[(&str, &str)] = &[
     (
+        "template_edit_plan",
+        include_str!("template_edit_plan.schema.json"),
+    ),
+    (
         "document_content_check",
-        r#"{"type":"object","properties":{"items":{"type":"array","minItems":1,"maxItems":3,"items":{"type":"object","properties":{"id":{"type":"integer","minimum":1,"maximum":12},"verdict":{"type":"string","enum":["confirmed","not_issue","suggestion","unknown"]},"reason":{"type":"string","minLength":1,"maxLength":250}},"required":["id","verdict","reason"],"additionalProperties":false}}},"required":["items"],"additionalProperties":false}"#,
+        r#"{"type":"object","properties":{"items":{"type":"array","minItems":1,"maxItems":7,"items":{"type":"object","properties":{"id":{"type":"integer","minimum":1,"maximum":16},"verdict":{"type":"string","enum":["confirmed","not_issue","suggestion","unknown","unsupported_change"]},"reason":{"type":"string","minLength":1,"maxLength":250}},"required":["id","verdict","reason"],"additionalProperties":false}}},"required":["items"],"additionalProperties":false}"#,
     ),
     (
         "cover_letter_framing",
@@ -722,6 +726,68 @@ fn decode_chunked(body: &[u8]) -> Option<Vec<u8>> {
 mod tests {
     use super::*;
 
+    fn read_fixture_request(stream: &mut TcpStream) -> Vec<u8> {
+        stream
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut request = Vec::new();
+        let mut buffer = [0u8; 2048];
+        loop {
+            assert!(Instant::now() < deadline, "incomplete fixture request");
+            match stream.read(&mut buffer) {
+                Ok(0) => panic!("truncated fixture request"),
+                Ok(n) => request.extend_from_slice(&buffer[..n]),
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    continue
+                }
+                Err(error) => panic!("fixture request failed: {error}"),
+            }
+            assert!(request.len() <= 16 * 1024, "fixture request exceeds budget");
+            if let Some(end) = find_headers_end(&request) {
+                let headers = std::str::from_utf8(&request[..end])
+                    .unwrap()
+                    .to_ascii_lowercase();
+                assert!(!headers.contains("transfer-encoding:"));
+                let length = content_length(&headers).expect("fixture Content-Length");
+                assert!(length <= 8192, "fixture body exceeds budget");
+                if request.len() >= end + 4 + length {
+                    return request;
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn fixture_reader_waits_for_fragmented_headers_and_body() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let request = read_fixture_request(&mut stream);
+            tx.send(request).unwrap();
+        });
+        let mut client = TcpStream::connect(addr).unwrap();
+        client.write_all(b"PO").unwrap();
+        assert!(rx.recv_timeout(Duration::from_millis(30)).is_err());
+        client
+            .write_all(b"ST /fictional HTTP/1.1\r\nContent-Length: 7\r\n\r\nfix")
+            .unwrap();
+        assert!(rx.recv_timeout(Duration::from_millis(30)).is_err());
+        client.write_all(b"ture").unwrap();
+        assert!(rx
+            .recv_timeout(Duration::from_secs(3))
+            .unwrap()
+            .ends_with(b"fixture"));
+        server.join().unwrap();
+    }
+
     #[test]
     fn pressure_interrupts_a_partially_written_request() {
         struct SlowWriter(usize);
@@ -764,6 +830,9 @@ mod tests {
         let (ready, wait) = std::sync::mpsc::channel();
         let server = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
+            // Closing a socket with an unread request can reset it on Windows,
+            // preventing the client from reaching its final-response guard.
+            read_fixture_request(&mut stream);
             wait.recv_timeout(Duration::from_secs(3)).unwrap();
             server_pressure.store(true, Ordering::Relaxed);
             stream
@@ -1083,39 +1152,40 @@ mod tests {
         }
     }
 
-    fn spawn_server(response: &'static [u8]) -> SocketAddr {
+    fn spawn_server(response: &'static [u8]) -> (SocketAddr, std::thread::JoinHandle<()>) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
-        std::thread::spawn(move || {
+        let server = std::thread::spawn(move || {
             if let Ok((mut conn, _)) = listener.accept() {
-                let mut buf = [0u8; 4096];
-                let _ = conn.read(&mut buf); // read request head+body greedily
-                let _ = conn.write_all(response);
+                read_fixture_request(&mut conn);
+                conn.write_all(response).unwrap();
             }
         });
-        addr
+        (addr, server)
     }
 
     #[test]
     fn http_parses_content_length_responses() {
-        let addr = spawn_server(
+        let (addr,server) = spawn_server(
             b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 12\r\n\r\n{\"ok\":true}\n",
         );
         let (status, body) = http_request(addr, "GET", "/x", None, 2000).unwrap();
         assert_eq!(status, 200);
         let v: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(v["ok"], true);
+        server.join().unwrap();
     }
 
     #[test]
     fn http_parses_chunked_responses() {
-        let addr = spawn_server(
+        let (addr,server) = spawn_server(
             b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n9\r\n{\"ok\": tr\r\n3\r\nue}\r\n0\r\n\r\n",
         );
         let (status, body) = http_request(addr, "GET", "/x", None, 2000).unwrap();
         assert_eq!(status, 200);
         let v: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(v["ok"], true);
+        server.join().unwrap();
     }
 
     #[test]
@@ -1134,11 +1204,12 @@ mod tests {
 
     #[test]
     fn short_content_length_response_is_an_error() {
-        let addr = spawn_server(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nshort");
+        let (addr, server) = spawn_server(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nshort");
         assert_eq!(
             http_request(addr, "GET", "/x", None, 2000).unwrap_err(),
             "incomplete content-length body"
         );
+        server.join().unwrap();
     }
 
     #[test]

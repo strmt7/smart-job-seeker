@@ -1,5 +1,11 @@
 # Smart Jobseeker completion plan
 
+Latest review: [results and ordered implementation work, 2026-11-10](RELEASE_COMPLETION_REVIEW.md).
+It updates the evidence and immediate priorities below without reducing the
+requested scope. [Finding-state policy and current inventory](FINDING_STATE_REVIEW.md)
+prohibit manual closure across all detection tools; unresolved observations stay
+visible and publication remains the user's decision.
+
 Status: active development, updated 2026-11-10. This plan translates the requested
 product into implementation and evidence gates. It supplements, rather than
 replaces, the repository's handoff and `AGENTS.md` invariants. There is no

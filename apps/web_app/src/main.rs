@@ -83,6 +83,7 @@ mod search_planner;
 mod smtp_handoff;
 mod storage_settings;
 mod suggestions;
+mod template_plan;
 mod template_suggest;
 #[cfg(windows)]
 mod tray;
@@ -910,7 +911,7 @@ fn document_visual_context_on_date(
     let instructions = profile_value["document_instructions"]
         .as_str()
         .unwrap_or("");
-    let digest=Sha256Digest::of(&json!({"version":"document-visual-context-v6","reference_date_utc":reference_date_utc,"title":posting.title,"employer":posting.employer,"location":posting.location,"description":description,"facts_digest":facts_digest,"profile":profile_value}).to_string()).as_str().to_owned();
+    let digest=Sha256Digest::of(&json!({"version":"document-visual-context-v7","reference_date_utc":reference_date_utc,"title":posting.title,"employer":posting.employer,"location":posting.location,"description":description,"facts_digest":facts_digest,"profile":profile_value}).to_string()).as_str().to_owned();
     let sources = draft_history::review_sources(&facts, &profile_value, &listing)?;
     let source_coverage = json!({"available":sources["available"],"supplied":sources["supplied"],"omitted":sources["omitted"],"checked_history_available":sources["checked_history_available"],"scope":sources["scope"]});
     let posting_excerpt = answer_task::json_prefix(&listing, 2500);
@@ -1799,6 +1800,55 @@ fn duplicate_search_inputs_scope(
         all_jobs,
         page_after: after.map(str::to_owned),
         next_cursor,
+    })
+}
+
+fn template_plan_inputs(
+    ws: &Workspace,
+    document_id: &str,
+    job_id: &JobIdentityId,
+) -> Result<template_plan::Inputs, String> {
+    let document = ws
+        .documents()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .find(|d| d.id == document_id)
+        .ok_or("Document not found")?;
+    if !matches!(
+        document
+            .name
+            .rsplit_once('.')
+            .map(|(_, ext)| ext.to_ascii_lowercase())
+            .as_deref(),
+        Some("docx" | "pdf")
+    ) {
+        return Err("Choose a PDF or DOCX template".into());
+    }
+    let source = ws
+        .document_content(document_id)
+        .map_err(|e| e.to_string())?
+        .ok_or("Document not found")?;
+    let (_, _, listing, _) = fit_inputs(ws, job_id)?;
+    let profile: Value = ws
+        .candidate_profile()
+        .map_err(|e| e.to_string())?
+        .map(|value| serde_json::from_str(&value).map_err(|_| "Stored profile is invalid"))
+        .transpose()?
+        .unwrap_or_else(|| json!({}));
+    let instructions = profile["document_instructions"]
+        .as_str()
+        .unwrap_or("")
+        .to_owned();
+    let context = docx_edit_task::job_context_digest(ws, job_id.as_str())?;
+    let digest = waypoint_domain::sha256_hex(json!({"kind":"template_plan_v1","document":document_id,"source":waypoint_domain::sha256_hex(&source),"context":context}).to_string().as_bytes());
+    Ok(template_plan::Inputs {
+        document_id: document_id.to_owned(),
+        name: document.name,
+        source,
+        job_id: job_id.as_str().to_owned(),
+        listing,
+        instructions,
+        digest,
     })
 }
 
@@ -4752,6 +4802,33 @@ fn serve(
         "/api/documents/convert-pdf-status" => {
             let task_id = body["task_id"].as_str().ok_or("missing task id")?;
             json_reply(stream, "200 OK", convert_task::poll(task_id, ws)?);
+        }
+        "/api/documents/template-plan-start" => {
+            let document = body["id"].as_str().ok_or("Missing document")?;
+            let job = JobIdentityId::new(body["job_id"].as_str().ok_or("Missing job")?)
+                .map_err(|e| e.to_string())?;
+            let input = template_plan_inputs(ws, document, &job)?;
+            let model = resident_model()?
+                .ok_or("Load one local model within the GPU and system-memory budgets first")?;
+            let task = random_id()?;
+            template_plan::start(task.clone(), model, input)?;
+            json_reply(stream, "200 OK", json!({"task_id":task}));
+        }
+        "/api/documents/template-plan-status" => {
+            let mut result = template_plan::poll(body["task_id"].as_str().ok_or("Missing task")?)?;
+            if result["status"] == "complete" {
+                let document = result["document_id"]
+                    .as_str()
+                    .ok_or("Missing template context")?;
+                let job =
+                    JobIdentityId::new(result["job_id"].as_str().ok_or("Missing job context")?)
+                        .map_err(|e| e.to_string())?;
+                let current = template_plan_inputs(ws, document, &job)?;
+                if result["digest"].as_str() != Some(current.digest.as_str()) {
+                    result = json!({"status":"failed","error":"The template, job or supporting information changed; plan again"});
+                }
+            }
+            json_reply(stream, "200 OK", result);
         }
         "/api/documents/template-suggest-start" => {
             let id = body["id"].as_str().ok_or("missing document id")?;

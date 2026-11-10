@@ -1,3 +1,9 @@
+## Template tailoring and completion review - 2026-11-10
+
+- Added local-model passage planning to the real template editor, followed by existing source-aware rewrites, natural-language revision, reviewed queues and mandatory PDF export. Actual CV and complete cover-letter template workflows passed; originals and untouched package parts remained intact, with three responsive widths and archived page review. Source markers introduced into usable text are now refused/repaired within the existing limits. Visual content/advice review distinguishes past employers from hiring organizations and preserves rejected advice in its audit.
+- Final ordinary checks passed 1,211 tests with 578 opt-in cases ignored, all 166 UI scripts, Clippy, formatting and the managed build. [Evidence and limits](docs/TEMPLATE_TAILORING.md) distinguish these fictional examples from generic fidelity, ATS accuracy and unseen-form coverage. No real application, application email or release was created.
+- Added the cross-tool prohibition on manual finding closure and a [provider-state review](docs/FINDING_STATE_REVIEW.md). GitHub inventories found no manual dismissals to reopen. Five open workflow-permission alerts received a real configuration fix; resolution awaits the detector. DeepSource's 2,265 reported occurrences remain visible with their stale-analysis/quota limitation. The [updated completion review](docs/RELEASE_COMPLETION_REVIEW.md) preserves all requested capabilities and prioritizes isolation, local-model coverage, real documents, delivery mechanisms and clean Windows qualification.
+
 ## Bounded submission diagnostics - 2026-11-10
 
 - The pushed `f77f70c5` checkpoint passed hosted workspace/build/layout, dependency, coverage and CodeQL checks, but its native browser job passed 136 cases and failed initial navigation in one fictional scripted-GET diagnostic. The exact transport cause is not established by that log.

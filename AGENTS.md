@@ -36,6 +36,27 @@ repo up cold. Read this first, then `README.md`, then the references below.
   external caches, receipt limits and the scope of the Codecov report. These
   are development tools, not application runtime dependencies.
 
+## Findings remain under detector control
+
+- Never manually close, dismiss, resolve, ignore or suppress a finding from any
+  current or future detection tool. This includes security, dependency, secret,
+  static-analysis and quality tools, hosted dashboards, issue mirrors and local
+  finding ledgers. The rule also applies to suspected false positives,
+  duplicates, accepted risks and findings that cannot currently be fixed.
+- Fix the underlying code or configuration and rerun the relevant detector.
+  Only detector-confirmed automatic resolution may change a finding to fixed.
+  Do not hide findings by adding ignores, baselines, exclusions or rule disables,
+  removing an analyzer, reducing scan scope, editing reports or changing status
+  through an API. Preserve immutable historical evidence.
+- Reopen earlier agent-manual closures when the provider supports reopening,
+  retaining the original history. Record inaccessible providers or unsupported
+  state transitions honestly; do not claim they were inspected or reopened.
+  Do not undo real fixes to recreate automatically fixed findings.
+- Open findings may remain visible with evidence and limitations; a zero count
+  is not a substitute for product quality. The user decides whether unresolved
+  findings are acceptable and whether to publish a release. Never publish a
+  release autonomously.
+
 ## Interface consistency
 
 The product name is **Smart Jobseeker**. Keep existing storage keys, protocols
@@ -162,6 +183,11 @@ used by development tools and tests. Do not add WSL or Docker as product require
 
 ## Real pitfalls already hit (don't rediscover these)
 
+- Keep source citations in structured metadata, not newly added numeric markers
+  in usable template text. Preserve references actually present in the original.
+  Candidate history must not be rewritten to match the hiring employer or role.
+  Retain original visual-review observations and unknowns; optional model advice
+  is not evidence for new candidate facts. See `docs/TEMPLATE_TAILORING.md`.
 - After interrupted browser or fixture tests, check for orphaned Waypoint-owned
   browser profiles and fixture servers before concluding that host memory is
   unavailable. Verify each process's identity and that its test parent is gone

@@ -177,3 +177,11 @@ actions and email preparation/sending are refused by the native test allowlist.
 Private output stays in `target/`. The shared ownership, 4 GiB job and monitored
 3 GiB host reserve apply; Ollama remains outside that job. See
 [scope, observations and remaining gates](DOCUMENT_PDF_JOURNEY.md).
+
+Add `--flow template` or `--flow template-letter` to exercise original DOCX
+templates through actual passage selection, local rewriting, reviewed queues,
+DOCX/PDF export and archived page review. The generated test documents are
+fictional; untouched package parts are byte-compared, stale plans are refused,
+and responsive controls are checked at 320/768/1440 px. The letter/default draft
+flows also retain resident-model identity before and after work. See
+[template qualification and limits](TEMPLATE_TAILORING.md).

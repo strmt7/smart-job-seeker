@@ -12,6 +12,14 @@ fn allowed_document_mutation(path: &str) -> bool {
             | "/api/jobs/add"
             | "/api/shortlist"
             | "/api/documents/upload"
+            | "/api/documents/extract-start"
+            | "/api/documents/extract-status"
+            | "/api/documents/template-plan-start"
+            | "/api/documents/template-plan-status"
+            | "/api/documents/template-suggest-start"
+            | "/api/documents/template-suggest-status"
+            | "/api/documents/edit-template-start"
+            | "/api/documents/edit-template-status"
             | "/api/documents/download"
             | "/api/draft/start"
             | "/api/draft/status"
@@ -93,8 +101,27 @@ fn resource_gated_rendered_document_pdf_journey() {
         .tempdir_in(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target"))
         .unwrap()
         .keep();
+    let flow = std::env::var("WAYPOINT_DOCUMENT_UI_FLOW").unwrap_or_else(|_| "documents".into());
+    let template_flow = matches!(flow.as_str(), "template" | "template-letter");
+    let template = if template_flow {
+        let path = root.join("fictional-styled-template.docx");
+        std::fs::write(
+            &path,
+            if flow == "template-letter" {
+                crate::template_plan::fictional_letter_docx()
+            } else {
+                crate::template_plan::fictional_docx()
+            },
+        )
+        .unwrap();
+        path
+    } else {
+        template
+    };
     println!("Document journey evidence: {}", root.display());
     crate::experience_inference::tests::with_resource_gated_named_model(&model, || {
+        let identity = resident_model_identity().unwrap().unwrap();
+        assert_eq!(identity.name, model);
         use waypoint_inference::OllamaInference;
         let inference = OllamaInference::new("http://127.0.0.1:11434", &model)
             .unwrap()
@@ -104,27 +131,47 @@ fn resource_gated_rendered_document_pdf_journey() {
             model.clone(),
             resident_model_identity,
         );
-        let facts = vec!["Built measurement tools in Rust.".into()];
-        let invalid = json!({"paragraphs":[{"text":"I managed 200 people while building measurement tools in Rust.","facts":[99]}]});
-        let (repaired, audit) =
-            draft_task::validated_document_output(&mut repair_model, invalid.clone(), &facts)
-                .unwrap();
-        let check = draft_task::check_document_evidence(&mut repair_model, &repaired, &facts);
-        std::fs::write(root.join("repair.private.json"),json!({"original":invalid,"facts":facts,"repaired":repaired,"audit":audit,"evidence_check":check}).to_string()).unwrap();
-        assert_eq!(audit["performed"], true);
-        assert_eq!(check["status"], "completed");
-        assert!(
-            check["items"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .all(|v| v["status"] == "supported"),
-            "Actual model did not ground repaired claims"
-        );
-        assert!(
-            !repaired.to_string().contains("200"),
-            "Unsupported staffing claim survived repair"
-        );
+        if !template_flow {
+            let facts = vec!["Built measurement tools in Rust.".into()];
+            let invalid = json!({"paragraphs":[{"text":"I managed 200 people while building measurement tools in Rust.","facts":[99]}]});
+            let (repaired, audit) =
+                draft_task::validated_document_output(&mut repair_model, invalid.clone(), &facts)
+                    .unwrap();
+            let check = draft_task::check_document_evidence(&mut repair_model, &repaired, &facts);
+            std::fs::write(root.join("repair.private.json"),json!({"original":invalid,"facts":facts,"repaired":repaired,"audit":audit,"evidence_check":check}).to_string()).unwrap();
+            assert_eq!(audit["performed"], true);
+            assert_eq!(check["status"], "completed");
+            assert!(
+                check["items"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|v| v["status"] == "supported"),
+                "Actual model did not ground repaired claims"
+            );
+            assert!(
+                !repaired.to_string().contains("200"),
+                "Unsupported staffing claim survived repair"
+            );
+        }
+        if template_flow {
+            let review = crate::document_visual::qualify_content_review(&mut repair_model);
+            std::fs::write(root.join("content-probe.private.json"), review.to_string()).unwrap();
+            assert_eq!(
+                review["issues"].as_array().unwrap().len(),
+                1,
+                "A real contradiction must remain; differing employer names alone are not a defect"
+            );
+            assert_eq!(
+                review["issues"][0]["description"],
+                review["original"]["issues"][1]["description"]
+            );
+            assert_eq!(
+                review["suggestions"],
+                json!(["Add a portfolio link if the candidate has one."])
+            );
+            assert_eq!(review["audit"]["unsupported_changes"], 1);
+        }
         let mut ws = Workspace::open(&root.join("workspace")).unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
@@ -133,11 +180,17 @@ fn resource_gated_rendered_document_pdf_journey() {
         let config = root.join("client.private.json");
         std::fs::write(&config, json!({"url":format!("http://127.0.0.1:{port}/#{token}"),
             "browser":browser,"template":template,"output":root,
-            "model":model,"app_sha256":waypoint_domain::sha256_hex(include_bytes!("../web/app.js"))}).to_string()).unwrap();
+            "model":model,"model_identity":{"name":identity.name,"digest":identity.digest},"template_kind":if flow=="template-letter"{"cover_letter"}else{"cv"},"app_sha256":waypoint_domain::sha256_hex(include_bytes!("../web/app.js"))}).to_string()).unwrap();
         use std::os::windows::process::CommandExt;
         let log = std::fs::File::create(root.join("client.private.log")).unwrap();
         let mut child = Command::new(node)
-            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/qualify-document-journey.cjs"))
+            .arg(
+                Path::new(env!("CARGO_MANIFEST_DIR")).join(if template_flow {
+                    "scripts/qualify-template-journey.cjs"
+                } else {
+                    "scripts/qualify-document-journey.cjs"
+                }),
+            )
             .arg(&config)
             .creation_flags(0x08000000)
             .stdin(Stdio::null())
@@ -225,6 +278,41 @@ fn resource_gated_rendered_document_pdf_journey() {
             serde_json::from_slice(&std::fs::read(root.join("result.private.json")).unwrap())
                 .unwrap();
         assert_eq!(report["complete"], true);
+        assert_eq!(
+            resident_model_identity().unwrap().unwrap(),
+            identity,
+            "The resident model changed during document qualification"
+        );
+        assert_eq!(report["model_identity"]["digest"], identity.digest);
+
+        if template_flow {
+            use std::io::Read;
+            let original = std::fs::read(&template).unwrap();
+            let edited = ws
+                .document_content(report["edited"]["docx_id"].as_str().unwrap())
+                .unwrap()
+                .unwrap();
+            std::fs::write(root.join("edited-template.docx"), &edited).unwrap();
+            let mut before = zip::ZipArchive::new(std::io::Cursor::new(original)).unwrap();
+            let mut after = zip::ZipArchive::new(std::io::Cursor::new(edited)).unwrap();
+            assert_eq!(before.len(), after.len());
+            for index in 0..before.len() {
+                let mut part = before.by_index(index).unwrap();
+                let name = part.name().unwrap().into_owned();
+                let mut old = Vec::new();
+                part.read_to_end(&mut old).unwrap();
+                let mut new = Vec::new();
+                after.by_name(&name).unwrap().read_to_end(&mut new).unwrap();
+                if name == "word/document.xml" {
+                    assert_ne!(old, new, "Expected a meaningful actual-model edit");
+                } else {
+                    assert_eq!(
+                        old, new,
+                        "Unchanged package part must retain exact bytes: {name}"
+                    );
+                }
+            }
+        }
         for item in report["documents"].as_array().unwrap() {
             let bytes = ws
                 .document_content(item["id"].as_str().unwrap())

@@ -14,4 +14,7 @@ const optional=text({vision_status:'complete',issues:[],suggestions:['Add an exp
 assert.match(optional,/Optional suggestions/);assert.match(optional,/only if known/);assert.match(optional,/not a pass/);
 
 const adjudicated=text({vision_status:'complete',issues:[],content_check:{status:'completed',examined:1,total:1,items:[{original:{description:'An observation affirming consistency.'},verdict:'not_issue',reason:'No contradiction was established.'}]}});
-assert.match(adjudicated,/Content check: 1 of 1/);assert.match(adjudicated,/affirming consistency/);assert.match(adjudicated,/No defect found/);assert.doesNotMatch(adjudicated,/not_issue/);assert.match(adjudicated,/advisory/);
+assert.match(adjudicated,/Content check: 1 of 1/);assert.match(adjudicated,/affirming consistency/);assert.match(adjudicated,/Removed after review/);assert.doesNotMatch(adjudicated,/not_issue/);assert.match(adjudicated,/advisory/);
+
+const unsafe=text({vision_status:'complete',issues:[],content_check:{status:'completed',examined:1,total:1,items:[{kind:'optional_advice',original:{description:'Replace past facts to match the job.'},verdict:'unsupported_change',reason:'Would invent history.'}]}});
+assert.match(unsafe,/Unsupported factual change rejected/);assert.match(unsafe,/Would invent history/);

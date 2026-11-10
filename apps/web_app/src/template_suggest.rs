@@ -106,16 +106,17 @@ fn suggest(model: &mut dyn Inference, input: Inputs) -> Result<Value, String> {
     {
         return Err("Select a unique single-line passage from the template".into());
     }
-    // A passage deliberately selected by the user is source material for the
-    // rewrite, even if it has not been added to the reviewed fact inventory.
+    // A selected original passage is source material for the
+    // rewrite, whether selected directly or proposed by the local planner. It may
+    // not have been added to the reviewed fact inventory.
     // Preserve its provenance: selecting text does not independently verify it.
     let selected_source = format!(
-        "User-selected template passage (not independently verified): {}",
+        "Selected original template passage (not independently verified): {}",
         input.before
     );
     let mut sources = vec![selected_source.clone()];
     sources.extend(input.facts);
-    let request=crate::answer_task::Inputs{numeric_only:false,max_length_utf16:None,min_length_utf16:None,session_id:String::new(),selector:String::new(),digest:String::new(),question:"Rewrite the user-selected CV or cover letter passage for the job. Preserve the passage's meaning and supported facts; add other candidate facts only if the writing preferences request it. Return only the replacement passage.".into(),listing:input.listing,available_facts:sources.len(),facts:sources,instructions:input.instructions};
+    let request=crate::answer_task::Inputs{numeric_only:false,max_length_utf16:None,min_length_utf16:None,session_id:String::new(),selector:String::new(),digest:String::new(),question:"Rewrite the selected original CV or cover letter passage for the job. Preserve the passage's meaning and supported facts; add other candidate facts only if the writing preferences request it. Return only the replacement passage.".into(),listing:input.listing,available_facts:sources.len(),facts:sources,instructions:input.instructions};
     let mut suggestion =
         crate::answer_task::generate_template_with_selection(model, request.clone())?;
     if suggestion["text"]
@@ -441,7 +442,7 @@ mod tests {
         assert_eq!(result["text"], "Applied research");
         assert_eq!(
             result["sources"][0],
-            "User-selected template passage (not independently verified): Fictional research"
+            "Selected original template passage (not independently verified): Fictional research"
         );
         assert_eq!(model.calls, 4);
         assert_eq!(result["evidence_check"]["status"], "invalid");
@@ -473,7 +474,7 @@ mod tests {
 
     #[test]
     fn template_support_requires_review_when_unverified_source_is_cited() {
-        let source = "User-selected template passage (not independently verified): Wrote code";
+        let source = "Selected original template passage (not independently verified): Wrote code";
         let mut mixed = json!({"sources":[source,"Reviewed Python experience"],"evidence_check":{"status":"completed","claims":[
             {"excerpt":"Wrote code","status":"supported","explanation":"Matches source"},
             {"excerpt":"Led a team","status":"unsupported","explanation":"Missing"},

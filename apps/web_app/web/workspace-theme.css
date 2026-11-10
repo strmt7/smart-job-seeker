@@ -279,3 +279,10 @@ button.secondary-button { background: var(--surface); color: var(--accent); bord
 .visual-initial-review>summary { cursor: pointer; color: var(--accent); font-weight: 600; }
 
 .draft-source-text,.draft-paragraph-text { white-space: pre-line; overflow-wrap: anywhere; }
+
+.template-batch-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+
+.template-batch-actions>button{max-width:100%;white-space:normal;overflow-wrap:anywhere;margin:0}
+.template-batch-item{min-width:0;margin:12px 0;padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--surface);overflow-wrap:anywhere}
+.template-review-details{min-width:0;margin:12px 0}
+.template-review-details>summary{font-weight:600;font-size:12px;cursor:pointer;overflow-wrap:anywhere}

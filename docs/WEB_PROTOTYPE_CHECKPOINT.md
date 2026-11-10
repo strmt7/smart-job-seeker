@@ -1,5 +1,14 @@
 # Browser-interface prototype checkpoint
 
+Latest template checkpoint, 2026-11-10: **Suggest template changes** selects
+original passages locally and reuses the existing rewrite, evidence-review and
+DOCX/PDF export flow. CV and complete letter fixtures passed actual interface,
+model, conversion and page-review checks at three widths. Compact source/check
+disclosures are shared across single and batch suggestions. [Evidence](TEMPLATE_TAILORING.md)
+and the [current completion review](RELEASE_COMPLETION_REVIEW.md) retain remaining
+real-document, form, installation and release gates. Findings are not manually
+closed; see the [current provider-state review](FINDING_STATE_REVIEW.md).
+
 Latest document checkpoint, 2026-11-10: the actual client/handler/local-model
 workflow now drafts a fictional CV and cover letter, exports each to PDF,
 compares text and archives page images with local visual findings. Checked
