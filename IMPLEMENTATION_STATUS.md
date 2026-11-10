@@ -1,3 +1,7 @@
+## Creation-aware browser-test ancestry - 2026-11-10
+
+- The runner-matched Chrome 156 full local sequence passed 136 checks and failed one forced-parent cleanup observation. It had incorrectly adopted two older Python processes through a reused parent PID; those processes were left untouched. Initial discovery now verifies creation order at every parent edge, while final checks remain bound to PID and creation time. Missing relevant timestamps remain errors. The hosted `2002ce51` follow-up passed the four earlier HTTP/WebSocket failures, but exposed an empty-marker race in the cleanup fixture; readiness publication is now atomic. Four adversarial observer regressions, all 28 development-tool checks, three marker checks and the final affected native browser case pass. [Evidence and limits](docs/BROWSER_PROCESS_ANCESTRY.md) distinguish these fixture corrections from production ownership and an all-green full-suite result.
+
 ## Hosted native dependency lifetime correction - 2026-11-10
 
 - The tested 17-commit batch through `275aadc4` was pushed to main without rewriting history. Its coverage upload, CodeQL, agent-tool, PDF and supply-chain checks passed; build-and-test exposed a native SDK lifetime problem after a partial Rust cache restore. The cache action recursively removed SDK files placed under Cargo output, despite successful provisioning. The same run also recorded four browser failures (133 passes); those remain under investigation and are not attributed to the SDK issue.

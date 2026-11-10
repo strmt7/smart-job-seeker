@@ -9,6 +9,10 @@
 #[path = "support/loopback.rs"]
 pub mod loopback;
 
+#[cfg(windows)]
+#[path = "support/readiness.rs"]
+mod readiness;
+
 use std::path::PathBuf;
 
 use waypoint_applications::driver::BrowserDriver;
@@ -1495,12 +1499,16 @@ fn accessible_current_step_indicates_a_multistep_form() {
 #[cfg(windows)]
 #[ignore = "helper process for the forced parent termination test"]
 fn forced_parent_browser_helper() {
+    use std::io::Write;
     let Some(path) = std::env::var_os("WAYPOINT_PARENT_TEST_READY") else {
         return;
     };
     let browser =
         waypoint_browser::cdp::BrowserProcess::launch(std::time::Duration::from_secs(20)).unwrap();
-    std::fs::write(path, browser.user_data_dir.to_string_lossy().as_bytes()).unwrap();
+    readiness::publish(std::path::Path::new(&path), |file| {
+        file.write_all(browser.user_data_dir.to_string_lossy().as_bytes())
+    })
+    .unwrap();
     loop {
         std::thread::park();
     }
@@ -1588,8 +1596,10 @@ fn forced_parent_termination_closes_owned_browser_tree() {
         .unwrap()
         .to_string_lossy()
         .starts_with(&format!("waypoint-profile-{helper_pid}-")));
+    // Windows retains a child's original parent PID after parent exit. A later
+    // browser can reuse that PID; older processes are never its descendants.
     let observed = rows(hidden_command("powershell.exe")
-        .args(["-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop'; $all=@(Get-CimInstance Win32_Process); if(-not @($all | Where-Object { $_.ProcessId -eq $PID }).Count){throw 'observer self identity absent'}; $ids=[System.Collections.Generic.HashSet[int]]::new(); foreach($p in $all){if($p.Name -in @('chrome.exe','msedge.exe') -and $p.CommandLine -and $p.CommandLine.Contains($env:WAYPOINT_TEST_PROFILE)){[void]$ids.Add([int]$p.ProcessId)}}; do{$before=$ids.Count; foreach($p in $all){if($ids.Contains([int]$p.ParentProcessId)){[void]$ids.Add([int]$p.ProcessId)}}}while($ids.Count -gt $before); $rows=@($all | Where-Object {$ids.Contains([int]$_.ProcessId)} | ForEach-Object { @{pid=[int]$_.ProcessId;created=$_.CreationDate.ToUniversalTime().Ticks.ToString();name=[string]$_.Name} }); ConvertTo-Json -InputObject $rows -Compress"])
+        .args(["-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop'; $all=@(Get-CimInstance Win32_Process); if(-not @($all | Where-Object { $_.ProcessId -eq $PID }).Count){throw 'observer self identity absent'}; $created=@{}; foreach($p in $all){if($null -ne $p.CreationDate){$created[[int]$p.ProcessId]=$p.CreationDate.ToUniversalTime().Ticks}}; $ids=[System.Collections.Generic.HashSet[int]]::new(); foreach($p in $all){if($p.Name -in @('chrome.exe','msedge.exe') -and $p.CommandLine -and $p.CommandLine.Contains($env:WAYPOINT_TEST_PROFILE)){if(-not $created.ContainsKey([int]$p.ProcessId)){throw 'browser root creation time unavailable'}; [void]$ids.Add([int]$p.ProcessId)}}; do{$before=$ids.Count; foreach($p in $all){if($ids.Contains([int]$p.ParentProcessId)){if(-not $created.ContainsKey([int]$p.ProcessId)){throw 'descendant creation time unavailable'}; if($created[[int]$p.ProcessId] -ge $created[[int]$p.ParentProcessId]){[void]$ids.Add([int]$p.ProcessId)}}}}while($ids.Count -gt $before); $rows=@($all | Where-Object {$ids.Contains([int]$_.ProcessId)} | ForEach-Object { @{pid=[int]$_.ProcessId;created=$_.CreationDate.ToUniversalTime().Ticks.ToString();name=[string]$_.Name} }); ConvertTo-Json -InputObject $rows -Compress"])
         .env("WAYPOINT_TEST_PROFILE", &profile).stdin(Stdio::null()).stderr(Stdio::piped()).output().unwrap());
     assert!(
         !observed.is_empty(),
