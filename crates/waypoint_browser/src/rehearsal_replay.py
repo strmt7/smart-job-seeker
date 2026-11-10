@@ -301,6 +301,7 @@ class Broker:
             raise ReplayError('invalid_discovery_mode')
         self.archive, self.send, self.emit = archive, send, emit
         self.discovery = discovery
+        self.discovery_session, self.discovery_frames = None, set()
         self.proposals, self.proposal_bytes, self.omitted_proposals, self.ineligible_requests = {}, 0, 0, 0
         self.next_id, self.pending, self.attaching, self.sessions, self.targets = INTERNAL_ID, {}, {}, {}, {}
         self.session_targets, self.session_parents = {}, {}
@@ -336,6 +337,11 @@ class Broker:
             return False
         if self.discovery:
             self.discovery_command(message)
+            if message['method'] == 'Page.navigate':
+                session = message.get('sessionId')
+                if self.discovery_session is not None or self.sessions.get(session) != 'page':
+                    raise ReplayError('discovery_navigation_scope_refused')
+                self.discovery_session = session
         if message['method'] == 'SmartJobseeker.publicFormOutline':
             if not self.discovery:
                 raise ReplayError('not_resource_discovery')
@@ -349,7 +355,9 @@ class Broker:
             if not self.discovery:
                 raise ReplayError('not_resource_discovery')
             self.emit({'id': message['id'], 'result': {**self.report(), 'mode':'resource_discovery',
-                'urls':sorted(self.proposals), 'omitted_requests':self.omitted_proposals,
+                'urls':sorted(self.proposals),
+                'child_documents':sorted(url for url, child in self.proposals.items() if child),
+                'omitted_requests':self.omitted_proposals,
                 'ineligible_requests':self.ineligible_requests, 'pending_commands':len(self.pending),
                 'form_outline': self.outline}})
             return False
@@ -444,7 +452,7 @@ class Broker:
             return
         raise ReplayError('discovery_command_refused')
 
-    def propose(self, request, reason):
+    def propose(self, request, reason, child_document):
         if reason!='response_not_recorded' or request.get('method')!='GET':
             self.ineligible_requests += 1
             return
@@ -456,11 +464,12 @@ class Broker:
             return
         url=request_url(request['url'])
         if url in self.proposals:
+            self.proposals[url] |= child_document
             return
         if len(url)>4096 or len(self.proposals)>=128 or self.proposal_bytes+len(url.encode('utf-8'))>128*1024:
             self.omitted_proposals += 1
             return
-        self.proposals[url]=True
+        self.proposals[url]=child_document
         self.proposal_bytes+=len(url.encode('utf-8'))
 
     def bind(self, session, kind, original, paused, target, parent=None):
@@ -587,6 +596,13 @@ class Broker:
         if self.discovery and isinstance(method, str) and method.startswith('Accessibility.'):
             return False  # Raw accessibility events may contain control values.
         params = message.get('params', {})
+        if self.discovery and scoped is not None and scoped == self.discovery_session:
+            frame = params.get('frameId')
+            if isinstance(frame, str) and 0 < len(frame) <= 512:
+                if method == 'Page.frameAttached' and len(self.discovery_frames) < 256:
+                    self.discovery_frames.add(frame)
+                elif method == 'Page.frameDetached':
+                    self.discovery_frames.discard(frame)
         if method == 'Target.attachedToTarget' and params.get('waitingForDebugger') is True:
             kind = params.get('targetInfo', {}).get('type')
             if kind not in ('page', 'iframe', 'worker', 'service_worker', 'shared_worker'):
@@ -605,7 +621,13 @@ class Broker:
             result, reason = self.archive.response(request)
             if result is None:
                 if self.discovery:
-                    self.propose(request, reason)
+                    frame = params.get('frameId')
+                    child_document = self.discovery_session is not None and params.get('resourceType') == 'Document' and (
+                        session == self.discovery_session
+                        and isinstance(frame, str) and frame in self.discovery_frames
+                        or self.sessions[session] == 'iframe'
+                        and self.session_parents.get(session) == self.discovery_session)
+                    self.propose(request, reason, child_document)
                 self.call('Fetch.failRequest', {'requestId': paused_id, 'errorReason': 'BlockedByClient'}, session, ('reply', session, 'blocked', reason, False))
             else:
                 self.call('Fetch.fulfillRequest', {'requestId': paused_id, **result}, session, ('reply', session, 'served', request.get('method') not in ('GET', 'HEAD'), False))

@@ -6,7 +6,7 @@ requested scope. [Finding-state policy and current inventory](FINDING_STATE_REVI
 prohibit manual closure across all detection tools; unresolved observations stay
 visible and publication remains the user's decision.
 
-Status: active development, updated 2026-11-10. This plan translates the requested
+Status: active development, updated 2026-11-11. This plan translates the requested
 product into implementation and evidence gates. It supplements, rather than
 replaces, the repository's handoff and `AGENTS.md` invariants. There is no
 defensible completion percentage or delivery date yet: the unmeasured work is
@@ -16,9 +16,9 @@ map](CAPABILITY_COVERAGE.md) adds the current comparison and connected workflow
 acceptance gates. Do not create a release as part of this plan.
 
 [Recorded previews](RECORDED_PAGE_PREVIEW.md) now connect saved source copies
-to frame selection, evidence and image review in application history. Expand
-permitted origin collection so saved copies can retain eligible cross-origin
-frame resources. Connect current verified DOM and capture identity to the
+to frame selection, evidence and image review in application history.
+[Source copies](SOURCE_COPY_WORKFLOW.md) can retain observed frames from
+eligible public ATS origins. Connect current verified DOM and capture identity to the
 contained candidate-entry workflow, using the measured
 [local vision qualification](g1/RECORDED_FRAME_VISION_2026-11-10.md). Continue
 the ordered isolation and quality gates below.

@@ -26,6 +26,95 @@ impl Drop for RecordedHttp {
 }
 
 #[test]
+#[ignore = "explicit contained headless engine and fictional application-frame responses"]
+fn discovery_archives_observed_public_ats_frame() {
+    let (mut config, folder, python) = qualification_config();
+    let entry = "https://fixture.invalid/listing";
+    let frame = "https://jobs.lever.co/fictional-company/fictional-role/apply";
+    let unrelated = "https://jobs.ashbyhq.com/fictional-company/pixel";
+    let document = format!(
+        "<!doctype html><link rel=icon href=data:,><h1>Fictional listing</h1><iframe title=Application src={frame}></iframe><img src={unrelated}>"
+    );
+    let responses = [
+        ("https://fixture.invalid/robots.txt", "text/plain", "User-agent: *\nAllow: /"),
+        ("https://jobs.lever.co/robots.txt", "text/plain", "User-agent: *\nAllow: /"),
+        (entry, "text/html", document.as_str()),
+        (frame, "text/html", "<!doctype html><link rel=icon href=data:,><label>Field experience<input required></label>"),
+    ]
+    .into_iter()
+    .map(|(url, mime, body)| (
+        url.into(),
+        format!("HTTP/1.1 200 Fixture\r\nContent-Type: {mime}\r\nContent-Length: {}\r\n\r\n{body}", body.len()).into_bytes(),
+    ))
+    .collect();
+    let calls = Arc::new(Mutex::new(vec![]));
+    let dropped = Arc::new(AtomicBool::new(false));
+    let mut capture = CaptureSession::with_transport(
+        &folder.join("embedded-capture"),
+        entry,
+        vec![CaptureOrigin {
+            origin: "https://fixture.invalid".into(),
+            source: "user_supplied_url".into(),
+        }],
+        PermissionRegistry::from_json(waypoint_policy::INITIAL_REGISTRY_JSON).unwrap(),
+        CaptureBudget::default(),
+        Arc::new(AtomicBool::new(false)),
+        Box::new(RecordedHttp {
+            responses,
+            requests: calls.clone(),
+            dropped: dropped.clone(),
+        }),
+    )
+    .unwrap();
+    let discovery = capture
+        .discover_resources(&python, config.clone(), 4, 1500)
+        .unwrap();
+    let archive = capture.freeze().unwrap();
+    assert!(dropped.load(Ordering::Acquire));
+    assert_eq!(discovery.rounds[0].newly_recorded, 1);
+    assert_eq!(archive.report.embedded_origins.len(), 1);
+    let origin = &archive.report.embedded_origins[0];
+    assert_eq!(origin.source, "lever");
+    assert_eq!(
+        origin.observed_url_sha256,
+        waypoint_domain::sha256_hex(frame.as_bytes())
+    );
+    assert_eq!(
+        *calls.lock().unwrap(),
+        [
+            "https://fixture.invalid/robots.txt",
+            entry,
+            "https://jobs.lever.co/robots.txt",
+            frame
+        ]
+    );
+    config.schema = 2;
+    config.content_root = archive.snapshot.root;
+    config.content_files = archive.snapshot.files;
+    config.entry = archive.snapshot.entry;
+    config.replay_manifest = Some(archive.snapshot.manifest);
+    let (mut browser, _) = CdpDriver::launch_rehearsal(&python, config).unwrap();
+    let observed = (|| {
+        browser.open(entry)?;
+        let frames = browser.captured_frames()?;
+        if let [frame] = frames.frames.as_slice() {
+            let child = browser.enter_captured_frame(frame)?;
+            return Ok(child
+                .schema
+                .fields
+                .iter()
+                .any(|f| f.label == "Field experience"));
+        }
+        Ok::<_, waypoint_applications::driver::DriverError>(false)
+    })();
+    browser.execute(&BrowserCommand::Close).unwrap();
+    assert!(
+        observed.unwrap(),
+        "Fictional application frame was unavailable"
+    );
+}
+
+#[test]
 #[ignore = "explicit private engine, synthetic HTTP resources and owned memory containment"]
 fn coordinator_archive_drives_contained_form() {
     run_coordinator(false, false);
@@ -40,7 +129,7 @@ fn discovery_archives_transitive_resources_before_candidate_entry() {
 fn private_resources_are_not_fetched_before_offline_candidate_entry() {
     run_coordinator(true, true);
 }
-fn run_coordinator(discovery: bool, privacy: bool) {
+fn qualification_config() -> (RehearsalConfig, PathBuf, PathBuf) {
     let target =
         std::fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target")).unwrap();
     let path = std::fs::canonicalize(
@@ -54,8 +143,14 @@ fn run_coordinator(discovery: bool, privacy: bool) {
         waypoint_domain::sha256_hex(&bytes),
         std::env::var("WAYPOINT_REHEARSAL_CONFIG_SHA256").unwrap()
     );
-    let mut config: RehearsalConfig = serde_json::from_slice(&bytes).unwrap();
-    let folder = path.parent().unwrap();
+    (
+        serde_json::from_slice(&bytes).unwrap(),
+        path.parent().unwrap().to_owned(),
+        PathBuf::from(std::env::var_os("WAYPOINT_REHEARSAL_PYTHON").unwrap()),
+    )
+}
+fn run_coordinator(discovery: bool, privacy: bool) {
+    let (mut config, folder, python) = qualification_config();
     let html="<!doctype html><meta charset=utf-8><title>Fictional coordinated form</title><link rel=stylesheet href=/style.css><h1>Fictional coordinated form</h1><fieldset><legend>Your details</legend><label>Full name<input id=name required value=source-default-must-not-be-recorded></label></fieldset><button type=button id=next>Continue</button><section id=questions></section><script src=/app.js></script>";
     let script = if discovery {
         "fetch('/questions').then(r=>r.json()).then(v=>{const label=document.createElement('label');label.textContent=v.label;const input=document.createElement('input');input.id='email';input.type='email';label.append(input);const section=document.getElementById('questions');section.append(label);section.hidden=true;document.getElementById('next').onclick=()=>section.hidden=false;});"
@@ -143,7 +238,6 @@ fn run_coordinator(discovery: bool, privacy: bool) {
         capture.capture_entry(),
         CaptureOutcome::Recorded { status: 200, .. }
     ));
-    let python = PathBuf::from(std::env::var_os("WAYPOINT_REHEARSAL_PYTHON").unwrap());
     if discovery {
         let summary = capture
             .discover_resources(&python, config.clone(), 4, 1500)

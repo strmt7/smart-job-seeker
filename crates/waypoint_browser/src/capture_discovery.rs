@@ -113,6 +113,8 @@ pub(crate) struct Probe {
     schema: u8,
     mode: String,
     pub urls: Vec<String>,
+    #[serde(default)]
+    pub child_documents: std::collections::BTreeSet<String>,
     pub omitted_requests: u64,
     pub ineligible_requests: u64,
     pub pending_commands: u64,
@@ -137,6 +139,11 @@ impl Probe {
             && self.urls.len() <= 128
             && self.urls.iter().all(|u| u.len() <= 4096)
             && self.urls.iter().map(String::len).sum::<usize>() <= 128 * 1024
+            && self.child_documents.len() <= self.urls.len()
+            && self
+                .child_documents
+                .iter()
+                .all(|url| self.urls.contains(url))
             && self.pending_commands <= 128
             && self.unsupported_targets.len() <= 16
             && self

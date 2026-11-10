@@ -322,8 +322,9 @@ class DiscoveryTests(unittest.TestCase):
         self.broker=replay.Broker(self.fixture.archive(),self.sent.append,self.emitted.append,discovery=True)
         self.broker.sessions['page']='page'
     def tearDown(self):self.fixture.close()
-    def frame(self,**request):
-        self.broker.browser({'method':'Fetch.requestPaused','sessionId':'page','params':{'requestId':'r','request':request}})
+    def frame(self,*,frame_id='root',resource_type='Other',**request):
+        self.broker.browser({'method':'Fetch.requestPaused','sessionId':'page','params':{
+            'requestId':'r','request':request,'frameId':frame_id,'resourceType':resource_type}})
         command=self.sent[-1]
         self.broker.browser({'id':command['id'],'result':{}})
         return command
@@ -421,9 +422,33 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(self.sent,[])
     def test_navigation_is_bound_to_the_recorded_entry_and_empty_domain_enables(self):
         for method,params in [('Page.enable',{}),('Network.enable',{}),('Browser.getVersion',{}),
-                              ('Target.createTarget',{'url':'about:blank'}),('Page.navigate',{'url':self.fixture.archive().entry_url})]:
+                              ('Target.createTarget',{'url':'about:blank'})]:
             self.assertTrue(self.broker.host({'id':1,'method':method,'params':params}))
+        navigation={'id':2,'method':'Page.navigate','params':{'url':self.fixture.archive().entry_url}}
+        with self.assertRaisesRegex(replay.ReplayError,'discovery_navigation_scope_refused'):
+            self.broker.host(navigation)
+        self.assertTrue(self.broker.host({**navigation,'sessionId':'page'}))
+        with self.assertRaisesRegex(replay.ReplayError,'discovery_navigation_scope_refused'):
+            self.broker.host({**navigation,'sessionId':'page'})
         with self.assertRaises(replay.ReplayError):self.broker.host({'id':1,'method':'Page.enable','params':{'unknown':True}})
+    def test_child_document_proposals_require_observed_frame_and_anonymous_get(self):
+        self.assertTrue(self.broker.host({'id':1,'method':'Page.navigate','sessionId':'page',
+                                         'params':{'url':self.fixture.archive().entry_url}}))
+        self.broker.browser({'method':'Page.frameAttached','sessionId':'page',
+                             'params':{'frameId':'child','parentFrameId':'root'}})
+        origin='https://different.fixture.invalid'
+        self.frame(url=origin+'/frame',method='GET')
+        self.frame(url=origin+'/frame',method='GET',frame_id='child',resource_type='Document')
+        self.frame(url=origin+'/script',method='GET',frame_id='child',resource_type='Script')
+        self.frame(url=origin+'/top',method='GET',resource_type='Document')
+        self.frame(url=origin+'/private',method='GET',frame_id='child',resource_type='Document',
+                   headers={'Authorization':'fictional'})
+        self.broker.browser({'method':'Page.frameDetached','sessionId':'page','params':{'frameId':'child'}})
+        self.frame(url=origin+'/stale',method='GET',frame_id='child',resource_type='Document')
+        result=self.report()
+        self.assertEqual(result['child_documents'],[origin+'/frame'])
+        self.assertEqual(result['ineligible_requests'],1)
+        self.assertEqual(result['blocked'],6)
     def test_frontier_is_bounded_and_overflow_remains_visible(self):
         for index in range(132):self.frame(url=f'https://fixture.invalid/{index}',method='GET')
         report=self.report();self.assertEqual(len(report['urls']),128);self.assertEqual(report['omitted_requests'],4)

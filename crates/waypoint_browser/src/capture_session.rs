@@ -25,6 +25,9 @@ mod qualification;
 
 const ROBOTS_BYTES: usize = 512 * 1024;
 const HEADER_ALLOWANCE: usize = 128 * 1024;
+const MAX_ORIGINS: usize = 16;
+#[cfg(any(windows, test))]
+const MAX_EMBEDDED_ORIGINS: usize = 2;
 
 #[derive(Clone, Copy)]
 pub struct CaptureBudget {
@@ -80,6 +83,7 @@ pub enum CaptureGap {
     Network,
     ArchiveRejected,
     EntryRequired,
+    EmbeddedDocumentUnavailable,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
@@ -103,10 +107,18 @@ pub struct CaptureReport {
     pub elapsed_ms: u128,
     pub omitted_proposals: usize,
     pub robots: Vec<RobotsRecord>,
+    pub embedded_origins: Vec<EmbeddedOrigin>,
     pub discovery: Option<crate::capture_discovery::DiscoverySummary>,
     pub coverage: &'static str,
     pub server_validation: &'static str,
     pub url_privacy: &'static str,
+}
+#[derive(Clone, Serialize)]
+pub struct EmbeddedOrigin {
+    origin: String,
+    source: String,
+    observed_url_sha256: String,
+    discovery_round: u8,
 }
 #[derive(Clone, Serialize)]
 pub struct RobotsRecord {
@@ -150,6 +162,7 @@ pub struct CaptureSession {
     records: Vec<CaptureRecord>,
     omitted: usize,
     robots_records: Vec<RobotsRecord>,
+    embedded_origins: Vec<EmbeddedOrigin>,
     sidecars: BTreeMap<String, String>,
     requests: usize,
     received: usize,
@@ -227,7 +240,7 @@ impl CaptureSession {
         {
             summary.stopped = DiscoveryStop::ReviewRequired;
         } else {
-            let mut attempted = BTreeSet::new();
+            let mut attempted = BTreeMap::new();
             let mut review_seen = false;
             for round in 0..rounds {
                 summary.form_outline = None;
@@ -296,12 +309,42 @@ impl CaptureSession {
                     unsupported_targets: unsupported,
                     unreplayed_transports: probe.unreplayed_transports,
                 };
-                for url in &probe.urls {
-                    if !attempted.insert(url.clone()) {
-                        continue;
+                let requests = probe.child_documents.iter().chain(
+                    probe
+                        .urls
+                        .iter()
+                        .filter(|url| !probe.child_documents.contains(*url)),
+                );
+                for url in requests {
+                    let embedded = if probe.child_documents.contains(url) {
+                        self.embedded_origin(url, round + 1)
+                    } else {
+                        None
+                    };
+                    if let Some(previous) = attempted.get(url) {
+                        // A missing binding performed no fetch. Reconsider once
+                        // if fresh frame evidence has made that origin eligible.
+                        if *previous
+                            != (CaptureOutcome::NeedsReview {
+                                reason: CaptureGap::OriginNotDeclared,
+                            })
+                            || embedded.is_none()
+                                && !resource_url(url).is_ok_and(|url| {
+                                    self.sources
+                                        .contains_key(&url.origin().ascii_serialization())
+                                })
+                        {
+                            continue;
+                        }
                     }
                     let before = self.recorded.len();
-                    if matches!(self.capture(url), CaptureOutcome::NeedsReview { .. }) {
+                    let outcome = if let Some(scope) = embedded {
+                        self.capture_embedded(url, scope)
+                    } else {
+                        self.capture(url)
+                    };
+                    attempted.insert(url.clone(), outcome);
+                    if matches!(outcome, CaptureOutcome::NeedsReview { .. }) {
                         result.review_outcomes += 1;
                     }
                     result.newly_recorded += self.recorded.len().saturating_sub(before);
@@ -331,6 +374,50 @@ impl CaptureSession {
         self.discovery = Some(summary.clone());
         Ok(summary)
     }
+    #[cfg(any(windows, test))]
+    fn embedded_origin(&self, raw: &str, discovery_round: u8) -> Option<EmbeddedOrigin> {
+        if self.sources.len() >= MAX_ORIGINS
+            || self.embedded_origins.len() >= MAX_EMBEDDED_ORIGINS
+            || self.check_time().is_err()
+            || self.records.len() >= self.budget.resources
+        {
+            return None;
+        }
+        let url = resource_url(raw).ok()?;
+        let origin = url.origin().ascii_serialization();
+        if self.sources.contains_key(&origin) {
+            return None;
+        }
+        // Only exact public ATS frontends with an existing Read policy. The
+        // generic manual-URL source is never assigned to a discovered origin.
+        let source = match url.host_str() {
+            Some("boards.greenhouse.io" | "job-boards.greenhouse.io") => "greenhouse",
+            Some("jobs.lever.co") => "lever",
+            Some("jobs.ashbyhq.com") => "ashby",
+            _ => return None,
+        };
+        self.registry
+            .check_public_route(source, Operation::Read)
+            .ok()?;
+        Some(EmbeddedOrigin {
+            origin,
+            source: source.into(),
+            observed_url_sha256: waypoint_domain::sha256_hex(raw.as_bytes()),
+            discovery_round,
+        })
+    }
+    #[cfg(any(windows, test))]
+    fn capture_embedded(&mut self, url: &str, scope: EmbeddedOrigin) -> CaptureOutcome {
+        self.sources
+            .insert(scope.origin.clone(), scope.source.clone());
+        let outcome = self.capture_scoped(url, Some(&scope.origin));
+        if matches!(outcome, CaptureOutcome::Recorded { .. }) {
+            self.embedded_origins.push(scope);
+        } else {
+            self.sources.remove(&scope.origin);
+        }
+        outcome
+    }
     pub fn start(
         root: &Path,
         entry: &str,
@@ -358,7 +445,7 @@ impl CaptureSession {
         cancelled: Arc<AtomicBool>,
         transport: Box<dyn Transport>,
     ) -> Result<Self, String> {
-        if !budget.valid() || origins.is_empty() || origins.len() > 16 {
+        if !budget.valid() || origins.is_empty() || origins.len() > MAX_ORIGINS {
             return Err("Invalid capture budget or origin scope".into());
         }
         let entry_url = resource_url(entry).map_err(|_| "Invalid public capture entry")?;
@@ -397,6 +484,7 @@ impl CaptureSession {
             records: vec![],
             omitted: 0,
             robots_records: vec![],
+            embedded_origins: vec![],
             sidecars: BTreeMap::new(),
             requests: 0,
             received: 0,
@@ -485,9 +573,11 @@ impl CaptureSession {
                         return Err(CaptureGap::RobotsUnavailable);
                     }
                     return match response.status {
-                        200..=299 if plain_text(&response) => String::from_utf8(response.body)
-                            .map(Robots::Rules)
-                            .map_err(|_| CaptureGap::RobotsUnavailable),
+                        200..=299 if response_has_type(&response, &["text/plain"]) => {
+                            String::from_utf8(response.body)
+                                .map(Robots::Rules)
+                                .map_err(|_| CaptureGap::RobotsUnavailable)
+                        }
                         // Stricter handling of authentication/rate limits, rather than
                         // interpreting those operational walls as an absent policy.
                         404 | 410 => Ok(Robots::Rules(String::new())),
@@ -520,7 +610,11 @@ impl CaptureSession {
             _ => Err(CaptureGap::RobotsUnavailable),
         }
     }
-    fn collect(&mut self, raw: &str) -> Result<CaptureOutcome, CaptureGap> {
+    fn collect(
+        &mut self,
+        raw: &str,
+        embedded_origin: Option<&str>,
+    ) -> Result<CaptureOutcome, CaptureGap> {
         self.check_time()?;
         if self.failed {
             return Err(CaptureGap::ArchiveRejected);
@@ -536,6 +630,9 @@ impl CaptureSession {
         let mut chain = Vec::new();
         let mut seen = BTreeSet::new();
         let (status, body_bytes) = loop {
+            if embedded_origin.is_some_and(|origin| next.origin().ascii_serialization() != origin) {
+                return Err(CaptureGap::EmbeddedDocumentUnavailable);
+            }
             if !seen.insert(next.to_string()) {
                 return Err(CaptureGap::RedirectLoop);
             }
@@ -551,6 +648,12 @@ impl CaptureSession {
             let target = if is_redirect(status) {
                 Some(redirect(&next, &response)?)
             } else {
+                if embedded_origin.is_some()
+                    && (!(200..=299).contains(&status)
+                        || !response_has_type(&response, &["text/html", "application/xhtml+xml"]))
+                {
+                    return Err(CaptureGap::EmbeddedDocumentUnavailable);
+                }
                 None
             };
             chain.push((next.to_string(), response));
@@ -587,6 +690,9 @@ impl CaptureSession {
         Ok(CaptureOutcome::Recorded { status, body_bytes })
     }
     pub fn capture(&mut self, url: &str) -> CaptureOutcome {
+        self.capture_scoped(url, None)
+    }
+    fn capture_scoped(&mut self, url: &str, embedded_origin: Option<&str>) -> CaptureOutcome {
         // Keep outcomes bounded even if a caller repeatedly proposes denied URLs.
         if self.records.len() >= self.budget.resources {
             self.omitted = self.omitted.saturating_add(1);
@@ -595,7 +701,7 @@ impl CaptureSession {
             };
         }
         let outcome = self
-            .collect(url)
+            .collect(url, embedded_origin)
             .unwrap_or_else(|reason| CaptureOutcome::NeedsReview { reason });
         if outcome
             == (CaptureOutcome::NeedsReview {
@@ -630,6 +736,7 @@ impl CaptureSession {
             elapsed_ms: self.started.elapsed().as_millis(),
             omitted_proposals: self.omitted,
             robots: self.robots_records.clone(),
+            embedded_origins: self.embedded_origins.clone(),
             discovery: self.discovery.clone(),
             coverage: "unassessed; missing resources and server-dependent steps require review",
             server_validation: "not_performed",
@@ -661,7 +768,7 @@ impl CaptureSession {
         Ok(FrozenCapture { snapshot, report })
     }
 }
-fn plain_text(response: &CapturedResponse) -> bool {
+fn response_has_type(response: &CapturedResponse, types: &[&str]) -> bool {
     let headers: Vec<_> = response
         .headers
         .iter()
@@ -671,11 +778,11 @@ fn plain_text(response: &CapturedResponse) -> bool {
         && std::str::from_utf8(&headers[0].value)
             .ok()
             .is_some_and(|s| {
-                s.split(';')
-                    .next()
-                    .unwrap_or("")
-                    .trim()
-                    .eq_ignore_ascii_case("text/plain")
+                s.split(';').next().is_some_and(|mime| {
+                    types
+                        .iter()
+                        .any(|kind| mime.trim().eq_ignore_ascii_case(kind))
+                })
             })
 }
 fn is_redirect(status: u16) -> bool {
@@ -1276,6 +1383,116 @@ mod tests {
             "unsupported_targets":{},"unreplayed_transports":0,"unmanaged_child_sessions":0}),
         )
         .unwrap()
+    }
+    #[test]
+    fn only_observed_html_frames_add_policy_bound_origins() {
+        const LEVER: &str = "https://jobs.lever.co/fictional/job/apply";
+        const ASHBY: &str = "https://jobs.ashbyhq.com/fictional/job/application";
+        const GREENHOUSE: &str = "https://boards.greenhouse.io/fictional/jobs/123";
+        const EXTRA: &str = "https://job-boards.greenhouse.io/fictional/jobs/123";
+        const PRIVATE: &str =
+            "https://jobs.lever.co/fictional/job/apply?email=test%40fixture.invalid";
+        const TRACKER: &str = "https://jobs.lever.co.fake.invalid/frame";
+        const FIRST_ASSET: &str = "https://fixture.invalid/initial.js";
+        const ASSET: &str = "https://jobs.lever.co/asset.css";
+        const NO_SCOPE: &str = "https://jobs.ashbyhq.com/asset.css";
+        let mut h = harness(
+            vec![
+                ("https://fixture.invalid/robots.txt", robots("")),
+                (ENTRY, html()),
+                (FIRST_ASSET, response(200, "void 0", "text/javascript")),
+                ("https://jobs.lever.co/robots.txt", robots("")),
+                (LEVER, html()),
+                (ASSET, response(200, "body{}", "text/css")),
+                ("https://jobs.ashbyhq.com/robots.txt", robots("")),
+                (ASHBY, response(200, "not html", "text/plain")),
+                ("https://boards.greenhouse.io/robots.txt", robots("")),
+                (GREENHOUSE, html()),
+            ],
+            "user_supplied_url",
+            CaptureBudget::default(),
+        );
+        let mut round = 0;
+        h.session
+            .discover_with_probe(4, |_, _| {
+                round += 1;
+                let mut report = match round {
+                    1 => probe(vec![LEVER, ASHBY, PRIVATE, TRACKER, NO_SCOPE, FIRST_ASSET]),
+                    2 => probe(vec![LEVER, ASSET, GREENHOUSE]),
+                    3 => probe(vec![EXTRA]),
+                    _ => probe(vec![]),
+                };
+                report.child_documents.extend(
+                    match round {
+                        1 => vec![ASHBY, PRIVATE, TRACKER],
+                        2 => vec![LEVER, GREENHOUSE],
+                        3 => vec![EXTRA],
+                        _ => vec![],
+                    }
+                    .into_iter()
+                    .map(str::to_owned),
+                );
+                Ok(report)
+            })
+            .unwrap();
+        let report = h.session.report();
+        assert_eq!(report.embedded_origins.len(), 2);
+        assert!(report
+            .embedded_origins
+            .iter()
+            .all(|scope| scope.discovery_round == 2));
+        assert!(report.records.iter().any(|r| r.outcome
+            == CaptureOutcome::NeedsReview {
+                reason: CaptureGap::EmbeddedDocumentUnavailable,
+            }));
+        assert_eq!(
+            *h.calls.lock().unwrap(),
+            [
+                "https://fixture.invalid/robots.txt",
+                ENTRY,
+                "https://jobs.ashbyhq.com/robots.txt",
+                ASHBY,
+                FIRST_ASSET,
+                "https://boards.greenhouse.io/robots.txt",
+                GREENHOUSE,
+                "https://jobs.lever.co/robots.txt",
+                LEVER,
+                ASSET,
+            ]
+        );
+    }
+    #[test]
+    fn embedded_origin_robots_and_document_redirects_remain_scoped() {
+        const FRAME: &str = "https://jobs.lever.co/fictional/job/apply";
+        for (rules, reason, count) in [
+            ("User-agent: *\nDisallow: /", CaptureGap::RobotsDenied, 3),
+            ("", CaptureGap::EmbeddedDocumentUnavailable, 4),
+        ] {
+            let mut h = harness(
+                vec![
+                    ("https://fixture.invalid/robots.txt", robots("")),
+                    (ENTRY, html()),
+                    ("https://jobs.lever.co/robots.txt", robots(rules)),
+                    (FRAME, moved("https://fixture.invalid/other")),
+                ],
+                "user_supplied_url",
+                CaptureBudget::default(),
+            );
+            h.session
+                .discover_with_probe(1, |_, _| {
+                    let mut report = probe(vec![FRAME]);
+                    report.child_documents.insert(FRAME.into());
+                    Ok(report)
+                })
+                .unwrap();
+            let report = h.session.report();
+            assert!(report.embedded_origins.is_empty());
+            assert_eq!(
+                report.records.last().unwrap().outcome,
+                CaptureOutcome::NeedsReview { reason }
+            );
+            assert_eq!(h.calls.lock().unwrap().len(), count);
+        }
     }
     #[test]
     fn discovery_collects_transitive_requests_then_verifies_without_new_requests() {

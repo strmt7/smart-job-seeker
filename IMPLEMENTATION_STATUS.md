@@ -1,3 +1,8 @@
+## Embedded application frames in saved page copies - 2026-11-11
+
+- Public page copies can record an observed cross-origin child document from an eligible Greenhouse, Lever or Ashby host. The collection requires Read permission, URL privacy checks, robots permission and a successful same-origin HTML response. It records bounded origin and observation evidence.
+- A native headless Windows fixture passed anonymous capture, transport disposal and offline field inspection. An unrelated request on another recognized ATS host stayed outside the transport. Synthetic regressions cover failed admission, source scope, robots, redirects and the origin limit. [Collection details and limitations](docs/SOURCE_COPY_WORKFLOW.md).
+
 ## Recorded previews in application history - 2026-11-11
 
 - Saved source copies can now produce a separate recorded preview from the job’s application records. The compiled Windows app and headless UI checked capture, history persistence, frame selection, digest-checked image display and two viewport widths. A completion refresh race was reproduced and corrected. [Evidence and coverage](docs/RECORDED_PAGE_PREVIEW.md) describe the current origin limits and the remaining candidate-entry work.

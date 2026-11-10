@@ -1,6 +1,6 @@
 # Background source-page copies
 
-Checkpoint: 2026-11-10. In a job's **Details and records**, **Save page copy**
+Checkpoint: 2026-11-11. In a job's **Details and records**, **Save page copy**
 now runs the public-resource coordinator in the background. The interface shows
 stages, supports stopping, recovers an active task after reload and exposes its
 saved outcome in application records. This is a source archive, not an
@@ -26,10 +26,29 @@ keys/email-like references are refused; decoding and nesting uncertainty remains
 reviewable. The parent checks known candidate identifiers in the bounded decoded
 entry. Unknown opaque identifiers and arbitrary private data remain unassessed.
 
-The collector uses the existing policy/robots/redirect gates, bounded anonymous
-GET transport and separate schema-3 render-only discovery. Only the initial
-origin is declared; another origin remains a review gap. Collection cannot use
+The collector starts with the listing origin. Its isolated render pass can
+observe an anonymous document request from an attached child frame. It can
+add up to two embedded origins per copy, limited to the exact public Greenhouse,
+Lever and Ashby hosts supported by the capture policy. Each needs source Read
+permission, URL privacy checks, its own robots check and a successful HTML
+response. Document redirects during admission stay on the same origin. A
+failed admission leaves that origin unavailable for resource collection.
+The report retains the origin, source, observation round and document URL
+digest. Unrecognized origins, top-level navigations and standalone resource
+requests cannot expand the scope.
+
+The native transport remains bounded to anonymous GETs. Collection cannot use
 the candidate-entry driver. No raw saved HTML is served on the app's origin.
+The existing [offline preview](RECORDED_PAGE_PREVIEW.md) can show eligible
+frames retained by the copy. A successful HTML response does not establish
+that an employer form is accessible, complete or ready for entry.
+
+The Windows headless qualification used fictional responses delivered through
+the native capture transport interface. It verified that a child-only field
+was visible after freezing and replaying the copy, and that an unrelated
+image on a different known ATS host never reached the transport. The run
+sampled at least 29.50 GiB of available host RAM. This evidence covers the
+fixture, with employer-site and frame coverage still unmeasured.
 
 Each operation creates an application-record folder containing the original job
 snapshot, existing material snapshot when available, an event journal and
