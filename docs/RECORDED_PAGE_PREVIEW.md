@@ -17,11 +17,56 @@ in a new attempt record. The viewer checks that digest when loading an image.
 
 This route reviews public archived content. It accepts a job and saved-record
 identity, and uses only recorded resources. It preserves the job’s application
-state. The current collector archives resources from its declared origin, so
-uncollected cross-origin frames may appear unavailable. The synthetic
-qualification supplies both origins and exercises their recorded frame path.
-The next implementation work is permitted origin collection and connecting
-fresh frame review to the contained candidate-entry workflow.
+state. The [collector](SOURCE_COPY_WORKFLOW.md) can also preserve eligible
+embedded origins. Frames outside the saved archive can appear unavailable.
+
+## Offline autofill rehearsal
+
+Choose **Rehearse autofill** beside a saved page copy. The task uses a built-in
+fictional profile and the same exact-label and standard autocomplete mapping
+used by the ordinary form review. It checks up to four eligible text controls
+in the saved page and available frames. Sensitive, ambiguous and unsupported
+controls remain unfilled. The job snapshot is saved with the rehearsal, while
+the prepared candidate draft stays in its existing location.
+
+For each field, the driver checks the current document, frame lease and form
+schema, respects existing values and browser constraints, and uses native input
+events. Exact visible DOM readback is required before and after the focused
+image. After the last input in that view, it checks the completed values again.
+A failed action stops further entry and the result retains earlier observations.
+
+The browser closes before optional visual review. When an eligible local
+vision model is already loaded, it receives the focused image, field label and
+verified text-presence cue. The expected characters stay in the comparison
+code. The model's identity is checked before and after inference. Application
+records distinguish a visual match, different or unreadable transcription,
+unavailable vision and failed DOM verification. Each image has a digest and
+can be opened with the shared viewer.
+
+This exercise covers the saved responses and supported controls. It makes no
+live application request and creates no approval. Real candidate data, choices,
+attachments, later steps and server validation remain outside this rehearsal.
+
+### Rehearsal qualification
+
+The compiled headless Windows UI opened a fictional saved frame, filled first
+name and email, and retained two independently verified field images with
+matching history and screenshot digests. An unsupported required question
+remained in the outline. A separate fixture cleared the first answer and made
+an uncaptured POST during the second input. Replay blocked that request, the
+first answer was flagged as changed, and entry stopped. Both jobs remained
+discovered.
+
+The field image fit the 318-pixel panel at a 1,360-pixel viewport and the
+381-pixel panel at a 480-pixel viewport. Both screenshots were inspected.
+The complete two-case invocation took 96.811 seconds and sampled at least
+24,548,900,864 bytes of available host RAM. Private evidence is in
+`target/recorded-fill-native-iwpb2uzk/`, with
+`qualification.private.json` SHA-256
+`c3f4654163e364abc0bc652cef00abb0b24087a96a31731fcabf1b02593ab3e8`.
+The run exercised the unavailable-vision state. The
+[prior local model measurements](g1/RECORDED_FRAME_VISION_2026-11-10.md)
+used different captures and do not qualify model accuracy on this route.
 
 ## Compiled Windows evidence, 2026-11-11
 

@@ -80,6 +80,7 @@ pub fn start_preview(
     job: &JobIdentityId,
     id: String,
     attempt: &str,
+    rehearse: bool,
 ) -> Result<(), String> {
     let directory = crate::attempt_record::attempt_directory(ws, job, attempt)?;
     start_task(
@@ -90,6 +91,7 @@ pub fn start_preview(
             directory,
             attempt_id: attempt.to_owned(),
             job_id: job.as_str().to_owned(),
+            rehearse,
         }),
     )
 }
@@ -135,11 +137,25 @@ fn start_task(
         source.validate(&url)?;
     }
     let preview = replay.is_some();
-    let mut record = crate::attempt_record::AttemptRecord::start(ws, job, &id, crate::now())?
-        .ok_or("Page copies require a saved workspace")?;
+    let include_materials = !replay.as_ref().is_some_and(|source| source.rehearse);
+    let mut record = crate::attempt_record::AttemptRecord::start_with_materials(
+        ws,
+        job,
+        &id,
+        crate::now(),
+        include_materials,
+    )?
+    .ok_or("Page copies require a saved workspace")?;
     let root = record.source_capture_directory();
     std::fs::create_dir(&root).map_err(|_| "Cannot create page-copy folder")?;
-    record.event(json!({"type":"source_capture_started","time":crate::now(),"task_id":id,"scope":if preview {"recorded_page_preview"}else{"anonymous_public_page_copy"}}))?;
+    let scope = match &replay {
+        Some(source) if source.rehearse => "recorded_autofill_rehearsal",
+        Some(_) => "recorded_page_preview",
+        None => "anonymous_public_page_copy",
+    };
+    record.event(
+        json!({"type":"source_capture_started","time":crate::now(),"task_id":id,"scope":scope}),
+    )?;
     let request = Request {
         task_id: id.clone(),
         url: url.clone(),
@@ -205,7 +221,14 @@ pub fn cancel(ws: &Workspace, id: &str) -> Result<Value, String> {
 }
 fn progress(root: &Path, id: &str) -> Value {
     use std::io::Read;
-    for phase in ["saved", "preview", "resources", "reading", "tools"] {
+    for phase in [
+        "saved",
+        "rehearsal",
+        "preview",
+        "resources",
+        "reading",
+        "tools",
+    ] {
         if let Ok(file) = std::fs::File::open(root.join(format!("phase-{phase}.json"))) {
             let mut bytes = Vec::new();
             if file.take(4097).read_to_end(&mut bytes).is_ok() && bytes.len() <= 4096 {
@@ -518,7 +541,14 @@ fn worker(request: Request) -> Result<Value, String> {
         .to_owned();
     let engine_files = inventory(&engine_root)?;
     if let Some(source) = &request.replay {
-        phase(&request, "preview")?;
+        phase(
+            &request,
+            if source.rehearse {
+                "rehearsal"
+            } else {
+                "preview"
+            },
+        )?;
         let screenshots = request
             .destination
             .parent()
@@ -531,7 +561,7 @@ fn worker(request: Request) -> Result<Value, String> {
             content_root: PathBuf::new(),
             content_files: Default::default(),
             entry: "index.html".into(),
-            seconds: 120,
+            seconds: if source.rehearse { 180 } else { 120 },
             replay_manifest: None,
         };
         let preview =
@@ -674,6 +704,10 @@ mod tests {
         preview["replay"] =
             json!({"directory":std::env::temp_dir(),"attempt_id":"fixture","job_id":"fictional"});
         let request: Request = serde_json::from_value(preview.clone()).unwrap();
+        assert_eq!(serde_json::to_value(request).unwrap(), preview);
+        preview["replay"]["rehearse"] = json!(true);
+        let request: Request = serde_json::from_value(preview.clone()).unwrap();
+        assert!(request.replay.as_ref().unwrap().rehearse);
         assert_eq!(serde_json::to_value(request).unwrap(), preview);
         for field in [
             "profile",

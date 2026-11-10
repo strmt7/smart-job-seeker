@@ -38,6 +38,25 @@ pub struct CapturedFrames {
     pub uninspected: usize,
     pub truncated: bool,
 }
+/// Focused pixels with independently verified, visible text in a recorded form.
+/// Only the recorded driver can construct this evidence.
+pub struct RecordedTextCapture {
+    image: String,
+    label: String,
+    value: String,
+}
+
+impl RecordedTextCapture {
+    pub fn image(&self) -> &str {
+        &self.image
+    }
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+    pub fn value(&self) -> &str {
+        &self.value
+    }
+}
 pub(super) struct CapturedScope {
     frame: CapturedFrame,
     session: String,
@@ -89,6 +108,81 @@ fn scope_key(frame: &CapturedFrame) -> Result<String, DriverError> {
     ))
 }
 impl CdpDriver {
+    /// Fill a reviewed text control and bind its screenshot to exact visible
+    /// readback on both sides of capture. A changed scope invalidates evidence.
+    pub fn rehearse_recorded_text(
+        &mut self,
+        form: &LiveForm,
+        selector: &str,
+        value: &str,
+    ) -> Result<RecordedTextCapture, DriverError> {
+        use waypoint_applications::form_mapping::FormFieldType;
+        self.require_recorded_frames()?;
+        let fields: Vec<_> = form
+            .schema
+            .fields
+            .iter()
+            .filter(|f| f.selector == selector)
+            .collect();
+        let [field] = fields.as_slice() else {
+            return Err(review());
+        };
+        if !form.walls.is_empty()
+            || field.sensitive
+            || !matches!(
+                field.field_type,
+                FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea
+            )
+            || value.trim().is_empty()
+            || value.len() > 1000
+        {
+            return Err(review());
+        }
+        let url = self.current_url()?;
+        let lease = self.captured_scope.as_ref().map(|scope| scope.key.clone());
+        let document = |driver: &mut Self| {
+            let tree = driver
+                .cdp
+                .call("Page.getFrameTree", json!({}))
+                .map_err(derr)?;
+            let frame = &tree["frameTree"]["frame"];
+            let identity = |key: &str| {
+                frame[key]
+                    .as_str()
+                    .filter(|id| !id.is_empty())
+                    .map(str::to_owned)
+                    .ok_or_else(review)
+            };
+            Ok::<_, DriverError>((identity("id")?, identity("loaderId")?))
+        };
+        let original_document = document(self)?;
+        let check_scope = |driver: &mut Self| {
+            if driver.inspect_current()? != *form
+                || driver.current_url()? != url
+                || document(driver)? != original_document
+                || driver.captured_scope.as_ref().map(|scope| &scope.key) != lease.as_ref()
+            {
+                return Err(review());
+            }
+            Ok(())
+        };
+        check_scope(self)?;
+        self.ensure_text_replaceable(selector, value)?;
+        BrowserDriver::check_text_candidate(self, selector, value)?;
+        self.execute(&BrowserCommand::Fill {
+            selector: selector.to_owned(),
+            value: PacketValue::Text(value.to_owned()),
+        })?;
+        self.verify_text_value(selector, value)?;
+        let image = self.screenshot_field_context(selector)?;
+        check_scope(self)?;
+        self.verify_text_value(selector, value)?;
+        Ok(RecordedTextCapture {
+            image,
+            label: field.label.clone(),
+            value: value.to_owned(),
+        })
+    }
     fn require_recorded_frames(&mut self) -> Result<(), DriverError> {
         #[cfg(windows)]
         {

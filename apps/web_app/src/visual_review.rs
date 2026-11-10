@@ -945,6 +945,18 @@ pub(crate) fn analyze_targeted_with_verified_text(
     analyze_targeted(addr, model, image, label, expected, context, true)
 }
 
+#[cfg(windows)]
+pub(crate) fn review_recorded_text(
+    model: &mut VisionIdentityGuard,
+    capture: &waypoint_browser::RecordedTextCapture,
+) -> Result<Value, String> {
+    let addr = "127.0.0.1:11434".parse().expect("literal address");
+    let label = capture.label();
+    let expected = [(label.to_owned(), capture.value().to_owned())];
+    let name = model.model.clone();
+    model.checked(|| analyze_targeted(addr, &name, capture.image(), label, &expected, None, true))
+}
+
 fn analyze_targeted(
     addr: std::net::SocketAddr,
     model: &str,

@@ -1917,6 +1917,15 @@ impl AttemptRecord {
         attempt_id: &str,
         timestamp: i64,
     ) -> Result<Option<Self>, String> {
+        Self::start_with_materials(ws, id, attempt_id, timestamp, true)
+    }
+    pub(crate) fn start_with_materials(
+        ws: &Workspace,
+        id: &JobIdentityId,
+        attempt_id: &str,
+        timestamp: i64,
+        include_materials: bool,
+    ) -> Result<Option<Self>, String> {
         if attempt_id.is_empty()
             || attempt_id.len() > 64
             || !attempt_id
@@ -2100,12 +2109,14 @@ impl AttemptRecord {
                 .map_err(|e| e.to_string())?;
             }
         }
-        if let Some(packet) = ws.packet(id).map_err(|e| e.to_string())? {
-            fs::write(
-                dir.join("materials").join("prepared-draft.txt"),
-                packet.body,
-            )
-            .map_err(|e| e.to_string())?;
+        if include_materials {
+            if let Some(packet) = ws.packet(id).map_err(|e| e.to_string())? {
+                fs::write(
+                    dir.join("materials").join("prepared-draft.txt"),
+                    packet.body,
+                )
+                .map_err(|e| e.to_string())?;
+            }
         }
         let mut record = Self { dir, sequence: 0 };
         record.status("preparation_in_progress", timestamp)?;

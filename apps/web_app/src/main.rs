@@ -3330,6 +3330,10 @@ fn serve(
                 .map_err(|e| e.to_string())?;
             let id = random_id()?;
             if path == "/api/job-source/preview-start" {
+                let rehearse = match body.get("rehearse") {
+                    None => false,
+                    Some(value) => value.as_bool().ok_or("Invalid rehearsal mode")?,
+                };
                 job_capture::start_preview(
                     ws,
                     &job,
@@ -3337,6 +3341,7 @@ fn serve(
                     body["attempt_id"]
                         .as_str()
                         .ok_or("Missing saved page identity")?,
+                    rehearse,
                 )?;
             } else {
                 job_capture::start(ws, &job, id.clone())?;

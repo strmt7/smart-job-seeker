@@ -21,7 +21,7 @@
 //!   them.
 
 mod captured_frame;
-pub use captured_frame::{CapturedFrame, CapturedFrames};
+pub use captured_frame::{CapturedFrame, CapturedFrames, RecordedTextCapture};
 pub mod capture_discovery;
 pub mod capture_privacy;
 pub mod capture_session;

@@ -15,6 +15,8 @@ pub(crate) struct Source {
     pub(crate) directory: PathBuf,
     pub(crate) attempt_id: String,
     pub(crate) job_id: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) rehearse: bool,
 }
 
 fn linked(metadata: &fs::Metadata) -> bool {
@@ -134,7 +136,8 @@ pub(crate) fn render(
     config.replay_manifest = Some("replay.json".into());
     let (mut driver, ready) =
         CdpDriver::launch_rehearsal(python, config).map_err(|error| error.to_string())?;
-    let result = (|| {
+    let mut rehearsal = source.rehearse.then(Rehearsal::default);
+    let result: Result<Value, String> = (|| {
         if ready.entry_url != entry
             || ready
                 .replay
@@ -150,9 +153,12 @@ pub(crate) fn render(
             screenshots,
             1,
             "Page",
-            parent,
+            parent.clone(),
             false,
         )?];
+        if let Some(rehearsal) = &mut rehearsal {
+            rehearsal.exercise(&mut driver, screenshots, 1, &parent);
+        }
         let mut uninspected = 0;
         let truncated;
         let mut notices = Vec::new();
@@ -168,9 +174,19 @@ pub(crate) fn render(
                                 screenshots,
                                 views.len() + 1,
                                 frame.label(),
-                                form,
+                                form.clone(),
                                 true,
                             );
+                            if captured.is_ok() {
+                                if let Some(rehearsal) = &mut rehearsal {
+                                    rehearsal.exercise(
+                                        &mut driver,
+                                        screenshots,
+                                        views.len() + 1,
+                                        &form,
+                                    );
+                                }
+                            }
                             driver
                                 .leave_captured_frame()
                                 .map_err(|error| error.to_string())?;
@@ -204,7 +220,131 @@ pub(crate) fn render(
     driver
         .execute(&BrowserCommand::Close)
         .map_err(|error| error.to_string())?;
-    result
+    let mut result = result?;
+    if let Some(rehearsal) = rehearsal {
+        result["rehearsal"] = rehearsal.review();
+    }
+    Ok(result)
+}
+
+#[cfg(windows)]
+const REHEARSAL_LIMIT: usize = 4;
+
+#[cfg(windows)]
+#[derive(Default)]
+struct Rehearsal {
+    fields: Vec<Value>,
+    captures: Vec<(usize, waypoint_browser::RecordedTextCapture)>,
+    halted: bool,
+}
+
+#[cfg(windows)]
+impl Rehearsal {
+    fn exercise(
+        &mut self,
+        driver: &mut waypoint_browser::CdpDriver,
+        directory: &Path,
+        view: usize,
+        form: &waypoint_applications::driver::LiveForm,
+    ) {
+        use waypoint_applications::driver::BrowserDriver;
+        use waypoint_applications::form_mapping::{FormFieldType, PacketValue};
+        if self.halted || self.fields.len() >= REHEARSAL_LIMIT || !form.walls.is_empty() {
+            return;
+        }
+        let profile = json!({
+            "full_name":"Avery Example", "first_name":"Avery", "last_name":"Example",
+            "email":"avery@example.invalid", "phone":"+12025550123",
+        });
+        let Ok(mappings) = crate::suggestions::suggest_exact(&form.schema, &profile) else {
+            return;
+        };
+        let mut captures = Vec::new();
+        for mapping in mappings {
+            if self.fields.len() >= REHEARSAL_LIMIT {
+                break;
+            }
+            let PacketValue::Text(value) = mapping.value else {
+                continue;
+            };
+            let Some(field) = form
+                .schema
+                .fields
+                .iter()
+                .find(|f| f.selector == mapping.field_selector)
+            else {
+                continue;
+            };
+            if !matches!(
+                field.field_type,
+                FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea
+            ) || form
+                .schema
+                .fields
+                .iter()
+                .filter(|f| f.label.trim().eq_ignore_ascii_case(field.label.trim()))
+                .count()
+                != 1
+            {
+                continue;
+            }
+            let index = self.fields.len();
+            let mut result = json!({"view":view,"label":bounded_text(&field.label),"status":"readback_unavailable"});
+            match driver.rehearse_recorded_text(form, &field.selector, &value) {
+                Ok(capture) => {
+                    result["status"] = json!("visual_unavailable");
+                    if let Ok((name, digest)) = save_image(directory, 6 + index, capture.image()) {
+                        result["image"] = json!(name);
+                        result["sha256"] = json!(digest);
+                        captures.push((index, mapping.field_selector, capture));
+                    }
+                }
+                Err(_) => self.halted = true,
+            }
+            self.fields.push(result);
+            if self.halted {
+                break;
+            }
+        }
+        if !captures.is_empty() {
+            let unchanged = driver
+                .inspect_current()
+                .is_ok_and(|current| current == *form);
+            for (index, selector, capture) in captures {
+                if unchanged && driver.verify_text_value(&selector, capture.value()).is_ok() {
+                    self.captures.push((index, capture));
+                } else {
+                    self.fields[index]["status"] = json!("changed_after_entry");
+                    self.halted = true;
+                }
+            }
+        }
+    }
+
+    fn review(mut self) -> Value {
+        if !self.captures.is_empty() && crate::check_inference_memory().is_ok() {
+            if let Ok(Some(identity)) = crate::resident_model_identity() {
+                let mut model = crate::visual_review::VisionIdentityGuard::from_identity(identity);
+                for (index, capture) in &self.captures {
+                    if crate::check_inference_memory().is_err() {
+                        break;
+                    }
+                    let Ok(review) =
+                        crate::visual_review::review_recorded_text(&mut model, capture)
+                    else {
+                        break;
+                    };
+                    self.fields[*index]["status"] =
+                        json!(match review["comparisons"][0]["status"].as_str() {
+                            Some("matches_transcription") => "visually_matched",
+                            Some("differs_from_transcription") => "visual_difference",
+                            _ => "visual_unobserved",
+                        });
+                }
+            }
+        }
+        json!({"scope":"fictional_text_only","field_limit":REHEARSAL_LIMIT,"halted":self.halted,"fields":self.fields})
+    }
 }
 
 #[cfg(windows)]
@@ -257,6 +397,28 @@ fn save_view(
     form: waypoint_applications::driver::LiveForm,
     image: String,
 ) -> Result<Value, String> {
+    let (name, sha256) = save_image(directory, sequence, &image)?;
+    let fields: Vec<_> = form
+        .schema
+        .fields
+        .iter()
+        .take(40)
+        .map(|field| json!({"label":bounded_text(&field.label),"required":field.required}))
+        .collect();
+    let walls: Vec<_> = form
+        .walls
+        .iter()
+        .take(8)
+        .map(|wall| bounded_text(wall))
+        .collect();
+    Ok(
+        json!({"kind":if sequence==1{"page"}else{"frame"},"label":bounded_text(label),"origin":bounded_text(&form.origin),
+        "image":name,"sha256":sha256,"fields":fields,"field_count":form.schema.fields.len(),"walls":walls}),
+    )
+}
+
+#[cfg(windows)]
+fn save_image(directory: &Path, sequence: usize, image: &str) -> Result<(String, String), String> {
     use base64::{engine::general_purpose::STANDARD, Engine};
     use std::io::Write;
     if image.len() > 8 * 1024 * 1024 {
@@ -276,23 +438,7 @@ fn save_view(
         .map_err(|_| "Cannot write saved page image")?;
     file.persist_noclobber(directory.join(&name))
         .map_err(|_| "Cannot preserve saved page image")?;
-    let fields: Vec<_> = form
-        .schema
-        .fields
-        .iter()
-        .take(40)
-        .map(|field| json!({"label":bounded_text(&field.label),"required":field.required}))
-        .collect();
-    let walls: Vec<_> = form
-        .walls
-        .iter()
-        .take(8)
-        .map(|wall| bounded_text(wall))
-        .collect();
-    Ok(
-        json!({"kind":if sequence==1{"page"}else{"frame"},"label":bounded_text(label),"origin":bounded_text(&form.origin),
-        "image":name,"sha256":waypoint_domain::sha256_hex(&bytes),"fields":fields,"field_count":form.schema.fields.len(),"walls":walls}),
-    )
+    Ok((name, waypoint_domain::sha256_hex(&bytes)))
 }
 
 #[cfg(test)]
@@ -309,6 +455,7 @@ mod tests {
             directory: path,
             attempt_id: "copy".into(),
             job_id: "fixture-job".into(),
+            rehearse: false,
         };
         let url = "https://example.org/fictional";
         let summary_path = source.directory.join("source-page-summary.json");

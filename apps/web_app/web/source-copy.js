@@ -3,7 +3,7 @@
   const views = new Map();
   const state = { task: null, job: null, preview: false, active: false, phase: 'starting', cancelling: false, result: null, error: null };
   let client, monitor = null, recovering = null, finished;
-  const phases = { starting: 'Starting page copy…', tools: 'Setting up background tools…', reading: 'Reading the original page…', resources: 'Collecting page resources…', preview: 'Rendering the saved page…', saved: 'Finishing saved records…' };
+  const phases = { starting: 'Starting page copy…', tools: 'Setting up background tools…', reading: 'Reading the original page…', resources: 'Collecting page resources…', preview: 'Rendering the saved page…', rehearsal: 'Checking autofill in the saved copy…', saved: 'Finishing saved records…' };
   function publish() {
     for (const [node, render] of views) {
       if (node.isConnected) render(); else views.delete(node);
@@ -97,7 +97,8 @@
   }
   function previewView(preview, el, options) {
     const section = el(options.inline ? 'div' : 'details', '', 'source-copy-result');
-    if (!options.inline) section.append(el('summary', 'Recorded page preview'));
+    const rehearsal = preview?.rehearsal?.scope === 'fictional_text_only' ? preview.rehearsal : null;
+    if (!options.inline) section.append(el('summary', rehearsal ? 'Offline autofill rehearsal' : 'Recorded page preview'));
     const captures = Array.isArray(preview?.views) ? preview.views.filter(view => view && ['page','frame'].includes(view.kind)).slice(0, 5) : [];
     if (!captures.length) {
       section.append(el('p', 'No view could be saved. Check this record’s screenshots and status.', 'review-label'));
@@ -121,6 +122,10 @@
     for (const notice of (Array.isArray(preview.notices) ? preview.notices.slice(0, 5) : [])) {
       if (typeof notice === 'string') section.append(el('p', notice, 'footnote'));
     }
+    if (rehearsal) {
+      section.append(el('p', 'Rehearsal uses fictional details in the saved copy. Other fields, later steps and server validation still need review.', 'footnote'));
+      if (rehearsal.halted) section.append(el('p', 'The rehearsal stopped when a field could not be verified.', 'review-label'));
+    }
     section.append(label, details, show, imageArea);
     let revision = 0;
     function describeSelection() {
@@ -143,11 +148,35 @@
       for (const wall of (Array.isArray(view.walls) ? view.walls.slice(0, 8) : [])) {
         if (typeof wall === 'string') details.append(el('p', wall, 'review-label'));
       }
+      if (rehearsal) {
+        const checks = Array.isArray(rehearsal.fields) ? rehearsal.fields.slice(0, 4).filter(field => field?.view === Number(select.value) + 1) : [];
+        if (!checks.length) details.append(el('p', 'No fields were tested in this view.', 'footnote'));
+        for (const check of checks) {
+          const states = {
+            visually_matched: 'Text and image match',
+            visual_difference: 'Image transcription differs',
+            visual_unobserved: 'Model could not read the image',
+            visual_unavailable: 'Text verified in form · visual review unavailable',
+            changed_after_entry: 'Field changed after entry',
+            readback_unavailable: 'Field needs manual review',
+          };
+          const row = el('div', '', 'source-copy-actions');
+          row.append(el('span', `${check.label || 'Field'} · ${states[check.status] || 'Needs review'}`, 'footnote'));
+          if (check.image) {
+            const button = el('button', 'View field image', 'secondary');
+            button.type = 'button';
+            button.addEventListener('click', () => showImage(check, button));
+            row.append(button);
+          }
+          details.append(row);
+        }
+      }
     }
     select.addEventListener('change', describeSelection);
-    show.addEventListener('click', async () => {
-      const view = captures[Number(select.value)], requested = ++revision;
-      show.disabled = true;
+    show.addEventListener('click', () => showImage(captures[Number(select.value)], show));
+    async function showImage(view, button) {
+      const requested = ++revision;
+      button.disabled = true;
       imageArea.replaceChildren(el('p', 'Loading saved image…', 'footnote'));
       try {
         if (!view || !/^\d{4}\.png$/.test(view.image) || !/^[0-9a-f]{64}$/.test(view.sha256)) throw new Error('The saved image reference is invalid.');
@@ -163,39 +192,43 @@
       } catch (error) {
         if (requested === revision) imageArea.replaceChildren(el('p', error.message, 'review-label'));
       } finally {
-        if (requested === revision) show.disabled = false;
+        button.disabled = false;
       }
-    });
+    }
     select.value = '0';
     describeSelection();
     return section;
   }
   function previewAction(jobId, attemptId, dependencies) {
     const root = dependencies.element('div', '', 'source-copy-actions');
-    const button = dependencies.element('button', 'Create recorded preview', 'secondary');
     const status = dependencies.element('span', '', 'footnote');
     status.setAttribute('role', 'status');
-    button.type = 'button';
-    root.append(button, status);
-    button.addEventListener('click', async () => {
-      if (state.active) {
-        status.textContent = 'Wait for the current page task to finish.';
-        return;
-      }
-      client = dependencies.api;
-      finished = dependencies.onFinished;
-      button.disabled = true;
-      status.textContent = '';
-      try {
-        await start(jobId, attemptId);
-        if (state.job === jobId && state.error) status.textContent = state.error;
-      } finally {
-        button.disabled = false;
-      }
-    });
+    for (const [label, rehearse] of [['Create recorded preview', false], ['Rehearse autofill', true]]) {
+      const button = dependencies.element('button', label, 'secondary');
+      button.type = 'button';
+      if (rehearse) button.title = 'Use fictional details to check supported text fields in the saved copy';
+      root.append(button);
+      button.addEventListener('click', async () => {
+        if (state.active) {
+          status.textContent = 'Wait for the current page task to finish.';
+          return;
+        }
+        client = dependencies.api;
+        finished = dependencies.onFinished;
+        button.disabled = true;
+        status.textContent = '';
+        try {
+          await start(jobId, attemptId, rehearse);
+          if (state.job === jobId && state.error) status.textContent = state.error;
+        } finally {
+          button.disabled = false;
+        }
+      });
+    }
+    root.append(status);
     return root;
   }
-  async function start(job, attempt = null) {
+  async function start(job, attempt = null, rehearse = false) {
     if (state.active) return;
     Object.assign(state, { task: null, job, preview: Boolean(attempt), active: true, cancelling: false, phase: 'starting', result: null, error: null });
     publish();
@@ -203,7 +236,7 @@
       const pending = await client('/api/job-source/pending', {});
       if (pending.active) { await follow(pending.task_id, pending.job_id, pending.preview === true); return; }
       const route = attempt ? '/api/job-source/preview-start' : '/api/job-source/start';
-      const value = await client(route, attempt ? { id: job, attempt_id: attempt } : { id: job });
+      const value = await client(route, attempt ? { id: job, attempt_id: attempt, ...(rehearse ? { rehearse } : {}) } : { id: job });
       await follow(value.task_id, job, Boolean(attempt));
     } catch (error) {
       state.active = false;
@@ -217,7 +250,8 @@
     if (value.status !== 'complete') return value.error || 'The page copy could not finish. Available files remain in application records.';
     if (value.kind === 'recorded_preview') {
       if (!value.record_saved) return 'Check the application record folder for available images.';
-      return value.current_source === false ? 'Recorded preview saved for the earlier job link.' : 'Recorded preview saved in application records.';
+      const name = value.result?.preview?.rehearsal ? 'Offline autofill rehearsal' : 'Recorded preview';
+      return value.current_source === false ? `${name} saved for the earlier job link.` : `${name} saved in application records.`;
     }
     const report = value.result?.report, resources = count(report?.recorded_resources), requests = count(report?.requests);
     const counts = resources === null || requests === null ? 'Check the saved record for capture details.' : `${resources} resource${resources === 1 ? '' : 's'} saved from ${requests} request${requests === 1 ? '' : 's'}.`;
@@ -272,7 +306,7 @@
       save.disabled = state.active;
       stop.hidden = !state.active; stop.disabled = state.cancelling || !state.task;
       progress.hidden = !state.active || !own;
-      progress.value=({starting:0,tools:0,reading:1,resources:2,preview:2,saved:3})[state.phase]??0;
+      progress.value=({starting:0,tools:0,reading:1,resources:2,preview:2,rehearsal:2,saved:3})[state.phase]??0;
       save.textContent = own && state.result && state.result.kind !== 'recorded_preview' ? 'Save another copy' : 'Save page copy';
       status.className = 'source-copy-status';
       const showResult = own && !state.active && state.result?.status === 'complete';
@@ -286,7 +320,7 @@
         renderedAttempt = state.result.attempt_id;
         findings.replaceChildren();
         if (state.result.kind === 'recorded_preview') {
-          summary.textContent = 'Recorded page preview';
+          summary.textContent = state.result.result?.preview?.rehearsal ? 'Offline autofill rehearsal' : 'Recorded page preview';
           findings.append(previewView(state.result.result?.preview, el, { api: client, jobId: job.id, attemptId: state.result.attempt_id, inline: true }));
           details.open = true;
           return;

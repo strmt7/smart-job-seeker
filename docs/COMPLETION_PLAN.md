@@ -18,10 +18,11 @@ acceptance gates. Do not create a release as part of this plan.
 [Recorded previews](RECORDED_PAGE_PREVIEW.md) now connect saved source copies
 to frame selection, evidence and image review in application history.
 [Source copies](SOURCE_COPY_WORKFLOW.md) can retain observed frames from
-eligible public ATS origins. Connect current verified DOM and capture identity to the
-contained candidate-entry workflow, using the measured
-[local vision qualification](g1/RECORDED_FRAME_VISION_2026-11-10.md). Continue
-the ordered isolation and quality gates below.
+eligible public ATS origins. The saved-copy autofill rehearsal now uses
+fictional text, current scoped DOM readback and focused visual evidence.
+Qualify the connected local-model path and extend the same evidence contract
+to reviewed choices, uploads, section changes and candidate-data isolation.
+Continue the ordered isolation and quality gates below.
 
 ## Operating boundaries
 

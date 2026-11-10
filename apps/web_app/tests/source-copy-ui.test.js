@@ -41,6 +41,20 @@ function harness(api, onFinished) {
   await show.listeners.click();
   assert(find(panel,node => node.textContent==='The saved image differs from its record.'));
   assert.equal(find(panel,node => node.tag==='img'),undefined);
+
+  const rehearsal = {...preview, rehearsal: {scope:'fictional_text_only', fields:[
+    {view:2,label:'Child answer',status:'visual_unavailable',image:'0006.png',sha256:digest},
+  ]}};
+  const tested = harness(async () => {}).preview(rehearsal,{jobId:'job',attemptId:'test',api:async (_route,body) => {
+    assert.equal(body.name,'0006.png');
+    return {name:body.name,sha256:digest,image_base64:'fixture'};
+  }});
+  assert.equal(find(tested,node => node.textContent==='View field image'),undefined);
+  const testedSelect = find(tested,node => node.tag==='select');
+  testedSelect.value='1'; testedSelect.listeners.change();
+  assert(find(tested,node => node.textContent==='Child answer · Text verified in form · visual review unavailable'));
+  await button(tested,'View field image').listeners.click();
+  assert(find(tested,node => node.tag==='img'));
 })().catch(error=>{console.error(error);process.exitCode=1;});
 
 (async () => {
