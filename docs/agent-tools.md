@@ -102,11 +102,17 @@ be presented as current web-app coverage or verification.
 
 Install the pinned free development dependency with
 `npm install --prefix target/layout-qa --no-save --ignore-scripts playwright-core@1.65.0`,
-build the app, then run `node apps/web_app/scripts/qualify-layout.cjs`.
+build the app, then run `python -B tools/qualify_layout.py`.
 Use `--browser <absolute Chromium executable>` for a nonstandard installation,
 `--executable <app executable>` for a packaged build, `--quick` for focused drag
 checks, or `--source-assets` for an explicitly reported uncompiled design pass.
 The default checks compiled assets. `--help` requires no browser or app launch.
+On Windows, direct JavaScript execution is refused: the Python controller owns
+the complete app/Node/browser tree in a kill-on-close Windows job, capped at
+4 GiB committed memory, with a 600-second deadline, 8 MiB log cap and a
+3 GiB whole-host RAM reserve checked every 500 ms. Cleanup confirms zero active
+processes in that job before returning, including failure and timeout paths.
+The outer controller's abrupt exit closes the job and terminates its children.
 
 The tool uses an isolated headless browser/profile and a private Windows app
 workspace under `target/`. A temporary test extension controls actual per-tab
@@ -114,9 +120,14 @@ browser zoom; its debugging flag is confined to that test browser and is not a
 product option. The renderer's external requests are refused. Jobs, documents
 and PDF preview responses are fictional; this is layout evidence, not a document
 or employer-form completion test. Results bind the binary digest and browser
-version; CI retains JSON observations only. Local screenshots can include paths
+version. Failures retain their phase, stack and cleanup status rather than
+disappearing before the report is written; CI retains JSON observations only.
+Missing or unusable geometry still fails after bounded visibility/stability waits.
+Local screenshots can include paths
 and must not be committed. Available-memory checks are admission checks, not
-reservations or peak measurements. All new repository tools follow the concise
+reservations or peak measurements. Runtime monitoring does not prove absence of
+all leaks or protect unrelated workloads from their own resource consumption.
+All new repository tools follow the concise
 communication rules in `AGENTS.md`.
 
 ## Experimental browser qualification

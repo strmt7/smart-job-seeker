@@ -20,6 +20,7 @@ if (options.help) {
   );
   process.exit(0);
 }
+if(process.platform==='win32' && process.env.WAYPOINT_LAYOUT_CONTAINED!=='1')throw Error('Run python -B tools/qualify_layout.py so all layout processes are owned and bounded');
 const repo = path.resolve(__dirname, '../../..');
 const { chromium } = require(path.join(repo, 'target/layout-qa/node_modules/playwright-core'));
 if (os.freemem() < Math.min(6 * 1024 ** 3, Math.max(2 * 1024 ** 3, os.totalmem() * 0.15)))
@@ -52,7 +53,18 @@ fs.writeFileSync(
     startedAt: Date.now(),
   }),
 );
-let context, browser;
+console.log('Layout evidence: '+scratch);
+let context, browser, page, build=null, phase='startup';
+const errors=[],failures=[],cases=[];
+async function visibleBox(locator,label){
+  phase=label;
+  await bounded(locator.waitFor({state:'visible',timeout:10000}),label+' visibility',11000);
+  await bounded(locator.scrollIntoViewIfNeeded({timeout:10000}),label+' stability',11000);
+  const box=await locator.boundingBox();
+  if(!box||!['x','y','width','height'].every(key=>Number.isFinite(box[key]))||box.width<=0||box.height<=0)throw Error(label+' has no usable visible geometry');
+  return box;
+}
+
 async function bounded(operation, label, milliseconds = 15000) {
   let timer;
   try {
@@ -67,26 +79,37 @@ async function bounded(operation, label, milliseconds = 15000) {
   }
 }
 (async () => {
+  let completed=false,fatal=null;
   try {
     const address = await new Promise((resolve, reject) => {
       let out = '';
-      const timer = setTimeout(() => reject(Error('startup timeout')), 30000);
-      child.stdout.on('data', (buffer) => {
+      const cleanup = () => {
+        clearTimeout(timer);
+        child.stdout.off('data', onData);
+        child.off('exit', onExit);
+        child.off('error', onError);
+        child.stdout.resume();
+      };
+      const onExit = () => { cleanup(); reject(Error('server exited')); };
+      const onError = error => { cleanup(); reject(error); };
+      const timer = setTimeout(() => { cleanup(); reject(Error('startup timeout')); }, 30000);
+      const onData = buffer => {
         out += buffer;
+        if (out.length > 65536) {
+          cleanup();
+          reject(Error('startup output exceeded its budget'));
+          return;
+        }
         const match = out.match(/http:\/\/127\.0\.0\.1:\d+\/#([a-f0-9]{64})/);
         if (match) {
-          clearTimeout(timer);
+          cleanup();
           resolve(match[0]);
         }
-      });
-      child.once('exit', () => {
-        clearTimeout(timer);
-        reject(Error('server exited'));
-      });
-      child.once('error', (error) => {
-        clearTimeout(timer);
-        reject(error);
-      });
+      };
+      child.stdout.on('data', onData);
+      child.stderr.resume();
+      child.once('exit', onExit);
+      child.once('error', onError);
     });
     const origin = new URL(address).origin,
       extensionPath = path.join(scratch, 'extension'),
@@ -116,10 +139,7 @@ async function bounded(operation, label, milliseconds = 15000) {
     browser = await chromium.connectOverCDP('http://127.0.0.1:' + port);
     const cdp = await browser.newBrowserCDPSession(),
       extension = await cdp.send('Extensions.loadUnpacked', { path: extensionPath });
-    const page = await context.newPage(),
-      errors = [],
-      failures = [],
-      cases = [];
+    page = await context.newPage();
     page.on('pageerror', (error) => errors.push(error.message));
     const pdf = {
       id: 'fictional-pdf',
@@ -235,6 +255,7 @@ async function bounded(operation, label, milliseconds = 15000) {
       );
     }
     async function audit(label, headingSelector = null) {
+      phase=label;
       await settle();
       const result = await page.evaluate((headingSelector) => {
         const dialog = document.querySelector('dialog[open]'),
@@ -343,7 +364,7 @@ async function bounded(operation, label, milliseconds = 15000) {
     await page.evaluate(() => setWorkspaceView('documents'));
     await settle();
     const divider = page.locator('main>.resize-divider');
-    let box = await divider.boundingBox();
+    let box = await visibleBox(divider,'Main divider');
     await page.mouse.move(box.x + box.width / 2, box.y + 150);
     await page.mouse.down();
     await page.mouse.move(80, box.y + 150, { steps: 12 });
@@ -351,7 +372,7 @@ async function bounded(operation, label, milliseconds = 15000) {
     await settle();
     if ((await page.locator('#jobs-pane').evaluate((el) => el.getBoundingClientRect().width)) < 279)
       throw Error('Jobs pane escaped minimum');
-    box = await divider.boundingBox();
+    box = await visibleBox(divider,'Main divider');
     await page.mouse.move(box.x + box.width / 2, box.y + 150);
     await page.mouse.down();
     await page.mouse.move(3000, box.y + 150, { steps: 12 });
@@ -378,7 +399,7 @@ async function bounded(operation, label, milliseconds = 15000) {
     await divider.dblclick();
     await settle();
     await audit('main-divider-drag-bounds-and-reset');
-    box = await divider.boundingBox();
+    box = await visibleBox(divider,'Main divider');
     await page.mouse.move(box.x + 5, box.y + 100);
     await page.mouse.down();
     await page.setViewportSize({ width: 600, height: 800 });
@@ -391,13 +412,13 @@ async function bounded(operation, label, milliseconds = 15000) {
     await audit('viewport-change-during-drag');
     const libraryDivider = page.locator('.document-layout>.resize-divider');
     if (await libraryDivider.isVisible()) {
-      const b = await libraryDivider.boundingBox(),
+      const b = await visibleBox(libraryDivider.locator('span'),'Library resize grip'),
         before = await page
           .locator('.document-library')
           .evaluate((el) => el.getBoundingClientRect().width);
-      await page.mouse.move(b.x + 5, b.y + 40);
+      await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
       await page.mouse.down();
-      await page.mouse.move(b.x + 85, b.y + 40, { steps: 10 });
+      await page.mouse.move(b.x + b.width / 2 + 80, b.y + b.height / 2, { steps: 10 });
       await page.mouse.up();
       await settle();
       if (
@@ -422,13 +443,13 @@ async function bounded(operation, label, milliseconds = 15000) {
     await settle();
     const reviewDivider = page.locator('.document-review-panes>.resize-divider');
     if (!(await reviewDivider.isVisible())) throw Error('Paired review divider missing');
-    let r = await reviewDivider.boundingBox();
+    let r = await visibleBox(reviewDivider.locator('span'),'PDF/text resize grip');
     const beforeReview = await page
       .locator('#pdf-preview')
       .evaluate((el) => el.getBoundingClientRect().width);
-    await page.mouse.move(r.x + 5, Math.min(r.y + 50, 750));
+    await page.mouse.move(r.x + r.width / 2, r.y + r.height / 2);
     await page.mouse.down();
-    await page.mouse.move(r.x + 85, Math.min(r.y + 50, 750), { steps: 10 });
+    await page.mouse.move(r.x + r.width / 2 + 80, r.y + r.height / 2, { steps: 10 });
     await page.mouse.up();
     await settle();
     if (
@@ -440,37 +461,37 @@ async function bounded(operation, label, milliseconds = 15000) {
       throw Error('PDF/text divider did not resize');
     const picture = page.locator('.pdf-page-frame');
     await picture.scrollIntoViewIfNeeded();
-    r = await picture.boundingBox();
+    r = await visibleBox(picture,'PDF page frame');
     await page.mouse.move(r.x + r.width - 4, r.y + r.height - 4);
     await page.mouse.down();
     await page.mouse.move(r.x + r.width - 4, r.y + r.height - 94, { steps: 10 });
     await page.mouse.up();
     await settle();
-    if ((await picture.boundingBox()).height > r.height - 40)
+    if ((await visibleBox(picture,'PDF page frame')).height > r.height - 40)
       throw Error('PDF page frame did not resize');
     const extracted = page.locator(
       '#document-preview textarea[aria-label="Extracted document text"]',
     );
     await extracted.scrollIntoViewIfNeeded();
-    r = await extracted.boundingBox();
+    r = await visibleBox(extracted,'Extracted text area');
     await page.mouse.move(r.x + r.width - 4, r.y + r.height - 4);
     await page.mouse.down();
     await page.mouse.move(r.x + r.width - 4, r.y + r.height + 76, { steps: 10 });
     await page.mouse.up();
     await settle();
-    if ((await extracted.boundingBox()).height < r.height + 30)
+    if ((await visibleBox(extracted,'Extracted text area')).height < r.height + 30)
       throw Error('Extracted text area did not resize');
     await page.screenshot({ path: path.join(scratch, 'documents-desktop.png') });
     await audit('paired-pdf-text-review');
     await page.locator('#open-license').click();
     const dialog = page.locator('#license-dialog');
-    let d = await dialog.boundingBox();
+    let d = await visibleBox(dialog,'License dialog');
     await page.mouse.move(d.x + d.width - 4, d.y + d.height - 4);
     await page.mouse.down();
     await page.mouse.move(d.x + d.width - 324, d.y + d.height - 154, { steps: 15 });
     await page.mouse.up();
     await settle();
-    const resized = await dialog.boundingBox();
+    const resized = await visibleBox(dialog,'License dialog');
     if (resized.width > d.width - 100) throw Error('License dialog did not resize');
     await audit('resized-license-dialog');
     await page.screenshot({ path: path.join(scratch, 'resized-license.png') });
@@ -588,7 +609,7 @@ async function bounded(operation, label, milliseconds = 15000) {
       !(await page.locator('#layout-preferences-status').innerText()).includes('Saved for this tab')
     )
       throw Error('Preference status did not recover after storage became available');
-    const build = {
+    build = {
       executableSha256: crypto
         .createHash('sha256')
         .update(fs.readFileSync(executable))
@@ -601,33 +622,33 @@ async function bounded(operation, label, milliseconds = 15000) {
       commit: process.env.GITHUB_SHA || null,
       freeMemoryAfter: os.freemem(),
     };
-    fs.writeFileSync(
-      path.join(scratch, 'results.json'),
-      JSON.stringify(
-        {
-          build,
-          cases,
-          failures,
-          scriptErrors: errors.map((message) => message.replace(/[a-f0-9]{64}/gi, '[redacted]')),
-        },
-        null,
-        2,
-      ),
-    );
-    console.log(
-      JSON.stringify({
-        scratch,
-        compiledAssets: !options['source-assets'],
-        cases: cases.length,
-        failures: failures.length,
-        scriptErrors: errors.length,
-        examples: failures.slice(0, 5),
-      }),
-    );
+    completed=true;
     if (errors.length || failures.length) process.exitCode = 1;
-  } finally {
-    await Promise.allSettled([context?.close(), browser?.close()]);
-    child.kill();
+  } catch(error){
+    fatal=error;process.exitCode=1;
+    if(page)try{
+      fs.writeFileSync(path.join(scratch,'failure-geometry.json'),JSON.stringify(await bounded(page.evaluate(()=>({viewport:{width:innerWidth,height:innerHeight},elements:[...document.querySelectorAll('.resize-divider,.pdf-page-frame,#license-dialog')].map(el=>({label:el.getAttribute('aria-label'),rect:el.getBoundingClientRect().toJSON()}))})),'Failure geometry',3000),null,2));
+      await bounded(page.screenshot({path:path.join(scratch,'failure.png')}),'Failure screenshot',3000);
+    }catch(captureError){errors.push('Failure capture: '+captureError.message);}
+  }
+  finally {
+    const cleanupErrors=[];
+    for(const [resource,label]of [[context,'Browser context'],[browser,'Browser connection']]){
+      if(resource)try{await bounded(resource.close(),label+' shutdown',10000);}catch(error){cleanupErrors.push(label+': '+error.message);}
+    }
+    try{
+      const exited=new Promise((resolve,reject)=>{
+        if(child.exitCode!==null||child.signalCode!==null)return resolve();
+        child.once('exit',resolve);child.once('error',reject);
+      });
+      if(child.exitCode===null&&child.signalCode===null)child.kill();
+      await bounded(exited,'Local app shutdown',5000);
+    }catch(error){cleanupErrors.push(error.message);}
+    if(cleanupErrors.length)process.exitCode=1;
+    const redact=text=>String(text).replace(/[a-f0-9]{64}/gi,'[redacted]');
+    fs.writeFileSync(path.join(scratch,'results.json'),JSON.stringify({completed,phase,build,cases,failures,scriptErrors:errors.map(redact),error:fatal?redact(fatal.stack||fatal.message):null,cleanup:{errors:cleanupErrors.map(redact),appExited:child.exitCode!==null||child.signalCode!==null}},null,2));
+    console.log(JSON.stringify({scratch,completed,compiledAssets:!options['source-assets'],cases:cases.length,failures:failures.length,scriptErrors:errors.length,phase,cleanupErrors:cleanupErrors.length,examples:failures.slice(0,5)}));
+    if(fatal)console.error(redact(fatal.stack||fatal.message));
   }
 })().catch((error) => {
   console.error(error.message.replace(/[a-f0-9]{64}/g, '[redacted]'));

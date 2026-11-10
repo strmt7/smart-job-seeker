@@ -1,3 +1,9 @@
+## Development ownership and layout qualification - 2026-11-10
+
+- Agent instructions now require ownership tracking, bounded resources and verified cleanup on success, failure, cancellation and timeout. Ad-hoc services, scheduled tasks and startup entries are prohibited; unrelated applications and shared servers must remain untouched.
+- Layout qualification now runs in an owned Windows job, retains failed observations and waits for shutdown. A visible-grip interaction fixes the local PDF/text drag check without weakening its assertion. All 296 matrix observations, the geometry regression and six controller checks pass. [Evidence and limits](docs/LAYOUT_QUALIFICATION_LIFECYCLE.md) retain the failed runs, host audit and remaining leak/installation qualification limits.
+- The `d68dcd18` hosted ordinary tests/build and browser suite passed, but its layout checker failed. Its green CodeQL workflow also has an Actions-analysis API error; five permission findings remain detector-controlled. No real application, application email or release was created.
+
 ## Template tailoring and completion review - 2026-11-10
 
 - Added local-model passage planning to the real template editor, followed by existing source-aware rewrites, natural-language revision, reviewed queues and mandatory PDF export. Actual CV and complete cover-letter template workflows passed; originals and untouched package parts remained intact, with three responsive widths and archived page review. Source markers introduced into usable text are now refused/repaired within the existing limits. Visual content/advice review distinguishes past employers from hiring organizations and preserves rejected advice in its audit.

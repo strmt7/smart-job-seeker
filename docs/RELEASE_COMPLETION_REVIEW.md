@@ -9,6 +9,14 @@ scope.
 
 ## Current results
 
+The latest development follow-up adds explicit host-ownership rules and an
+owned, bounded layout controller. All 296 local matrix observations passed;
+[evidence](LAYOUT_QUALIFICATION_LIFECYCLE.md) preserves the earlier hosted/local
+checker failures and cleanup scope. The `d68dcd18` hosted ordinary tests/build
+and browser suite passed. Its Actions CodeQL analysis has an ingestion error
+despite a green workflow; the permission findings remain open. These results do
+not remove the product qualification gates below.
+
 The local web interface/tray, profile/files, broad web/board search, duplicate
 review, local inference, private runtime setup and application records exist.
 Their supported scope and historical observations remain in the

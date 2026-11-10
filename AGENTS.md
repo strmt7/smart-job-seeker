@@ -36,6 +36,33 @@ repo up cold. Read this first, then `README.md`, then the references below.
   external caches, receipt limits and the scope of the Codecov report. These
   are development tools, not application runtime dependencies.
 
+## Development process and host ownership
+
+- Track every process tree, browser/profile, temporary server, worker, model load,
+  timer and background task started for development. Record PID, creation time,
+  executable and parent/containment identity before treating a resource as owned.
+- Prefer task-owned Windows jobs with kill-on-close and aggregate memory limits.
+  Bound runtime, output, concurrency and memory; monitor host headroom during
+  expensive work. Do not leave unbounded workers, watchers, queues or caches in
+  memory. Clear timers/listeners and release handles, pipes and temporary profiles.
+- Cleanup must run on success, error, cancellation and timeout. Await actual
+  process-tree exit rather than treating a kill request as completed cleanup.
+  Verify teardown at coherent checkpoints and after interrupted tests. Preserve
+  partial evidence without leaving the worker running.
+- Do not create persistent services, scheduled tasks, startup entries or other
+  autostart mechanisms for ad-hoc development/testing. Deliberate installed-product
+  features require their own documented lifecycle; they are not development leftovers.
+- Record pre-existing model/server state. Unload only models newly owned by the
+  task and stop only owned servers. Hard-stop model tests require an owned runtime
+  or a verified recovery/ownership mechanism; a shared service must not become an
+  excuse to leave newly loaded models resident or interrupt another workload.
+- Before declaring memory unavailable, inspect owned leftovers. Never kill by
+  process name, age or high RAM alone; revalidate identity/ancestry and ownership.
+  Leave unrelated applications, active user sessions and services untouched.
+- Reuse or gracefully stop repository-owned development daemons when idle. Keep
+  other repositories' providers/registrations intact. Report unknown ownership,
+  failed cleanup or unverified leak behavior instead of claiming a clean host.
+
 ## Findings remain under detector control
 
 - Never manually close, dismiss, resolve, ignore or suppress a finding from any

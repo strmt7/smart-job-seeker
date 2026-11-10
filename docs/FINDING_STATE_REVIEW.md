@@ -22,6 +22,15 @@ as the separate coverage workflow already does. This fixes configuration rather
 than changing alert status. Confirmation must come from a new exact-commit
 analysis; the observations above remain open until the detector updates them.
 
+The `d68dcd18` CodeQL workflow completed successfully, but the Actions-language
+analysis API returned `Unknown Error` (analysis `2133433784`). Its zero returned
+results are not valid clean acceptance. Python and JavaScript analyses reported
+no analysis errors; the five permission alerts remained open in the retained
+inventory. Do not manually close them or infer resolution from a green workflow.
+The hosted ordinary tests/build and browser job passed; a separate layout-checker
+failure is retained and addressed in the
+[layout lifecycle review](LAYOUT_QUALIFICATION_LIFECYCLE.md).
+
 The hosted `1c411684` browser suite passed 137 cases. Its ordinary build/test job
 failed one inference mock: the server closed without consuming the request, and
 Windows returned connection-reset before the final-response pressure guard could

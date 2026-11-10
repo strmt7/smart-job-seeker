@@ -79,7 +79,7 @@ Reproduce after the managed Windows build:
 
 ```powershell
 node apps/web_app/scripts/qualify-candidate-history.cjs
-node apps/web_app/scripts/qualify-layout.cjs
+python -B tools/qualify_layout.py
 node apps/web_app/tests/candidate-history-ui.test.js
 ```
 

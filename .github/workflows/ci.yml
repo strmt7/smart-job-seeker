@@ -112,7 +112,7 @@ jobs:
         run: |
           npm install --prefix target/layout-qa --no-save --ignore-scripts playwright-core@1.65.0
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node apps/web_app/scripts/qualify-layout.cjs --executable target/release/waypoint_web.exe
+          python -B tools/qualify_layout.py --executable target/release/waypoint_web.exe
       - name: Retain layout observations
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
