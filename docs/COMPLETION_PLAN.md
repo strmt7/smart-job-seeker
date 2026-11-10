@@ -156,6 +156,10 @@ build and configuration.
 4. **Complete the dry-run journey and records.** Verify deduplication, source
    capture, edited PDFs, answers, screenshots, recovery and review state as one
    end-to-end workflow, including changed pages and interrupted sessions.
+   A [saved review summary](ATTEMPT_REVIEW_SUMMARY.md) now exposes selected
+   interruption and evidence-gap events with bounded reads and explicit unknown
+   outcomes; it preserves review flags and does not restore or retry browser
+   actions. Durable continuation and full archive acceptance remain open.
    Email application delivery and real application submission remain disabled
    in this prototype; any future delivery mechanism needs explicit one-use
    authorization and separate evidence, not a test submission.

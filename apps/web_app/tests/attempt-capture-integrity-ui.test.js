@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const source = fs.readFileSync('apps/web_app/web/app.js', 'utf8');
 const start = source.indexOf('for(const [integrity,label] of [[record.page_capture_integrity');
-const end = source.indexOf('const answersButton=', start);
+const end = source.indexOf('const reviewButton=', start);
 assert.ok(start >= 0 && end > start);
 const section = source.slice(start, end);
 function messages(status) {

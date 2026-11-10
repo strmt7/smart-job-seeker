@@ -1,3 +1,8 @@
+## Saved attempt review summaries - 2026-11-10
+
+- Added an on-demand review summary to application history, with concrete guidance for interrupted entry, attachments, capture gaps, page changes and stale advice. It reads a bounded recent log, keeps omissions and damaged evidence explicit, excludes raw answers/errors and leaves resolution and submission unassessed. It does not restore/retry actions or alter existing review flags.
+- [Contract and evidence](docs/ATTEMPT_REVIEW_SUMMARY.md) record six focused checks, 759 managed web tests with 403 opt-in cases ignored, Clippy/build and 165 passing JavaScript scripts. The compiled interface passed ten headless checks through production handlers, including 320–1920-pixel layouts, mobile guidance reachability and missing/truncated logs. Source and log fingerprints were preserved; screenshots were directly inspected. The contained run sampled at least 17.969 GiB free physical host RAM. No employer form, application, email, desktop interaction or release was involved.
+
 ## Recorded-response form rehearsal - 2026-11-10
 
 - Added a versioned, checksum-bound response archive and continuous replay controller inside the existing experimental AppContainer browser. It preserves HTTPS origins and fragment routing, serves exact recorded request identities, recursively prepares related pages/frames and refuses missing responses without live fallback. Candidate values and URLs are excluded from accounting; cached replies never establish server validation or delivery. Existing typing and submission guards remain intact.

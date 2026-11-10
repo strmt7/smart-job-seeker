@@ -5,6 +5,7 @@ mod application_check;
 pub mod application_email;
 mod ats_check;
 mod attempt_record;
+mod attempt_review;
 mod candidate_history;
 mod candidate_selection;
 mod candidate_task;
@@ -5146,6 +5147,19 @@ fn serve(
             listing["email_handoffs"] = json!(handoffs.into_iter().map(|item| json!({"attempt_id":item.id,"state":item.state,"reconciliation":item.reconciliation,"created_at":item.created_at})).collect::<Vec<_>>());
             listing["email_handoffs_truncated"] = json!(truncated);
             json_reply(stream, "200 OK", listing);
+        }
+        "/api/attempts/review-summary" => {
+            let job = JobIdentityId::new(body["id"].as_str().ok_or("missing job id")?)
+                .map_err(|e| e.to_string())?;
+            ws.job(&job)
+                .map_err(|e| e.to_string())?
+                .ok_or("Job not found")?;
+            let attempt = body["attempt_id"].as_str().ok_or("missing attempt id")?;
+            json_reply(
+                stream,
+                "200 OK",
+                attempt_record::review_summary(ws, &job, attempt)?,
+            );
         }
         "/api/attempts/answers" => {
             let job = JobIdentityId::new(body["id"].as_str().ok_or("missing job id")?)
@@ -10433,6 +10447,65 @@ mod tests {
         assert_eq!(result["search_context"]["engines"], json!(["fixture"]));
         assert_eq!(result["search_context_matches_url"], false);
     }
+    #[cfg(windows)]
+    #[test]
+    fn review_summary_endpoint_survives_reopen_and_preserves_review_flags() {
+        use std::io::{Read, Write};
+        let directory = tempfile::tempdir_in(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target"),
+        )
+        .unwrap();
+        let attempt = "a".repeat(32);
+        let id;
+        {
+            let mut ws = Workspace::open(directory.path()).unwrap();
+            let added=manual_job::add(&mut ws,&json!({"url":"https://example.test/job","title":"Fictional Engineer","employer":"Fictional Works"}),1).unwrap();
+            id = JobIdentityId::new(added["id"].as_str().unwrap()).unwrap();
+            let mut record = attempt_record::AttemptRecord::start(&ws, &id, &attempt, 1)
+                .unwrap()
+                .unwrap();
+            record
+                .incomplete_fill(
+                    json!({"type":"fill_incomplete","time":2,"error":"fictional private answer"}),
+                    2,
+                )
+                .unwrap();
+            ws.mark_manual_review(&id, "Fictional unresolved review", 2)
+                .unwrap();
+        }
+        let mut ws = Workspace::open(directory.path()).unwrap();
+        let before = ws.manual_review_reasons(&id).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let body = json!({"id":id.as_str(),"attempt_id":attempt}).to_string();
+        let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(client,"POST /api/attempts/review-summary HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Workspace-Token: fixture-token\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        serve(&mut server, &mut ws, &mut None, "fixture-token", port).unwrap();
+        drop(server);
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        assert!(response.starts_with("HTTP/1.1 200"));
+        let result: Value =
+            serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert!(result["activity"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v["kind"] == "fill_incomplete"));
+        assert_eq!(result["resolution_status"], "not_assessed");
+        assert_eq!(result["submission_status"], "not_assessed");
+        assert!(!response.contains("fictional private answer"));
+        assert_eq!(ws.manual_review_reasons(&id).unwrap(), before);
+        assert!(attempt_record::review_summary(&ws, &id, "../other").is_err());
+        assert!(attempt_record::review_summary(
+            &ws,
+            &JobIdentityId::new("other-job").unwrap(),
+            &attempt
+        )
+        .is_err());
+    }
+
     #[cfg(windows)]
     #[test]
     fn saved_tail_evidence_survives_workspace_reopen_and_endpoint() {

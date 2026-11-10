@@ -1,6 +1,12 @@
 # Browser-interface prototype checkpoint
 
-Latest checkpoint, 2026-11-10: actual private LibreOffice/Ollama repair passed
+Latest history checkpoint, 2026-11-10: application records provide a bounded
+[saved review summary](ATTEMPT_REVIEW_SUMMARY.md), with interruption guidance,
+missing-log coverage and explicit unknown resolution/submission status. Actual
+compiled history loading and narrow-screen reachability passed with fictional
+records; this does not qualify browser restoration or employer-site completion.
+
+Latest runtime checkpoint, 2026-11-10: actual private LibreOffice/Ollama repair passed
 conversion and model-free server checks; the first-use PDF lease handoff was
 corrected. See [runtime qualification](RUNTIME_REPAIR_QUALIFICATION.md). The shared
 [image viewer](design/2026-11-smart-jobseeker/IMAGE_VIEWER.md) now supports mouse

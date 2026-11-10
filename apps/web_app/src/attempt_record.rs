@@ -1183,6 +1183,13 @@ fn attempt_directory(
     Ok(dir)
 }
 
+/// Summarize selected recorded events; never infer current completion or delivery.
+pub fn review_summary(ws: &Workspace, job: &JobIdentityId, attempt: &str) -> Result<Value, String> {
+    let directory = attempt_directory(ws, job, attempt)?;
+    serde_json::to_value(crate::attempt_review::read(&directory)?)
+        .map_err(|_| "Cannot display saved review activity".into())
+}
+
 /// Read a bounded set of answer snapshots from the selected job's own attempt.
 /// Older records may not contain the answers directory.
 pub fn answer_history(
