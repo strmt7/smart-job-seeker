@@ -6,7 +6,9 @@ model mechanisms, but broad real-world application coverage and clean-host
 installation are not established. Older measured checkpoints retain their
 original source and fixture scopes.
 
-Source review: `4acb9a955bcb961ad7a27cb9538e77bb0e03a547`.
+Current baseline: local `main` at `8bd000154a6debeb20c3544d05f20f0731220771`,
+followed by the [verified fit-task continuation](g1/DEFERRED_FIT_2026-11-11.md). The original audit snapshot remains
+`4acb9a955bcb961ad7a27cb9538e77bb0e03a547`.
 Read the [repository assessment](REPO_STATE_REVIEW_2026-11-11.md) alongside this
 plan. The [active queue](ACTIVE_DEVELOPMENT_PLAN.json) identifies work packages,
 dependencies and existing harnesses for continuation of the **same active goal**.
@@ -15,9 +17,12 @@ historical statuses or authorize another goal, delegation, release or submission
 
 ## Immediate execution order
 
-1. **R01: control-plane responsiveness.** A current-source probe reproduced a
-   4.910-second delay behind one incomplete local request. Fix bounded request
-   handling before expanding concurrent automation.
+1. **R01: continue blocking-handler qualification.** Socket framing, inventory
+   deferral and the [cancellable fit lifecycle](g1/DEFERRED_FIT_2026-11-11.md) now
+   have scoped passing checkpoints. The earlier fit compile errors are repaired.
+   Measure/defer remaining form-opening admission and native observations while
+   preserving exact input/model identity and joined cancellation. Then advance
+   the representative saved-form work; do not restart broad planning.
 2. **R02/R03: representative evaluation and faithful saved rendering.** Preserve
    current failures, establish held-out cases, and resolve permitted rendering
    and label-context gaps. Do not bypass disallowed sources or weaken matching.
@@ -29,6 +34,62 @@ historical statuses or authorize another goal, delegation, release or submission
    Batch independent lightweight reads; serialize model/browser-heavy runs and
    preserve host headroom. No speculative calendar estimate or completion
    percentage substitutes for these gates.
+
+## Execution batches and deliverables
+
+These are dependency-ordered implementation batches, not dates or claims that
+all work is running simultaneously. Keep heavyweight browser/model qualification
+serial and owned. Each batch ends with a short evidence checkpoint; only mark a
+work package complete when all its stated acceptance criteria are demonstrated.
+
+| Batch | Work packages | Concrete deliverable | Exit decision |
+| --- | --- | --- | --- |
+| A - stabilize current source | R01 | Compiling, cancellable fit task; Stop UI; bounded runtime reads and shutdown; owner-loop latency/overload evidence | Green focused tests, Clippy and coherent workspace/build checks; no stale worker/socket; model/input fences preserved |
+| B - establish useful evidence | R02, R03 | Versioned private development/held-out corpus; faithful permitted saved pages; label/context regression repaired | Every case has an expected result and source/model identity; no excluded/inaccessible case counted as completion |
+| C - complete difficult forms | R04, R05 | Bounded generic observe/plan/validate/act/reobserve loop, custom controls, repeated histories, sections, uploads and review fallback | Local model itself meets declared supported-corpus gates; independent visual/native agreement and containment checks |
+| D - complete the candidate journey | R06, R07, R08 | Verified PDF attachments; broad free discovery and reachable routes; calibrated fit and near-duplicate exclusion | Diverse held-out documents/query/job pairs; no fabricated facts, unknown constraints or duplicate applications |
+| E - reuse experience and recover | R09, R10 | Validated/revocable lessons; complete attempted-application records; restart reconciliation; prepared email and fictional dispatch tests | Paired no-memory comparisons, immutable packet evidence and no duplicate/ambiguous retry |
+| F - installed product and interface | R11, R12, R13 | Private dependency lifecycle, encrypted data/recovery, consistent functional screens and resize/zoom behavior; bounded retention | Clean supported Windows evidence where available, inspected screenshots and cancellation/resource acceptance |
+| G - readiness assessment | R14 | Exact-source supported-capability matrix, hosted checks, unresolved findings and complete user acceptance package | Report only passing scope; user decides release; no release or real applications sent |
+
+R13 efficiency and ownership rules apply throughout, rather than waiting for
+batch F. UI work accompanies each changed workflow; batch F closes the complete
+screen/state matrix. R02 is a minimal usable corpus first, expanded alongside
+actual failures; do not spend multiple cycles building a new test framework.
+
+### Fit lifecycle slice (implemented, scoped evidence)
+
+The six steps below describe the completed fit-specific slice and its retained
+checks; they do not mark R01 complete. Remaining work is form-opening admission,
+native-observation responsiveness and the broader handler inventory. Resume that
+next criterion rather than rerunning the completed fit transport/model fixtures.
+
+1. Adapt the three old `start(FitModel, ...)` test callers to the asynchronous
+   runtime-selection contract. Preserve stale-digest/context refusal through a
+   controlled runtime-change test rather than deleting the old assertion.
+2. Make resident-context observation honor cancellation and a total deadline;
+   retain the exact model/digest/context fence before and after inference.
+   Explicitly handle nested worker results during shutdown without holding the
+   global task mutex while joining.
+3. Add Stop to manual fit assessment using shared button/progress behavior.
+   Display checking-model, assessing, stopping and stopped truthfully; stopped
+   work must not become a score or overwrite a saved assessment. Preserve
+   result collection and input-digest revalidation after restart/polling.
+4. Use a fictional local runtime holding/trickling `/api/ps` and `/api/tags`.
+   Show start returns without blocking settings/status/stop; measure admitted
+   control latency against the below target. Cover cancellation before/during
+   model checks/generation, changed identities, saturation, completed-result
+   collection and server shutdown. Isolate control storage; load no real model
+   for this transport fixture. Client cancellation is not proof of cancellation
+   or unloading inside an unrelated shared Ollama service.
+5. Run relevant fit/inference/transport/client regressions, then the canonical
+   managed workspace tests, warning-denied Clippy, format and build checks once
+   for the coherent change. Inspect the changed client states headlessly at
+   relevant widths. Save exact identity/results and verify worker/browser exit.
+6. Audit the remaining owner-thread native observations with a bounded measured
+   inventory. R01 closes only for its documented admitted workload; explicitly
+   queue any newly observed blocking path rather than claiming universal latency.
+   Proceed to R02/R03 promptly after this coherent repair checkpoint.
 
 ## Current milestone
 
@@ -331,7 +392,7 @@ tool. This plan does not authorize additional agents.
 Resolve runtime/interpreter/model paths through existing verified configuration;
 never turn private qualification paths into product defaults. Run heavyweight
 qualifiers under the existing bounded process owner, retain native reports and
-resume running handles. For this plan-only change, validate JSON, dependency
+resume running handles. For plan-only changes, validate JSON, dependency
 order, referenced paths and links; do not repeat unchanged model/browser suites.
 
 At each goal turn: verify source/worktree and owned resources, read the queue,

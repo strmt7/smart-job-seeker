@@ -1,5 +1,99 @@
 # Repository review - 11 November 2026
 
+## Latest implementation checkpoint
+
+The subsequent [fit-task repair](g1/DEFERRED_FIT_2026-11-11.md) restores passing
+local workspace compilation/tests and completes task-bound Stop, guarded
+resident-context reads and joined cancellation/shutdown. Its recorded result is
+1,305 passed / 593 ignored, with Clippy/build and scoped native/client evidence.
+The planning checkpoint below retains its earlier unfinished-source observation;
+it no longer describes current fit compilation. Broader readiness remains open,
+including synchronous form-opening admission and native observations.
+
+## Planning checkpoint refresh (before fit repair)
+
+Reviewed HEAD: `8bd000154a6debeb20c3544d05f20f0731220771`, local `main`,
+one commit ahead of the observed `origin/main` (`68b3e891`). Two source files
+also contain unfinished changes: `apps/web_app/src/fit_task.rs` and
+`apps/web_app/src/main.rs`. This review preserves those changes. **The current
+working tree is not a verified green build and is not release-ready.**
+
+The existing product-development goal was verified active. Its continuation is
+already routed through `AGENTS.md` to the detailed plan and active queue. This
+refresh updates those inputs; it creates no separate background service, agent,
+goal, branch or release.
+
+### What changed since the original audit
+
+- The reproduced slow-socket stall has a committed nonblocking transport repair
+  (`68b3e891`). Hosted CI, coverage and CodeQL were rechecked successfully for
+  that exact commit. Those results do not cover the newer local commit or edits.
+- The next local commit (`8bd00015`) moves model inventory into one owned,
+  cancellable worker with four coalesced waiters and bounded overload rejection.
+  Its recorded workspace result is 1,302 passed / 592 ignored, plus a selected
+  native control-responsiveness case and settings journey. These are retained
+  checkpoint results, not tests rerun against the dirty working tree.
+- Fit assessment startup is being moved off the workspace owner, with joined
+  worker ownership, cancellation and model/input binding. It is unfinished: the
+  last focused compile failed at three test callers still using the previous
+  `start` signature. Those mismatches remain visible in current source.
+- Cancellation needs another production-path repair: generation's resident-
+  context lookup still calls the unguarded `/api/ps` reader in `ollama.rs`.
+  Per-read timeout alone does not bound a trickling response's total duration.
+  Qualify cancellation through that path before claiming bounded shutdown.
+  The new shutdown join also needs explicit handling of its nested result.
+- The fit cancel endpoint exists in the unfinished backend; the corresponding
+  user-facing Stop control and accurate progress states are not implemented yet.
+  This is work in progress, not a usable finished feature.
+
+### Present priorities and readiness assessment
+
+| Priority | Problem / consequence | Next acceptance evidence |
+| --- | --- | --- |
+| P0 | Unfinished fit lifecycle does not compile in the last focused test run | Adapt all callers while preserving stale-model tests; focused regressions and warning-denied build |
+| P0 | Some model/native observations can still block or defer cancellation | Held/trickling fictional runtime, responsive settings/status/stop, bounded cancellation and actual worker/socket exit |
+| P0 | Local model has not demonstrated broad generic application completion | Fixed representative/held-out corpus, faithful saved rendering, native and visual checks on every accepted action |
+| P0 | Real sites can transmit on controls other than Submit | Keep live employer sites read-only; prove contained fictional/offline actions with independent OS/transport evidence |
+| P1 | Search, fit, near-duplicate identity, documents and learning lack broad calibration | Labeled and repeated evaluations, provenance, stable versions and explicit unsupported outcomes |
+| P1 | Clean Windows setup/recovery and whole-interface behavior remain unqualified | Missing-dependency/non-admin/custom-path runs; complete screen/state, resize/zoom and recovery matrices |
+
+The original capability map below remains the product-scope inventory. Its
+historical socket-stall description and test totals are superseded only by the
+specific checkpoints above. Generic form completion remains the critical path:
+three visually/native-verified fictional entries on one saved real form, a stop
+before Phone, and no section advancement do not establish majority-site coverage.
+No overall completion percentage or zero-defect claim is justified.
+
+### Efficiency and resource observations
+
+Current file sizes remain large: `main.rs` 17,026 lines; `fit_task.rs` 10,433;
+`form_preview.rs` 7,407; browser `lib.rs` 8,063, including their tests. Extract
+changed ownership/protocol mechanisms as needed; do not spend a cycle rewriting
+unrelated modules. Do not confuse nonblocking socket handling with nonblocking
+handlers or add unbounded parallel workers to compensate.
+
+The main avoidable costs are repeated broad replanning, excessive log/context
+retrieval, repeated copying of immutable runtimes/models, and rerunning unrelated
+model/browser suites. Use one active queue, short evidence handoffs, shared
+verified inputs, focused regressions followed by one coherent workspace pass,
+and source-bound reuse. The earlier disk traversal remains an incomplete sample;
+no new disk-total or leak measurement is claimed here.
+
+The read-only host audit observed 29,459,173,376 bytes (about 27.44 GiB) available
+RAM, zero matching development processes/persistent registrations and no resident
+Ollama models. This is one snapshot, not a memory reservation or sustained leak
+proof. The shared service was left intact. Headless work and bounded ownership
+remain mandatory; a 16 GB GPU does not make unlimited host-RAM spill acceptable.
+
+Paginated GitHub inventories were rechecked: 11 code-scanning alerts reported
+fixed; six Dependabot alerts reported fixed; neither returned inventory contained
+open or dismissed entries. No statuses were changed. These provider results do
+not prove all dependencies are latest, cover other detectors or validate the
+unfinished source. Native receipts and source hashes are retained privately in
+`target/repo-review-refresh/`.
+
+## Original audit snapshot
+
 Reviewed source: `4acb9a955bcb961ad7a27cb9538e77bb0e03a547` on `main`.
 This is a source-and-evidence review, not an exhaustive code/security audit or
 release approval. The existing Smart Jobseeker development goal remains active.

@@ -38,6 +38,8 @@ mod email_draft;
 pub mod email_worker;
 mod experience_inference;
 mod extract_task;
+#[cfg(test)]
+mod fit_control_tests;
 mod fit_task;
 mod form_capture_task;
 mod form_links;
@@ -2232,14 +2234,27 @@ fn resident_model_status() -> Result<Value, String> {
 }
 
 fn resident_model_status_at(addr: std::net::SocketAddr) -> Result<Value, String> {
-    let (status, bytes) = http_request(addr, "GET", "/api/ps", None, 3000)?;
+    resident_model_status_at_guarded(addr, None)
+}
+
+fn resident_model_status_at_guarded(
+    addr: std::net::SocketAddr,
+    guard: Option<&(dyn Fn() -> Result<(), String> + Send + Sync)>,
+) -> Result<Value, String> {
+    let get = |path| match guard {
+        Some(guard) => waypoint_inference::ollama::http_request_with_guard(
+            addr, "GET", path, None, 3000, guard,
+        ),
+        None => http_request(addr, "GET", path, None, 3000),
+    };
+    let (status, bytes) = get("/api/ps")?;
     if status != 200 {
         return Err(format!("Ollama returned HTTP {status}"));
     }
     let data: Value = serde_json::from_slice(&bytes).map_err(|_| "invalid Ollama response")?;
     let status = model_diagnostics(&data)?;
     if let Some(name) = status["model"].as_str() {
-        let (code, tags) = http_request(addr, "GET", "/api/tags", None, 3000)?;
+        let (code, tags) = get("/api/tags")?;
         if code != 200 {
             return Err(format!("Ollama model inventory returned HTTP {code}"));
         }
@@ -2600,7 +2615,13 @@ fn serve(
         )?;
         json_reply(&mut response, "200 OK", finish_model_inventory(snapshot));
     } else {
-        serve_request(&mut response, request, ws, session)?;
+        serve_request(
+            &mut response,
+            request,
+            ws,
+            session,
+            std::net::SocketAddr::from(([127, 0, 0, 1], 11434)),
+        )?;
     }
     http_server::write_test_response(stream, response)
 }
@@ -2610,6 +2631,7 @@ fn serve_request(
     request: http_server::Request,
     ws: &mut Workspace,
     session: &mut Option<ReviewSession>,
+    runtime: std::net::SocketAddr,
 ) -> Result<(), String> {
     let http_server::Request {
         method,
@@ -4059,10 +4081,6 @@ fn serve_request(
             if facts.is_empty() && instructions.trim().is_empty() {
                 return Err("Add reviewed qualifications or search instructions first".into());
             }
-            let model_status = resident_model_status()?;
-            let model = model_status["model"].as_str().map(str::to_owned).ok_or(
-                "No single Ollama model is available within the GPU and system-memory budgets",
-            )?;
             let task_id = random_id()?;
             let job = ws
                 .job(&job_id)
@@ -4091,11 +4109,7 @@ fn serve_request(
             });
             fit_task::start(
                 task_id.clone(),
-                fit_task::FitModel {
-                    name: model,
-                    digest: model_status["model_digest"].as_str().map(str::to_owned),
-                    context_length: model_status["context_length"].as_u64(),
-                },
+                runtime,
                 job_id.as_str().to_owned(),
                 digest,
                 fit_task::FactPool { facts, available },
@@ -4106,6 +4120,10 @@ fn serve_request(
                 },
             )?;
             json_reply(stream, "200 OK", json!({"task_id":task_id}));
+        }
+        "/api/fit/cancel" => {
+            let id = body["task_id"].as_str().ok_or("Missing assessment task")?;
+            json_reply(stream, "200 OK", fit_task::cancel(id)?);
         }
         "/api/fit/status" => {
             let id = body["task_id"].as_str().ok_or("missing task id")?;
@@ -9813,7 +9831,9 @@ fn serve_loop_with_runtime(
                 }
             } else {
                 let mut response = http_server::Response::default();
-                if let Err(error) = serve_request(&mut response, request, &mut ws, &mut session) {
+                if let Err(error) =
+                    serve_request(&mut response, request, &mut ws, &mut session, runtime)
+                {
                     response = http_server::Response::default();
                     json_reply(&mut response, "400 Bad Request", json!({"error":error}));
                 }
@@ -9839,6 +9859,9 @@ fn serve_loop_with_runtime(
     }
     drop(transport);
     drop(inventory_reads);
+    if let Err(error) = fit_task::shutdown() {
+        eprintln!("Assessment shutdown needs review: {error}");
+    }
     if let Err(error) = web_search_batch::collect_background()
         .and_then(|_| web_search_batch::persist_progress(&ws).map(|_| ()))
         .and_then(|_| web_search_batch::persist_completed(&ws).map(|_| ()))

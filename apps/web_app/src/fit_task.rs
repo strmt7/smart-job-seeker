@@ -1,6 +1,11 @@
 //! On-demand, local, reviewable job-fit assessment.
 use serde_json::{json, Value};
-use std::sync::Mutex;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 use waypoint_inference::{Inference, InferenceError, OllamaInference};
 
 struct Task {
@@ -8,9 +13,11 @@ struct Task {
     result: Option<Result<Value, String>>,
     job_id: String,
     input_digest: String,
-    model: String,
+    model: Option<String>,
     model_digest: Option<String>,
     context_length: Option<u64>,
+    cancelled: Arc<AtomicBool>,
+    worker: Option<JoinHandle<Result<Value, String>>>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 static COMPLETED: Mutex<Option<(String, Value)>> = Mutex::new(None);
@@ -24,10 +31,29 @@ pub struct FitListing {
     pub model_text: String,
     pub verification_text: Option<String>,
 }
-pub struct FitModel {
+#[derive(Clone)]
+struct FitModel {
     pub name: String,
     pub digest: Option<String>,
     pub context_length: Option<u64>,
+}
+
+impl Task {
+    fn refresh(&mut self) {
+        if self.worker.as_ref().is_some_and(JoinHandle::is_finished) {
+            let result = self
+                .worker
+                .take()
+                .expect("finished worker")
+                .join()
+                .unwrap_or_else(|_| Err("Assessment stopped unexpectedly".into()));
+            self.result = Some(if self.cancelled.load(Ordering::Acquire) {
+                Err("Assessment was stopped".into())
+            } else {
+                result
+            });
+        }
+    }
 }
 fn same_model_snapshot(
     status: &Value,
@@ -191,7 +217,10 @@ pub fn repeatability_comparison(previous: &Value, current: &Value) -> Option<Val
 }
 
 pub fn pending() -> Result<Value, String> {
-    let tasks = TASK.lock().map_err(|_| "Assessment unavailable")?;
+    let mut tasks = TASK.lock().map_err(|_| "Assessment unavailable")?;
+    if let Some(task) = tasks.as_mut() {
+        task.refresh();
+    }
     Ok(match tasks.as_ref() {
         Some(task) => {
             json!({"active":true,"task_id":task.id,"job_id":task.job_id,"finished":task.result.is_some()})
@@ -202,78 +231,226 @@ pub fn pending() -> Result<Value, String> {
 
 pub fn start(
     id: String,
-    model: FitModel,
+    runtime: std::net::SocketAddr,
     job_id: String,
     input_digest: String,
     pool: FactPool,
     instructions: String,
     listing: FitListing,
 ) -> Result<(), String> {
-    let FitModel {
-        name: model,
-        digest: model_digest,
-        context_length,
-    } = model;
+    if runtime.ip() != std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST) || runtime.port() == 0 {
+        return Err("Fit assessment requires a literal local runtime address".into());
+    }
     let mut task = TASK.lock().map_err(|_| "Assessment unavailable")?;
     if task.is_some() {
         return Err("An assessment is running or awaiting its result".into());
     }
     let lease = crate::doc_suggest::lease()?;
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let flag = cancelled.clone();
     *task = Some(Task {
         id: id.clone(),
         result: None,
         job_id,
         input_digest,
-        model: model.clone(),
-        model_digest: model_digest.clone(),
-        context_length,
+        model: None,
+        model_digest: None,
+        context_length: None,
+        cancelled,
+        worker: None,
     });
-    drop(task);
-    std::thread::spawn(move || {
-        let _lease = lease;
-        let result = std::panic::catch_unwind(|| {
-            let llm = OllamaInference::new("http://127.0.0.1:11434", model.clone())
-                .map_err(|e| e.to_string())?
-                .with_resident_context();
-            let task_model = model.clone();
-            let mut model = crate::resident_inference::ResidentInference::new(
-                llm,
-                model.clone(),
-                crate::resident_model_identity,
-            );
-            let (selected, selection) = select_semantic_facts(
-                &mut model,
-                &pool.facts,
-                pool.available,
-                &instructions,
-                &listing.model_text,
-            );
-            let mut result = assess_with_source(
-                &mut model,
-                &selected,
-                &instructions,
-                &listing.model_text,
-                listing.verification_text.as_deref(),
-            )?;
-            let identity_same = crate::resident_model_status().ok().is_some_and(|status| {
-                same_model_snapshot(
-                    &status,
-                    &task_model,
-                    model_digest.as_deref(),
-                    context_length,
-                )
-            });
-            result["model_identity_verified"] = json!(identity_same);
-            result["selection"] = selection;
-            Ok(result)
-        })
-        .unwrap_or_else(|_| Err("Assessment stopped unexpectedly".into()));
-        if let Ok(mut task) = TASK.lock() {
-            if let Some(task) = task.as_mut().filter(|task| task.id == id) {
-                task.result = Some(result);
-            }
+    let worker = std::thread::Builder::new()
+        .name("job-fit-assessment".into())
+        .spawn(move || {
+            let _lease = lease;
+            std::panic::catch_unwind(|| run(&id, runtime, &flag, pool, instructions, listing))
+                .unwrap_or_else(|_| Err("Assessment stopped unexpectedly".into()))
+        });
+    match worker {
+        Ok(worker) => {
+            task.as_mut().expect("registered task").worker = Some(worker);
+            Ok(())
         }
-    });
+        Err(error) => {
+            *task = None;
+            Err(format!("The assessment could not start: {error}"))
+        }
+    }
+}
+
+fn check_cancel(cancelled: &AtomicBool) -> Result<(), String> {
+    if cancelled.load(Ordering::Acquire) {
+        Err("Assessment was stopped".into())
+    } else {
+        Ok(())
+    }
+}
+
+fn runtime_status(runtime: std::net::SocketAddr, cancelled: &AtomicBool) -> Result<Value, String> {
+    let started = Instant::now();
+    let guard = || {
+        check_cancel(cancelled)?;
+        if started.elapsed() >= Duration::from_secs(6) {
+            Err("Local model check timed out".into())
+        } else {
+            Ok(())
+        }
+    };
+    crate::resident_model_status_at_guarded(runtime, Some(&guard))
+}
+
+fn selected_model(status: &Value) -> Result<FitModel, String> {
+    let name = status["model"]
+        .as_str()
+        .filter(|name| !name.is_empty())
+        .ok_or("No single Ollama model is available within the GPU and system-memory budgets")?;
+    let digest = status["model_digest"]
+        .as_str()
+        .filter(|digest| digest.len() == 64 && digest.bytes().all(|b| b.is_ascii_hexdigit()))
+        .ok_or("The resident model digest is unavailable")?;
+    let context = status["context_length"]
+        .as_u64()
+        .filter(|n| *n > 0)
+        .ok_or("The resident context is unavailable")?;
+    Ok(FitModel {
+        name: name.into(),
+        digest: Some(digest.into()),
+        context_length: Some(context),
+    })
+}
+
+fn model_identity(
+    status: &Value,
+    expected: &FitModel,
+) -> Result<crate::resident_inference::ResidentIdentity, String> {
+    if !same_model_snapshot(
+        status,
+        &expected.name,
+        expected.digest.as_deref(),
+        expected.context_length,
+    ) {
+        return Err("The assessment model or context changed".into());
+    }
+    Ok(crate::resident_inference::ResidentIdentity {
+        name: expected.name.clone(),
+        digest: expected
+            .digest
+            .clone()
+            .ok_or("The model digest is unavailable")?,
+    })
+}
+
+fn run(
+    id: &str,
+    runtime: std::net::SocketAddr,
+    cancelled: &Arc<AtomicBool>,
+    pool: FactPool,
+    instructions: String,
+    listing: FitListing,
+) -> Result<Value, String> {
+    let status = runtime_status(runtime, cancelled)?;
+    check_cancel(cancelled)?;
+    let selected_model = selected_model(&status)?;
+    {
+        let mut task = TASK.lock().map_err(|_| "Assessment unavailable")?;
+        let task = task
+            .as_mut()
+            .filter(|task| task.id == id)
+            .ok_or("Assessment is no longer active")?;
+        check_cancel(cancelled)?;
+        task.model = Some(selected_model.name.clone());
+        task.model_digest = selected_model.digest.clone();
+        task.context_length = selected_model.context_length;
+    }
+    let llm = OllamaInference::new(&format!("http://{runtime}"), selected_model.name.clone())
+        .map_err(|e| e.to_string())?
+        .with_resident_context()
+        .with_cancel_flag(cancelled.clone());
+    let expected = selected_model.clone();
+    let flag = cancelled.clone();
+    let resident = move || {
+        let status = runtime_status(runtime, &flag)?;
+        model_identity(&status, &expected).map(Some)
+    };
+    let identity = crate::resident_inference::ResidentIdentity {
+        name: selected_model.name.clone(),
+        digest: selected_model
+            .digest
+            .clone()
+            .ok_or("The model digest is unavailable")?,
+    };
+    let mut model = crate::resident_inference::ResidentInference::new(
+        llm,
+        selected_model.name.clone(),
+        resident,
+    )
+    .with_identity(identity)?;
+    let (selected, selection) = select_semantic_facts(
+        &mut model,
+        &pool.facts,
+        pool.available,
+        &instructions,
+        &listing.model_text,
+    );
+    check_cancel(cancelled)?;
+    let mut result = assess_with_source(
+        &mut model,
+        &selected,
+        &instructions,
+        &listing.model_text,
+        listing.verification_text.as_deref(),
+    )?;
+    check_cancel(cancelled)?;
+    let identity_same = runtime_status(runtime, cancelled)
+        .ok()
+        .is_some_and(|status| {
+            same_model_snapshot(
+                &status,
+                &selected_model.name,
+                selected_model.digest.as_deref(),
+                selected_model.context_length,
+            )
+        });
+    check_cancel(cancelled)?;
+    result["model_identity_verified"] = json!(identity_same);
+    result["selection"] = selection;
+    Ok(result)
+}
+
+pub fn cancel(id: &str) -> Result<Value, String> {
+    let mut tasks = TASK.lock().map_err(|_| "Assessment unavailable")?;
+    if let Some(task) = tasks.as_mut().filter(|task| task.id == id) {
+        task.refresh();
+        if task.result.is_some() {
+            return Ok(json!({"status":"finished"}));
+        }
+        task.cancelled.store(true, Ordering::Release);
+        return Ok(json!({"status":"stopping"}));
+    }
+    if COMPLETED
+        .lock()
+        .map_err(|_| "Assessment unavailable")?
+        .as_ref()
+        .is_some_and(|(key, _)| key == id)
+    {
+        return Ok(json!({"status":"finished"}));
+    }
+    Err("Assessment not found".into())
+}
+
+pub fn shutdown() -> Result<(), String> {
+    let task = TASK.lock().map_err(|_| "Assessment unavailable")?.take();
+    if let Some(mut task) = task {
+        task.cancelled.store(true, Ordering::Release);
+        if let Some(worker) = task.worker.take() {
+            worker
+                .join()
+                // Shutdown cancels and drains work, without publishing an
+                // uncollected assessment or overriding its saved predecessor.
+                .map(|_outcome| ())
+                .map_err(|_| "Assessment stopped unexpectedly during shutdown")?;
+        }
+    }
     Ok(())
 }
 
@@ -646,8 +823,11 @@ pub fn poll(id: &str) -> Result<Value, String> {
             .map(|(_, value)| value.clone())
             .ok_or_else(|| "Assessment not found".into());
     };
+    task.refresh();
     let Some(result) = task.result.as_ref() else {
-        return Ok(json!({"status":"running"}));
+        return Ok(
+            json!({"status":"running","phase":if task.cancelled.load(Ordering::Acquire){"stopping"}else if task.model.is_none(){"checking_model"}else{"assessing"}}),
+        );
     };
     let job_id = task.job_id.clone();
     let input_digest = task.input_digest.clone();
@@ -656,13 +836,18 @@ pub fn poll(id: &str) -> Result<Value, String> {
         Ok(assessment) => {
             json!({"status":"complete","assessment":assessment,"job_id":job_id,"input_digest":input_digest,"model":model,"model_digest":if assessment["model_identity_verified"] == true { task.model_digest.as_deref() } else { None },"context_length":if assessment["model_identity_verified"] == true { task.context_length } else { None }})
         }
-        Err(error) => json!({"status":"failed","error":error}),
+        Err(error) => {
+            json!({"status":if task.cancelled.load(Ordering::Acquire){"stopped"}else{"failed"},"error":error})
+        }
     })
 }
 
 /// Retain the last result after it has been checked and persisted by the API.
 pub fn complete(id: &str, result: Value) -> Result<(), String> {
     let mut tasks = TASK.lock().map_err(|_| "Assessment unavailable")?;
+    if let Some(task) = tasks.as_mut() {
+        task.refresh();
+    }
     let mut completed = COMPLETED.lock().map_err(|_| "Assessment unavailable")?;
     if tasks
         .as_ref()
@@ -681,6 +866,9 @@ pub fn complete(id: &str, result: Value) -> Result<(), String> {
 /// Discard a finished result without stopping an active model operation.
 pub fn discard(id: &str) -> Result<(), String> {
     let mut tasks = TASK.lock().map_err(|_| "Assessment unavailable")?;
+    if let Some(task) = tasks.as_mut() {
+        task.refresh();
+    }
     if let Some(task) = tasks.as_ref().filter(|task| task.id == id) {
         if task.result.is_none() {
             return Err("Assessment is still running; wait until it finishes".into());
@@ -4947,6 +5135,36 @@ mod tests {
     }
 
     #[test]
+    fn model_admission_and_live_identity_require_complete_unchanged_metadata() {
+        let status =
+            json!({"model":"fictional","model_digest":"a".repeat(64),"context_length":4096});
+        let expected = selected_model(&status).unwrap();
+        assert!(model_identity(&status, &expected).is_ok());
+        for key in ["model", "model_digest", "context_length"] {
+            let mut missing = status.clone();
+            missing.as_object_mut().unwrap().remove(key);
+            assert!(selected_model(&missing).is_err(), "{key}");
+            assert!(model_identity(&missing, &expected).is_err(), "{key}");
+        }
+        for (key, value) in [
+            ("model", json!("other")),
+            ("model_digest", json!("b".repeat(64))),
+            ("context_length", json!(8192)),
+        ] {
+            let mut changed = status.clone();
+            changed[key] = value;
+            assert!(model_identity(&changed, &expected)
+                .unwrap_err()
+                .contains("changed"));
+        }
+        for invalid in [json!(0), json!(null), json!("4096")] {
+            let mut invalid_status = status.clone();
+            invalid_status["context_length"] = invalid;
+            assert!(selected_model(&invalid_status).is_err());
+        }
+    }
+
+    #[test]
     #[ignore = "requires a resource-gated resident local model"]
     fn live_fit_worker_compares_reported_model_identity() {
         let _guard = TEST_LOCK.lock().unwrap();
@@ -4960,11 +5178,7 @@ mod tests {
             let id = format!("fictional-live-fit-{index}");
             start(
                 id.clone(),
-                FitModel {
-                    name: name.clone(),
-                    digest: Some(digest.clone()),
-                    context_length: Some(context),
-                },
+                "127.0.0.1:11434".parse().unwrap(),
                 "fictional-job".into(),
                 "fictional-input".into(),
                 FactPool {
@@ -5001,44 +5215,18 @@ mod tests {
             .expect("matching identity permits a comparison");
         println!("Fictional live worker comparison: {comparison}");
         assert_eq!(comparison["identity_basis"], "digest_context_snapshots");
-        let stale_id = "fictional-stale-model";
-        start(
-            stale_id.into(),
-            FitModel {
-                name,
-                digest: Some("0".repeat(64)),
-                context_length: Some(context),
-            },
-            "fictional-job".into(),
-            "fictional-input".into(),
-            FactPool {
-                facts: vec!["Built software using Rust".into()],
-                available: 1,
-            },
-            String::new(),
-            FitListing {
-                model_text: listing.into(),
-                verification_text: Some(listing.into()),
-            },
-        )
-        .unwrap();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(240);
-        let stale = loop {
-            let result = poll(stale_id).unwrap();
-            if result["status"] != "running" {
-                break result;
-            }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "Live fit worker timed out"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(250));
+        // Startup now selects the runtime identity inside the owned worker.
+        // The same production fence must reject stale expected metadata.
+        let stale = FitModel {
+            name,
+            digest: Some("0".repeat(64)),
+            context_length: Some(context),
         };
-        assert_eq!(stale["status"], "complete", "{stale}");
-        assert_eq!(stale["assessment"]["model_identity_verified"], false);
-        assert!(stale["model_digest"].is_null());
-        assert!(repeatability_comparison(&results[1], &stale).is_none());
-        complete(stale_id, stale).unwrap();
+        assert!(
+            model_identity(&crate::resident_model_status().unwrap(), &stale)
+                .unwrap_err()
+                .contains("changed")
+        );
     }
 
     #[test]
@@ -8369,9 +8557,11 @@ mod tests {
             result: Some(Ok(json!({"score":60}))),
             job_id: id.as_str().into(),
             input_digest: digest,
-            model: "fixture".into(),
+            model: Some("fixture".into()),
             model_digest: None,
             context_length: None,
+            cancelled: Arc::new(AtomicBool::new(false)),
+            worker: None,
         });
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -8396,9 +8586,11 @@ mod tests {
             result: None,
             job_id: "job".into(),
             input_digest: "digest".into(),
-            model: "fixture".into(),
+            model: Some("fixture".into()),
             model_digest: None,
             context_length: None,
+            cancelled: Arc::new(AtomicBool::new(false)),
+            worker: None,
         });
         assert!(discard("fixture-running")
             .unwrap_err()
@@ -8492,9 +8684,11 @@ mod tests {
             )),
             job_id: id.as_str().into(),
             input_digest: digest,
-            model: "fixture-model".into(),
+            model: Some("fixture-model".into()),
             model_digest: None,
             context_length: None,
+            cancelled: Arc::new(AtomicBool::new(false)),
+            worker: None,
         });
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -8541,17 +8735,17 @@ mod tests {
             result: Some(Ok(json!({"score": 70}))),
             job_id: "job".into(),
             input_digest: "digest".into(),
-            model: "local".into(),
+            model: Some("local".into()),
             model_digest: None,
             context_length: None,
+            cancelled: Arc::new(AtomicBool::new(false)),
+            worker: None,
         });
+        assert_eq!(cancel("first").unwrap()["status"], "finished");
+        assert_eq!(poll("first").unwrap()["status"], "complete");
         let result = start(
             "second".into(),
-            FitModel {
-                name: "local".into(),
-                digest: None,
-                context_length: None,
-            },
+            "127.0.0.1:11434".parse().unwrap(),
             "job".into(),
             "digest".into(),
             FactPool {

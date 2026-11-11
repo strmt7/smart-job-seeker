@@ -1,3 +1,11 @@
+## Cancellable fit startup - 2026-11-11
+
+The [owned fit-task checkpoint](docs/g1/DEFERRED_FIT_2026-11-11.md) moves model
+preflight off the workspace owner, adds task-bound Stop and joins cancelled work.
+Workspace tests (1,305 passed / 593 ignored), Clippy, build, isolated native
+control lifecycle and rendered client states passed within their stated scope.
+Other blocking handlers and generic local-model form completion remain open.
+
 ## Deferred local model inventory - 2026-11-11
 
 The inventory fetch uses one owned, cancellable worker with four bounded

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "reviewed_on": "2026-11-11",
-  "reviewed_source": "4acb9a955bcb961ad7a27cb9538e77bb0e03a547",
+  "reviewed_source": "8bd000154a6debeb20c3544d05f20f0731220771",
   "goal": "Continue the existing active Smart Jobseeker product-development goal",
   "plan": "docs/COMPLETION_PLAN_2026-11-11.md",
   "assessment": "docs/REPO_STATE_REVIEW_2026-11-11.md",
@@ -23,7 +23,12 @@
       "depends_on": [],
       "title": "Bounded, responsive local control plane",
       "paths": [
-        "apps/web_app/src/main.rs"
+        "apps/web_app/src/http_server.rs",
+        "apps/web_app/src/inventory_read.rs",
+        "apps/web_app/src/fit_task.rs",
+        "apps/web_app/src/main.rs",
+        "crates/waypoint_inference/src/ollama.rs",
+        "apps/web_app/web/app.js"
       ],
       "acceptance": [
         "No slow socket monopolizes workspace state",
@@ -33,9 +38,23 @@
       "evidence": [
         "docs/REPO_STATE_REVIEW_2026-11-11.md",
         "docs/g1/CONTROL_PLANE_IO_2026-11-11.md",
-        "docs/g1/DEFERRED_INVENTORY_2026-11-11.md"
+        "docs/g1/DEFERRED_INVENTORY_2026-11-11.md",
+        "docs/g1/DEFERRED_FIT_2026-11-11.md"
       ],
-      "next_action": "Move synchronous model-status preflight in fit/task startup into the owned task lifecycle with current input/model binding; continue status/stop and native-observation qualification."
+      "next_action": "Reproduce and defer the remaining form-opening resident-model preflight with owned cancellation and current input/model binding; measure native-observation costs before declaring all-handler responsiveness.",
+      "execution_batch": "A",
+      "steps": [
+        "Measure and move the form-opening resident-model preflight off the workspace owner without weakening source/input/model gates.",
+        "Audit remaining native observations and blocking handlers using bounded latency/overload/cancel/shutdown fixtures.",
+        "Preserve the passing fit/inventory/socket checkpoints; rerun only affected contracts, then advance R02/R03."
+      ],
+      "completed_scopes": [
+        "Committed bounded nonblocking transport, 68b3e891; hosted checks passed for that exact source.",
+        "Owned model inventory, local 8bd00015; scoped local passing evidence only.",
+        "Fit preflight/cancellation, guarded context observation and manual Stop; scoped local workspace/native/client evidence, not all-handler readiness."
+      ],
+      "open_checkpoint": "Other synchronous owner-thread handlers and native observations remain unqualified; main.rs::form_resident_model is still called during form opening.",
+      "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package."
     },
     {
       "id": "R02",
@@ -54,7 +73,16 @@
         "Explicit correctness, abstention, completion and resource denominators",
         "Held-out partition fixed before tuning; repeats for model promotion"
       ],
-      "evidence": []
+      "evidence": [],
+      "execution_batch": "B",
+      "steps": [
+        "Extend existing qualification manifests with input/source/model/prompt/runtime identity and expected answerability/outcomes.",
+        "Collect the initial varied fictional and permitted saved-real cases with private provenance; keep failures/exclusions.",
+        "Freeze employer/layout-family held-out partition before tuning.",
+        "Report field, workflow, abstention, error, elapsed and resource denominators; repeat model-sensitive promotion candidates."
+      ],
+      "next_action": "Extend existing qualification manifests with input/source/model/prompt/runtime identity and expected answerability/outcomes.",
+      "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package."
     },
     {
       "id": "R03",
@@ -74,7 +102,16 @@
         "Required labels and controls independently visible and bound",
         "Earlier and held-out saved cases retain honest review outcomes"
       ],
-      "evidence": []
+      "evidence": [],
+      "execution_batch": "B",
+      "steps": [
+        "Reproduce missing Phone-label crop and incomplete saved-page rendering with native network/DOM/image evidence.",
+        "Repair generic contextual capture and only permission-eligible resource variants; preserve document/node identity.",
+        "Exercise distant/repeated/obscured labels, frames and resource failures on prior and held-out cases.",
+        "Inspect actual screenshots; retain manual-review status for unrenderable or server-dependent steps."
+      ],
+      "next_action": "Reproduce missing Phone-label crop and incomplete saved-page rendering with native network/DOM/image evidence.",
+      "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package."
     },
     {
       "id": "R04",
@@ -95,7 +132,16 @@
         "Custom choices, repeated histories, conditional/multistep/frame scenarios",
         "Independent before/after visual and native checks; no-progress review fallback"
       ],
-      "evidence": []
+      "evidence": [],
+      "execution_batch": "C",
+      "steps": [
+        "Connect candidate-supported facts and native/visual observations to a small typed action planner.",
+        "Implement bounded choose/enter/attach/section/repeated-history decisions with independent current-state validation.",
+        "After every action, read back native state and perform local-model visual review; detect stale state and no progress.",
+        "Measure the local model on the frozen corpus; provide actionable review records rather than invented answers."
+      ],
+      "next_action": "Connect candidate-supported facts and native/visual observations to a small typed action planner.",
+      "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package."
     },
     {
       "id": "R05",
@@ -116,7 +162,16 @@
         "OS and transport evidence independent of model/button wording",
         "No real employer interactions beyond read-only; no application sends"
       ],
-      "evidence": []
+      "evidence": [],
+      "execution_batch": "C",
+      "steps": [
+        "Retain zero-capability offline/fictional candidate execution and live read-only boundary.",
+        "Exercise misleading controls, autosave, uploads, Enter, fetch/XHR, frames, redirects, service workers and socket transports with canaries.",
+        "Independently verify OS containment, network outcomes, document identities and stale/revoked authorization behavior.",
+        "Keep live candidate interaction disabled; no finite test result becomes a zero-risk universal claim."
+      ],
+      "next_action": "Retain zero-capability offline/fictional candidate execution and live read-only boundary.",
+      "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package."
     },
     {
       "id": "R06",
@@ -137,7 +192,16 @@
         "Every final attachment PDF; independent text and per-page visual review",
         "Factual provenance, bounded repairs, exact exported attachment hashes"
       ],
-      "evidence": []
+      "evidence": [],
+      "execution_batch": "D",
+      "steps": [
+        "Import varied private authorized and fictional PDF/DOCX/scanned/multilingual histories and templates.",
+        "Tailor from supported facts with relevance/ATS parsing checks and bounded natural-writing revisions.",
+        "Convert every final attachment to PDF; independently check extracted text/order and render every page.",
+        "Repair within the documented budget or require review; bind exact exported attachment hashes and provenance."
+      ],
+      "next_action": "Import varied private authorized and fictional PDF/DOCX/scanned/multilingual histories and templates.",
+      "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package."
     },
     {
       "id": "R07",
@@ -157,7 +221,16 @@
         "Original ads; fresh/stale/closed/inaccessible/challenge distinctions",
         "Labeled retrieval and actual-route reachability evidence"
       ],
-      "evidence": []
+      "evidence": [],
+      "execution_batch": "D",
+      "steps": [
+        "Evaluate varied role/location/language/query expansions across free eligible web providers, boards and direct employers.",
+        "Bound pagination/host concurrency/budgets; cache, back off and resume with explicit degraded sources.",
+        "Retain original ads and verify actual application routes; classify freshness, closure, login/challenge and email-only outcomes.",
+        "Measure labeled retrieval and route reachability; add sources only for measured coverage benefit."
+      ],
+      "next_action": "Evaluate varied role/location/language/query expansions across free eligible web providers, boards and direct employers.",
+      "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package."
     },
     {
       "id": "R08",
@@ -177,7 +250,16 @@
         "Repeatability and independently reviewed held-out examples",
         "False merge/missed duplicate and restart/application-alias evidence"
       ],
-      "evidence": []
+      "evidence": [],
+      "execution_batch": "D",
+      "steps": [
+        "Freeze objective fit rubric/version and facts; retain hard constraints and explicit unknowns.",
+        "Measure repeatability, paraphrase sensitivity, evidence completeness and independently reviewed fit examples.",
+        "Label near-duplicate and distinct requisition/repost pairs; compare aliases, employer, location, description and dates.",
+        "Qualify reversible review and restart-safe exclusion of already attempted jobs across aliases; report false merges and misses."
+      ],
+      "next_action": "Freeze objective fit rubric/version and facts; retain hard constraints and explicit unknowns.",
+      "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package."
     },
     {
       "id": "R09",
@@ -197,7 +279,16 @@
         "Paired no-memory/with-memory tests on held-out changed platforms",
         "Promote only measured improvements without critical regressions"
       ],
-      "evidence": []
+      "evidence": [],
+      "execution_batch": "E",
+      "steps": [
+        "Propose narrow structured lessons from retained failures/corrections with provenance and dependencies.",
+        "Implement review/promotion, revision/expiry/revoke, conflicts and bounded retrieval using existing experience store.",
+        "Run paired memory/no-memory cases on unchanged and held-out changed layouts, including malicious/stale lessons.",
+        "Promote only independently measured improvements without critical regressions; preserve intelligence and authorization boundaries."
+      ],
+      "next_action": "Propose narrow structured lessons from retained failures/corrections with provenance and dependencies.",
+      "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package."
     },
     {
       "id": "R10",
@@ -218,7 +309,16 @@
         "Crash/cancel/restart/ambiguous-write reconciliation without automatic retry",
         "Email preparation/correlation; no application email sent"
       ],
-      "evidence": []
+      "evidence": [],
+      "execution_batch": "E",
+      "steps": [
+        "Complete per-attempt manifest for original ad, final PDFs, answers, screenshots, hashes and honest outcomes.",
+        "Qualify crash/cancel/restart at journal and artifact boundaries; never auto-retry ambiguous external writes.",
+        "Qualify inbox correlation and prepared email packages without application sending.",
+        "Exercise final dispatch/confirmation/idempotency mechanisms only on fictional loopback forms/local mail server; retain explicit user-grant design."
+      ],
+      "next_action": "Complete per-attempt manifest for original ad, final PDFs, answers, screenshots, hashes and honest outcomes.",
+      "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package."
     },
     {
       "id": "R11",
@@ -240,7 +340,16 @@
         "SQLCipher/DPAPI migration, backup/restore and degraded-build disclosures",
         "Measured model/context RAM/VRAM and bounded teardown with host reserve"
       ],
-      "evidence": []
+      "evidence": [],
+      "execution_batch": "F",
+      "steps": [
+        "Exercise clean non-admin Windows missing-dependency, interrupted/offline, custom-path, repair/update/rollback/uninstall cases.",
+        "Verify private free licensed dependency provisioning and actionable degraded states without global host mutation.",
+        "Qualify SQLCipher/DPAPI migration, backup/restore, wrong-user/machine and deliberate export contracts.",
+        "Measure model/context RAM/VRAM/cache footprint, low-memory admission, cancellation and owned exit; record unavailable clean-host gates honestly."
+      ],
+      "next_action": "Exercise clean non-admin Windows missing-dependency, interrupted/offline, custom-path, repair/update/rollback/uninstall cases.",
+      "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package."
     },
     {
       "id": "R12",
@@ -262,7 +371,16 @@
         "Mouse-drag resize bounds, real browser zoom/DPI/accessibility where available",
         "Every setting functional and persisted; no invented status"
       ],
-      "evidence": []
+      "evidence": [],
+      "execution_batch": "F",
+      "steps": [
+        "Build complete screen/state/setting behavior matrix including setup, license/about, errors, recovery and manual review.",
+        "Iterate generated design references and actual rendered review for material interface changes; use shared style/interaction/layout contracts.",
+        "Implement every displayed control with persisted observable behavior and consistent pressed/loading/stopped states.",
+        "Inspect screenshots under drag bounds, narrow/wide sizes, real zoom, long text and available DPI/accessibility conditions."
+      ],
+      "next_action": "Build complete screen/state/setting behavior matrix including setup, license/about, errors, recovery and manual review.",
+      "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package."
     },
     {
       "id": "R13",
@@ -283,7 +401,16 @@
         "Immutable input reuse and dry-run owned-artifact retention",
         "Change-directed checks, short evidence handoffs and verified cleanup"
       ],
-      "evidence": []
+      "evidence": [],
+      "execution_batch": "F",
+      "steps": [
+        "Extract changed protocol/ownership mechanisms from large modules while retaining compatibility and relevant regressions.",
+        "Reuse verified immutable runtime/model inputs and short source-bound evidence handoffs.",
+        "Inventory disposable owned artifacts with dry-run retention; preserve referenced failures and unrelated resources.",
+        "Select checks by actual changes; verify exit, host headroom and absence of unexpected persistent development registrations."
+      ],
+      "next_action": "Extract changed protocol/ownership mechanisms from large modules while retaining compatibility and relevant regressions.",
+      "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package."
     },
     {
       "id": "R14",
@@ -315,7 +442,46 @@
         "Required hosted checks and visible detector states; no manual closure",
         "Honest remaining limits; no release or application submission"
       ],
-      "evidence": []
+      "evidence": [],
+      "execution_batch": "G",
+      "steps": [
+        "Assemble exact-source supported-capability and end-to-end acceptance matrix after prerequisite packages pass.",
+        "Verify applicable hosted CI/detectors, dependency/license checks and visible unresolved findings without manual suppression.",
+        "Bind installer, model, corpus, recovery and UI evidence; report remaining unsupported scope.",
+        "Tell the user what is ready and what remains; do not publish a release or send applications."
+      ],
+      "next_action": "Assemble exact-source supported-capability and end-to-end acceptance matrix after prerequisite packages pass."
     }
-  ]
+  ],
+  "original_reviewed_source": "4acb9a955bcb961ad7a27cb9538e77bb0e03a547",
+  "goal_harness": {
+    "binding": "Existing active Smart Jobseeker goal; verified active on 2026-11-11",
+    "entry_point": "AGENTS.md",
+    "queue": "docs/ACTIVE_DEVELOPMENT_PLAN.json",
+    "selection": "Read current source and evidence; resume owned handles; select the next unmet criterion of the earliest dependency-ready task. Continue remaining R01 form-opening/native observation work, then R02/R03.",
+    "completion": "A package completion does not complete the product goal. Keep the overall goal active until all required product work is achieved.",
+    "scheduling": "No new agents, automation, service or background scheduler created by this plan."
+  },
+  "execution_policy": {
+    "heavy_concurrency": 1,
+    "development_host_ram_reserve_bytes": 3221225472,
+    "validation": "Focused changed-mechanism regressions, then one coherent workspace/build pass; reuse only applicable identity-bound evidence.",
+    "checkpoint": "Record source, model/config/input identities, result denominator, next failure and owned-resource teardown; do not overwrite historical reports.",
+    "publication": "Coherent tested main checkpoints, infrequent pushes; user alone decides release."
+  },
+  "prior_planning_checkpoint": {
+    "remote_tracking_head": "68b3e8910ad82c5dc76c6c53a6439b9fbbe59dd6",
+    "ahead_of_remote_tracking": 1,
+    "unfinished_source_sha256": {
+      "apps/web_app/src/fit_task.rs": "8498b6a2b72ac1ad456a276e8800ed56a37e20546bc45a9f76e6703eacaace58",
+      "apps/web_app/src/main.rs": "34518994988ff91ae091f0ae03c01b5ee12e12a80e8a5dbbea0d744db9903991"
+    },
+    "build_state": "Last focused test compile failed; three stale start callers remain in current source. No current full-workspace pass claimed."
+  },
+  "working_tree_checkpoint": {
+    "baseline_head": "8bd000154a6debeb20c3544d05f20f0731220771",
+    "validated_changes": "Cancellable fit preflight, shared HTTP deadlines/cancellation, manual Stop and isolated lifecycle CI selection.",
+    "build_state": "Local workspace tests 1305 passed/593 ignored; Clippy, format and canonical build passed. Hosted evidence pending coherent publication.",
+    "evidence": "docs/g1/DEFERRED_FIT_2026-11-11.md"
+  }
 }

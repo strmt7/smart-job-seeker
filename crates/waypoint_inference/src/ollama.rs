@@ -206,8 +206,22 @@ impl OllamaInference {
     }
 
     fn get_json(&self, path: &str, timeout_ms: u64) -> Result<Value, InferenceError> {
-        let (status, bytes) = http_request(self.addr, "GET", path, None, timeout_ms)
-            .map_err(InferenceError::RuntimeUnreachable)?;
+        let (status, bytes) = http_request_guarded(
+            self.addr,
+            "GET",
+            path,
+            None,
+            timeout_ms,
+            Some(&self.cancel_flag),
+            self.request_guard.as_deref(),
+        )
+        .map_err(|error| {
+            if self.cancelled() {
+                InferenceError::Cancelled
+            } else {
+                InferenceError::RuntimeUnreachable(error)
+            }
+        })?;
         if !(200..300).contains(&status) {
             return Err(InferenceError::RuntimeUnreachable(format!(
                 "local runtime returned HTTP {status}"
@@ -371,7 +385,7 @@ impl Inference for OllamaInference {
         });
         let context = if self.resident_context {
             Some(
-                resident_context(self.addr, &self.model)
+                resident_context_from_ps(&self.get_json("/api/ps", 3000)?, &self.model)
                     .map_err(InferenceError::RuntimeUnreachable)?,
             )
         } else {
@@ -573,7 +587,7 @@ fn http_request_guarded(
     guard: Option<&(dyn Fn() -> Result<(), String> + Send + Sync)>,
 ) -> Result<(u16, Vec<u8>), String> {
     let timeout = Duration::from_millis(timeout_ms);
-    let guarded = cancel.is_some() || guard.is_some();
+    let started = Instant::now();
     let check = || -> Result<(), String> {
         if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
             return Err("request cancelled".into());
@@ -581,24 +595,19 @@ fn http_request_guarded(
         if let Some(guard) = guard {
             guard()?;
         }
+        if started.elapsed() >= timeout {
+            return Err("local runtime request deadline exceeded".into());
+        }
         Ok(())
     };
     check()?;
     let mut stream = TcpStream::connect_timeout(&addr, timeout.min(Duration::from_secs(10)))
         .map_err(|e| format!("connect {addr}: {e}"))?;
     stream
-        .set_read_timeout(Some(if guarded {
-            timeout.min(Duration::from_millis(500))
-        } else {
-            timeout
-        }))
+        .set_read_timeout(Some(timeout.min(Duration::from_millis(500))))
         .map_err(|e| e.to_string())?;
     stream
-        .set_write_timeout(Some(if guarded {
-            timeout.min(Duration::from_millis(500))
-        } else {
-            timeout
-        }))
+        .set_write_timeout(Some(timeout.min(Duration::from_millis(500))))
         .map_err(|e| e.to_string())?;
 
     let body_bytes = body.unwrap_or(&[]);
@@ -612,13 +621,11 @@ fn http_request_guarded(
     let mut raw = Vec::with_capacity(8 * 1024);
     const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
     let mut buf = [0u8; 16 * 1024];
-    let mut last_progress = Instant::now();
     loop {
         check()?;
         match stream.read(&mut buf) {
             Ok(0) => break,
             Ok(n) => {
-                last_progress = Instant::now();
                 raw.extend_from_slice(&buf[..n]);
                 if raw.len() > MAX_RESPONSE_BYTES {
                     return Err("runtime response exceeds the 8 MiB limit".into());
@@ -639,16 +646,10 @@ fn http_request_guarded(
             }
             Err(e)
                 if e.kind() == std::io::ErrorKind::WouldBlock
-                    || e.kind() == std::io::ErrorKind::TimedOut =>
-            {
-                if !guarded || last_progress.elapsed() >= timeout {
-                    return Err("timeout waiting for runtime".into());
-                }
-            }
+                    || e.kind() == std::io::ErrorKind::TimedOut => {}
             Err(e) => return Err(format!("read: {e}")),
         }
     }
-
     // Pressure or cancellation can arise while the final read is blocked.
     // Recheck before accepting a complete response, including short responses
     // that arrive between two periodic checks.
@@ -896,6 +897,112 @@ mod tests {
         pressured.store(true, Ordering::Relaxed);
         assert_eq!(client.join().unwrap().unwrap_err(), "memory pressure");
         server.join().unwrap();
+    }
+
+    fn accept_fixture(listener: &std::net::TcpListener) -> TcpStream {
+        listener.set_nonblocking(true).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            match listener.accept() {
+                Ok((stream, _)) => return stream,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(Instant::now() < deadline, "Fixture never connected");
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(e) => panic!("Fixture accept: {e}"),
+            }
+        }
+    }
+
+    #[test]
+    fn resident_context_read_honors_cancel_and_closes_without_generation() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let (started, ready) = std::sync::mpsc::channel();
+        std::thread::scope(|scope| {
+            let server = scope.spawn(|| {
+                let mut stream = accept_fixture(&listener);
+                assert!(read_fixture_request(&mut stream).starts_with(b"GET /api/ps "));
+                started.send(()).unwrap();
+                let end = Instant::now() + Duration::from_secs(3);
+                let mut byte = [0];
+                loop {
+                    assert!(Instant::now() < end, "Context client did not close");
+                    match stream.read(&mut byte) {
+                        Ok(0) => break,
+                        Ok(_) => panic!("Unexpected context request data"),
+                        Err(e)
+                            if matches!(
+                                e.kind(),
+                                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                            ) => {}
+                        Err(e)
+                            if matches!(
+                                e.kind(),
+                                std::io::ErrorKind::ConnectionReset
+                                    | std::io::ErrorKind::ConnectionAborted
+                            ) =>
+                        {
+                            break
+                        }
+                        Err(e) => panic!("Context read: {e}"),
+                    }
+                }
+            });
+            let flag = cancelled.clone();
+            let client = scope.spawn(move || {
+                OllamaInference::new(&origin, "fictional")
+                    .unwrap()
+                    .with_resident_context()
+                    .with_cancel_flag(flag)
+                    .generate_structured("fixture", "Return a fictional result", 32)
+            });
+            ready.recv_timeout(Duration::from_secs(2)).unwrap();
+            let started = Instant::now();
+            cancelled.store(true, Ordering::Release);
+            assert!(matches!(
+                client.join().unwrap(),
+                Err(InferenceError::Cancelled)
+            ));
+            assert!(started.elapsed() < Duration::from_secs(2));
+            server.join().unwrap();
+        });
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock,
+            "A generation request followed cancelled context observation"
+        );
+    }
+
+    #[test]
+    fn trickling_runtime_response_cannot_extend_total_deadline() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::scope(|scope| {
+            let server = scope.spawn(|| {
+                let mut stream = accept_fixture(&listener);
+                read_fixture_request(&mut stream);
+                stream
+                    .set_write_timeout(Some(Duration::from_millis(100)))
+                    .unwrap();
+                stream
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4096\r\n\r\n")
+                    .unwrap();
+                let end = Instant::now() + Duration::from_secs(1);
+                while Instant::now() < end {
+                    if stream.write_all(b" ").is_err() {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            });
+            let started = Instant::now();
+            let error = http_request(address, "GET", "/api/ps", None, 100).unwrap_err();
+            assert!(error.contains("deadline"), "{error}");
+            assert!(started.elapsed() < Duration::from_secs(1));
+            server.join().unwrap();
+        });
     }
 
     #[test]
