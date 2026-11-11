@@ -1,5 +1,11 @@
 # Known limitations register (T050)
 
+Real source-copy diversity, 2026-11-11: three anonymous page families saved,
+but offline previews remain incomplete (0, 0 and 9 controls). Request-context/
+CORS binding is unresolved. Archive success and zero blocked requests do not
+establish a usable form. No real form was filled.
+[Evidence](docs/g1/PUBLIC_SOURCE_DIVERSITY_2026-11-11.md).
+
 Current update, 2026-11-11: saved-copy rehearsal connects the web interface,
 focused local-model vision and [automatic private-model admission](docs/g1/PRIVATE_MODEL_ADMISSION_2026-11-11.md).
 This covers bounded fictional controls, attachments and section changes. Live

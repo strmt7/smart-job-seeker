@@ -16,10 +16,6 @@ fn input<'a>(body: &'a Value, key: &str, max: usize, required: bool) -> Result<&
     }
     Ok(text)
 }
-fn host_matches(host: &str, domain: &str) -> bool {
-    host == domain || host.strip_suffix(domain).is_some_and(|p| p.ends_with('.'))
-}
-
 fn same_identity_text(a: &str, b: &str) -> bool {
     let normalize = |value: &str| {
         value
@@ -44,23 +40,7 @@ fn check_shared_url_identity(
     Ok(())
 }
 pub fn source(host: &str) -> &'static str {
-    for (domain, source) in [
-        ("linkedin.com", "linkedin"),
-        ("jobicy.com", "jobicy"),
-        ("myworkdayjobs.com", "workday"),
-        ("icims.com", "icims"),
-        ("smartrecruiters.com", "smartrecruiters"),
-        ("successfactors.com", "successfactors"),
-        ("successfactors.eu", "successfactors"),
-        ("greenhouse.io", "greenhouse"),
-        ("lever.co", "lever"),
-        ("ashbyhq.com", "ashby"),
-    ] {
-        if host_matches(host, domain) {
-            return source;
-        }
-    }
-    "user_supplied_url"
+    waypoint_policy::source_for_host(host)
 }
 pub fn add(ws: &mut Workspace, body: &Value, timestamp: i64) -> Result<Value, String> {
     add_with_observation(ws, body, timestamp, None)

@@ -6,10 +6,11 @@ responses. It does not prove all browser/broker channels are isolated.
 """
 import base64
 import hashlib
+from html.parser import HTMLParser
 import json
 from pathlib import Path, PurePosixPath
 import re
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 MAX_BODY = 4 * 1024**2
 MAX_TOTAL = 64 * 1024**2
@@ -142,6 +143,54 @@ def sha(value):
     return isinstance(value, str) and re.fullmatch('[a-f0-9]{64}', value) is not None
 
 
+class FetchPreloads(HTMLParser):
+    """Project unambiguous head declarations; never fetch or inspect form values."""
+    def __init__(self, url):
+        super().__init__(convert_charrefs=True)
+        self.base, self.base_seen = url, False
+        self.in_head, self.head_seen, self.inert = False, False, 0
+        self.urls, self.bytes = set(), 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag == 'body':
+            self.in_head, self.head_seen = False, True
+            return
+        if tag == 'head' and not self.head_seen:
+            self.in_head = self.head_seen = True
+        if not self.in_head:
+            return
+        if tag in ('template', 'noscript'):
+            self.inert += 1
+        if self.inert or tag not in ('link', 'base'):
+            return
+        values = dict(attrs)
+        if len(values) != len(attrs):
+            if tag == 'base': self.base, self.base_seen = None, True
+            return
+        href = values.get('href')
+        if not isinstance(href, str) or not href or len(href) > 4096:
+            return
+        try:
+            url = request_url(urljoin(self.base or '', href))
+        except ReplayError:
+            if tag == 'base' and not self.base_seen: self.base, self.base_seen = None, True
+            return
+        if tag == 'base' and not self.base_seen:
+            self.base, self.base_seen = url, True
+            return
+        mime = values.get('type') or ''
+        if ('preload' not in (values.get('rel') or '').lower().split() or (values.get('as') or '').lower() != 'fetch'
+                or mime and not (mime.split(';')[0].strip().lower() == 'application/json'
+                                or mime.split(';')[0].strip().lower().startswith('application/') and mime.split(';')[0].strip().lower().endswith('+json'))):
+            return
+        if url not in self.urls and len(self.urls) < 128 and self.bytes + len(url.encode()) <= 128 * 1024:
+            self.urls.add(url); self.bytes += len(url.encode())
+
+    def handle_endtag(self, tag):
+        if tag in ('template', 'noscript') and self.inert: self.inert -= 1
+        if tag == 'head': self.in_head = False
+
+
 class Archive:
     def __init__(self, root, name, files, entry):
         self.root = Path(root)
@@ -177,7 +226,8 @@ class Archive:
         total, checked = 0, {}
         required = {'url', 'method', 'request_body_sha256', 'status', 'headers', 'body_file', 'body_sha256'}
         for item in value['resources']:
-            if (not isinstance(item, dict) or set(item) != required or not isinstance(item['method'], str)
+            if (not isinstance(item, dict) or not required.issubset(item)
+                    or set(item) - required - {'request_origin_absent'} or not isinstance(item['method'], str)
                     or not re.fullmatch('[A-Z]{1,32}', item['method'])
                     or item['method'] in ('CONNECT', 'TRACE') or not sha(item['request_body_sha256'])
                     or type(item['status']) is not int or not 200 <= item['status'] <= 599 or item['status'] in (206,304)):
@@ -218,10 +268,35 @@ class Archive:
                 if key not in ('content-length', 'content-encoding', 'transfer-encoding', 'connection', 'keep-alive', 'trailer', 'upgrade'):
                     normalized.append(header)
             normalized.append({'name': 'Content-Length', 'value': head_length if head_length is not None else str(checked[body_file])})
+            vary = next((h['value'] for h in normalized if h['name'].lower() == 'vary'), None)
+            fields = {v.strip().lower() for v in vary.split(',')} if vary is not None else set()
+            bound_origin = item.get('request_origin_absent') is True
+            if (fields - {'accept-encoding', 'origin'} or ('origin' in fields) != bound_origin
+                    or 'request_origin_absent' in item and not bound_origin
+                    or bound_origin and (item['method'] != 'GET' or not any(
+                        h['name'].lower() == 'content-type' and h['value'].split(';')[0].strip().lower() in ('text/html', 'application/xhtml+xml')
+                        for h in normalized))):
+                raise ReplayError('unbound_replay_variant')
             key = (item['method'], url, item['request_body_sha256'])
             if key in self.resources:
                 raise ReplayError('ambiguous_replay_resource')
             self.resources[key] = {**item, 'headers': normalized}
+        self.fetch_preloads = set()
+        self.preload_projection_failures = 0
+        preload_bytes = 0
+        for item in self.resources.values():
+            if item['method'] != 'GET' or not any(h['name'].lower() == 'content-type' and h['value'].split(';')[0].strip().lower() == 'text/html' for h in item['headers']):
+                continue
+            parser = FetchPreloads(item['url'])
+            try:
+                parser.feed(self.body(item['body_file'], item['body_sha256']).decode('utf-8-sig'))
+            except (UnicodeError, ValueError, AssertionError):
+                self.preload_projection_failures += 1
+                continue
+            for url in sorted(parser.urls):
+                size = len(url.encode())
+                if url not in self.fetch_preloads and len(self.fetch_preloads) < 128 and preload_bytes + size <= 128 * 1024:
+                    self.fetch_preloads.add(url); preload_bytes += size
         first = self.resources.get(('GET', initial, hashlib.sha256(b'').hexdigest()))
         if (not first or first['body_file'] != entry or not 200 <= first['status'] < 300
                 or not any(h['name'].lower() == 'content-type' and h['value'].split(';')[0].lower() in ('text/html', 'application/xhtml+xml') for h in first['headers'])):
@@ -237,7 +312,7 @@ class Archive:
             raise ReplayError('replay_body_changed')
         return data
 
-    def response(self, request):
+    def response(self, request, resource_type=None):
         method = request.get('method')
         if not isinstance(method, str) or not re.fullmatch('[A-Z]{1,32}', method):
             return None, 'unsupported_method'
@@ -290,6 +365,18 @@ class Archive:
         item = self.resources.get((method, url, hashlib.sha256(data).hexdigest()))
         if item is None:
             return None, 'response_not_recorded'
+        if item.get('request_origin_absent'):
+            # GET document navigation has no Fetch-generated Origin. Other
+            # resource types can add Origin in the network stack after a pause;
+            # their apparent absence is insufficient evidence for this variant.
+            names = [key.lower() for key in headers if isinstance(key, str)]
+            if (resource_type != 'Document' or 'origin' in names or len(headers) > 128
+                    or len(names) != len(headers) or len(set(names)) != len(names)
+                    or any(not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]{1,256}", key)
+                           or not isinstance(value, str) or len(value) > 8192
+                           or any(ord(c) < 32 or ord(c) == 127 for c in value)
+                           for key, value in headers.items())):
+                return None, 'origin_variant_not_recorded'
         return {'responseCode': item['status'], 'responseHeaders': item['headers'],
                 'body': base64.b64encode(self.body(item['body_file'], item['body_sha256'])).decode('ascii')}, 'recorded_response'
 
@@ -303,6 +390,7 @@ class Broker:
         self.discovery = discovery
         self.discovery_session, self.discovery_frames = None, set()
         self.proposals, self.proposal_bytes, self.omitted_proposals, self.ineligible_requests = {}, 0, 0, 0
+        self.asset_proposals = {}
         self.next_id, self.pending, self.attaching, self.sessions, self.targets = INTERNAL_ID, {}, {}, {}, {}
         self.session_targets, self.session_parents = {}, {}
         self.retired_sessions, self.retired_replies = set(), set()
@@ -357,6 +445,8 @@ class Broker:
             self.emit({'id': message['id'], 'result': {**self.report(), 'mode':'resource_discovery',
                 'urls':sorted(self.proposals),
                 'child_documents':sorted(url for url, child in self.proposals.items() if child),
+                'assets':{url:sorted(kinds) for url,kinds in sorted(self.asset_proposals.items())},
+                'preload_projection_failures':self.archive.preload_projection_failures,
                 'omitted_requests':self.omitted_proposals,
                 'ineligible_requests':self.ineligible_requests, 'pending_commands':len(self.pending),
                 'form_outline': self.outline}})
@@ -452,7 +542,7 @@ class Broker:
             return
         raise ReplayError('discovery_command_refused')
 
-    def propose(self, request, reason, child_document):
+    def propose(self, request, reason, child_document, asset_kind=None):
         if reason!='response_not_recorded' or request.get('method')!='GET':
             self.ineligible_requests += 1
             return
@@ -465,12 +555,14 @@ class Broker:
         url=request_url(request['url'])
         if url in self.proposals:
             self.proposals[url] |= child_document
+            if asset_kind is not None:self.asset_proposals.setdefault(url,set()).add(asset_kind)
             return
         if len(url)>4096 or len(self.proposals)>=128 or self.proposal_bytes+len(url.encode('utf-8'))>128*1024:
             self.omitted_proposals += 1
             return
         self.proposals[url]=child_document
         self.proposal_bytes+=len(url.encode('utf-8'))
+        if asset_kind is not None:self.asset_proposals[url]={asset_kind}
 
     def bind(self, session, kind, original, paused, target, parent=None):
         if not isinstance(session, str) or not session or len(session) > 512 or any(ord(c)<32 for c in session) or session in self.sessions or session in self.retired_sessions:
@@ -618,7 +710,7 @@ class Broker:
             request = params.get('request', {})
             if not isinstance(request, dict):
                 raise ReplayError('invalid_replay_pause')
-            result, reason = self.archive.response(request)
+            result, reason = self.archive.response(request, params.get('resourceType'))
             if result is None:
                 if self.discovery:
                     frame = params.get('frameId')
@@ -627,7 +719,13 @@ class Broker:
                         and isinstance(frame, str) and frame in self.discovery_frames
                         or self.sessions[session] == 'iframe'
                         and self.session_parents.get(session) == self.discovery_session)
-                    self.propose(request, reason, child_document)
+                    owned_scope = self.discovery_session is not None and (session == self.discovery_session
+                        or self.sessions[session] == 'iframe' and self.session_parents.get(session) == self.discovery_session)
+                    asset_kind = {'Script':'script','Stylesheet':'stylesheet','Font':'font','Image':'image',
+                                  'Fetch':'json','XHR':'json','Manifest':'manifest'}.get(params.get('resourceType')) if owned_scope else None
+                    if owned_scope and params.get('resourceType') == 'Other' and request.get('url') in self.archive.fetch_preloads:
+                        asset_kind = 'json'
+                    self.propose(request, reason, child_document, asset_kind)
                 self.call('Fetch.failRequest', {'requestId': paused_id, 'errorReason': 'BlockedByClient'}, session, ('reply', session, 'blocked', reason, False))
             else:
                 self.call('Fetch.fulfillRequest', {'requestId': paused_id, **result}, session, ('reply', session, 'served', request.get('method') not in ('GET', 'HEAD'), False))

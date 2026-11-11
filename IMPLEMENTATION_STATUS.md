@@ -1,3 +1,11 @@
+## Real source-copy diversity - 2026-11-11
+
+Three real public page copies now save through the compiled app after shared
+variant and supporting-resource repairs. Rendering remains incomplete: previews
+exposed 0, 0 and 9 controls. Request-context/CORS binding is the next blocker;
+this is not general autofill evidence.
+[Measured results and next work](docs/g1/PUBLIC_SOURCE_DIVERSITY_2026-11-11.md).
+
 ## Automatic rehearsal model admission - 2026-11-11
 
 Encrypted, revisioned model selection now starts a verified private runtime for

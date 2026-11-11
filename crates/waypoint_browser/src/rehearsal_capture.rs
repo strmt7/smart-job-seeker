@@ -51,6 +51,79 @@ fn canonical(raw: &str, entry: bool) -> Result<String, String> {
     }
     Ok(url.to_string())
 }
+/// Return the binding needed by a supported response variant, without writing
+/// or poisoning a snapshot when an optional public resource is unsupported.
+pub(super) fn snapshot_origin_binding(response: &CapturedResponse) -> Result<bool, String> {
+    if response.headers.iter().any(|h| {
+        h.name.eq_ignore_ascii_case("connection")
+            && std::str::from_utf8(&h.value).is_ok_and(|value| {
+                value
+                    .split(',')
+                    .any(|token| token.trim().eq_ignore_ascii_case("vary"))
+            })
+    }) {
+        return Ok(false);
+    }
+    let origin_absent = response.request_header_names.as_ref().is_some_and(|names| {
+        let mut unique = BTreeSet::new();
+        !names.is_empty()
+            && names.len() <= 128
+            && names.iter().all(|name| {
+                !name.is_empty()
+                    && name.len() <= 256
+                    && name
+                        .bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || b"!#$%&'*+.^_`|~-".contains(&c))
+                    && unique.insert(name.to_ascii_lowercase())
+            })
+            && unique.contains("host")
+            && !unique.contains("origin")
+    });
+    let mut origin = false;
+    for header in response
+        .headers
+        .iter()
+        .filter(|h| h.name.eq_ignore_ascii_case("vary"))
+    {
+        let value = std::str::from_utf8(&header.value)
+            .map_err(|_| "Header-dependent snapshot representation needs review")?;
+        for field in value.split(',').map(str::trim) {
+            if field.eq_ignore_ascii_case("accept-encoding") {
+                continue;
+            }
+            if field.eq_ignore_ascii_case("origin") && origin_absent {
+                origin = true;
+            } else {
+                return Err("Header-dependent snapshot representation needs review".into());
+            }
+        }
+    }
+    if origin {
+        let headers: Vec<_> = response
+            .headers
+            .iter()
+            .filter(|h| h.name.eq_ignore_ascii_case("content-type"))
+            .collect();
+        if response.request_method != "GET"
+            || headers.len() != 1
+            || !std::str::from_utf8(&headers[0].value).is_ok_and(|value| {
+                matches!(
+                    value
+                        .split(';')
+                        .next()
+                        .unwrap_or("")
+                        .trim()
+                        .to_ascii_lowercase()
+                        .as_str(),
+                    "text/html" | "application/xhtml+xml"
+                )
+            })
+        {
+            return Err("Origin-dependent snapshots require HTML navigation resources".into());
+        }
+    }
+    Ok(origin)
+}
 pub(super) fn write_new(root: &Path, name: &str, bytes: &[u8]) -> Result<String, String> {
     let mut file = fs::OpenOptions::new()
         .write(true)
@@ -184,6 +257,7 @@ impl SnapshotBuilder {
         let mut headers = Vec::new();
         let mut connection_names = BTreeSet::new();
         let mut ignored_cookie = false;
+        let vary_origin = snapshot_origin_binding(&response)?;
         for h in &response.headers {
             if h.name.eq_ignore_ascii_case("connection") {
                 let value = std::str::from_utf8(&h.value)
@@ -235,13 +309,6 @@ impl SnapshotBuilder {
             {
                 return Err("Invalid or duplicate snapshot response header".into());
             }
-            if name == "vary"
-                && value
-                    .split(',')
-                    .any(|v| !v.trim().eq_ignore_ascii_case("accept-encoding"))
-            {
-                return Err("Header-dependent snapshot representation needs review".into());
-            }
             headers.push(json!({"name":h.name,"value":value}));
         }
         if headers.len() > 127 {
@@ -280,7 +347,11 @@ impl SnapshotBuilder {
         self.total += response.body.len();
         self.files.insert(filename.clone(), hash.clone());
         self.urls.insert(url.clone());
-        self.resources.push(json!({"url":url,"method":"GET","request_body_sha256":waypoint_domain::sha256_hex(b""),"status":response.status,"headers":headers,"body_file":filename,"body_sha256":hash}));
+        let mut resource = json!({"url":url,"method":"GET","request_body_sha256":waypoint_domain::sha256_hex(b""),"status":response.status,"headers":headers,"body_file":filename,"body_sha256":hash});
+        if vary_origin {
+            resource["request_origin_absent"] = json!(true);
+        }
+        self.resources.push(resource);
         if ignored_cookie {
             self.warnings.insert("response_cookies_not_replayed");
         }
@@ -349,6 +420,57 @@ mod tests {
     }
     fn builder(root: &Path) -> SnapshotBuilder {
         SnapshotBuilder::start(&root.join("capture"), "https://fixture.invalid/form#apply").unwrap()
+    }
+    #[test]
+    fn snapshot_origin_variation_requires_recorded_absence_and_binds_navigation() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut capture = builder(temp.path());
+        let mut value = response(
+            "<h1>Fictional page</h1>",
+            "text/html",
+            "Vary: Accept-Encoding, Origin\r\n",
+        );
+        assert!(value.request_header_names.is_none());
+        value.request_header_names =
+            Some(vec!["host".into(), "accept".into(), "user-agent".into()]);
+        capture.add("https://fixture.invalid/form", value).unwrap();
+        let snapshot = capture.finish().unwrap();
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(snapshot.root.join("replay.json")).unwrap()).unwrap();
+        assert_eq!(manifest["resources"][0]["request_origin_absent"], true);
+    }
+
+    #[test]
+    fn snapshot_origin_unknown_present_or_invalid_proof_and_other_variants_stay_refused() {
+        for names in [
+            None,
+            Some(vec![]),
+            Some(vec!["host", "Origin"]),
+            Some(vec!["host", "accept", "Accept"]),
+            Some(vec!["host", "bad name"]),
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let mut capture = builder(temp.path());
+            let mut value = response("x", "text/html", "Vary: Origin\r\n");
+            value.request_header_names =
+                names.map(|names| names.into_iter().map(str::to_owned).collect());
+            assert!(capture
+                .add("https://fixture.invalid/form", value)
+                .unwrap_err()
+                .contains("Header-dependent"));
+            assert!(capture.finish().is_err());
+        }
+        for (mime, vary) in [
+            ("text/html", "*"),
+            ("text/html", "Origin, Accept-Language"),
+            ("application/json", "Origin"),
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let mut capture = builder(temp.path());
+            let mut value = response("x", mime, &format!("Vary: {vary}\r\n"));
+            value.request_header_names = Some(vec!["host".into()]);
+            assert!(capture.add("https://fixture.invalid/form", value).is_err());
+        }
     }
     #[test]
     fn snapshot_stream_bytes_create_bound_manifest_without_cookies_or_hop_headers() {

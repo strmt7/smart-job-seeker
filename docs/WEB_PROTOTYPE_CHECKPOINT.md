@@ -1,3 +1,10 @@
+## Real source-copy diversity - 2026-11-11
+
+The compiled app saved three real anonymous copies after shared capture repairs.
+Rendering remains incomplete; request-context/CORS binding must be resolved
+before these pages establish usable form coverage.
+[Evidence and next gate](g1/PUBLIC_SOURCE_DIVERSITY_2026-11-11.md).
+
 ## Automatic rehearsal model admission - 2026-11-11
 
 The compiled app now connects saved, encrypted model selection to private local

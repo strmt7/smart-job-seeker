@@ -34,8 +34,12 @@ permission, URL privacy checks, its own robots check and a successful HTML
 response. Document redirects during admission stay on the same origin. A
 failed admission leaves that origin unavailable for resource collection.
 The report retains the origin, source, observation round and document URL
-digest. Unrecognized origins, top-level navigations and standalone resource
-requests cannot expand the scope.
+digest. Unrecognized document origins and top-level navigations cannot expand
+that document scope. Separately, typed observed public assets can use up to four
+supporting origins, with permission, privacy, robots and matching MIME checks.
+An asset origin never gains document access. Unsupported variants and unknown
+rules remain review items. [Real-page measurements](g1/PUBLIC_SOURCE_DIVERSITY_2026-11-11.md)
+describe the remaining CORS/request-context gap.
 
 The native transport remains bounded to anonymous GETs. Collection cannot use
 the candidate-entry driver. No raw saved HTML is served on the app's origin.

@@ -6,6 +6,34 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Classify a public host without granting any operation. Callers still apply
+/// URL privacy, network and registry checks. DNS case and terminal dots cannot
+/// turn a known restricted provider into the generic public-URL category.
+pub fn source_for_host(host: &str) -> &'static str {
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    for (domain, source) in [
+        ("linkedin.com", "linkedin"),
+        ("jobicy.com", "jobicy"),
+        ("myworkdayjobs.com", "workday"),
+        ("icims.com", "icims"),
+        ("smartrecruiters.com", "smartrecruiters"),
+        ("successfactors.com", "successfactors"),
+        ("successfactors.eu", "successfactors"),
+        ("greenhouse.io", "greenhouse"),
+        ("lever.co", "lever"),
+        ("ashbyhq.com", "ashby"),
+    ] {
+        if host == domain
+            || host
+                .strip_suffix(domain)
+                .is_some_and(|prefix| prefix.ends_with('.'))
+        {
+            return source;
+        }
+    }
+    "user_supplied_url"
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Capability {
@@ -160,6 +188,33 @@ mod tests {
 
     fn registry() -> PermissionRegistry {
         PermissionRegistry::from_json(INITIAL_REGISTRY_JSON).unwrap()
+    }
+
+    #[test]
+    fn public_host_classification_preserves_restrictions_and_domain_boundaries() {
+        for host in [
+            "linkedin.com",
+            "www.linkedin.com",
+            "WWW.LINKEDIN.COM.",
+            "linkedin.com..",
+        ] {
+            assert_eq!(source_for_host(host), "linkedin");
+            assert!(registry()
+                .check_public_route(source_for_host(host), Operation::Read)
+                .is_err());
+        }
+        for host in [
+            "linkedin.com.example.org",
+            "notlinkedin.com",
+            "cdn.example.org",
+        ] {
+            assert_eq!(source_for_host(host), "user_supplied_url");
+        }
+        assert_eq!(
+            source_for_host("JOBS.SMARTRECRUITERS.COM."),
+            "smartrecruiters"
+        );
+        assert_eq!(source_for_host("jobs.ashbyhq.com"), "ashby");
     }
 
     #[test]

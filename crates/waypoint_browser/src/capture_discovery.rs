@@ -96,6 +96,7 @@ pub struct DiscoveryRound {
     pub pending_commands: u64,
     pub unsupported_targets: u64,
     pub unreplayed_transports: u64,
+    pub preload_projection_failures: usize,
 }
 #[derive(Clone, Serialize)]
 pub struct DiscoverySummary {
@@ -107,6 +108,17 @@ pub struct DiscoverySummary {
     pub form_outline_round: Option<u8>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AssetKind {
+    Script,
+    Stylesheet,
+    Font,
+    Image,
+    Json,
+    Manifest,
+}
+
 #[cfg(any(windows, test))]
 #[derive(serde::Deserialize)]
 pub(crate) struct Probe {
@@ -115,6 +127,10 @@ pub(crate) struct Probe {
     pub urls: Vec<String>,
     #[serde(default)]
     pub child_documents: std::collections::BTreeSet<String>,
+    #[serde(default)]
+    pub assets: std::collections::BTreeMap<String, std::collections::BTreeSet<AssetKind>>,
+    #[serde(default)]
+    pub preload_projection_failures: usize,
     pub omitted_requests: u64,
     pub ineligible_requests: u64,
     pub pending_commands: u64,
@@ -144,6 +160,11 @@ impl Probe {
                 .child_documents
                 .iter()
                 .all(|url| self.urls.contains(url))
+            && self.assets.len() <= self.urls.len()
+            && self.assets.iter().all(|(url, kinds)| {
+                self.urls.contains(url) && !kinds.is_empty() && kinds.len() <= 6
+            })
+            && self.preload_projection_failures <= 512
             && self.pending_commands <= 128
             && self.unsupported_targets.len() <= 16
             && self
@@ -235,6 +256,26 @@ pub(crate) fn render(
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn asset_observations_require_a_bounded_typed_subset_of_the_frontier() {
+        let value = json!({"schema":1,"mode":"resource_discovery","urls":["https://cdn.fixture.invalid/a.js"],
+            "assets":{"https://cdn.fixture.invalid/a.js":["script"]},"omitted_requests":0,"ineligible_requests":0,
+            "pending_commands":0,"unsupported_targets":{},"unreplayed_transports":0,"unmanaged_child_sessions":0});
+        assert!(serde_json::from_value::<Probe>(value.clone())
+            .unwrap()
+            .valid());
+        for assets in [
+            json!({"https://other.fixture.invalid/unobserved.js":["script"]}),
+            json!({"https://cdn.fixture.invalid/a.js":[]}),
+        ] {
+            let mut candidate = value.clone();
+            candidate["assets"] = assets;
+            assert!(!serde_json::from_value::<Probe>(candidate).unwrap().valid());
+        }
+        let mut candidate = value;
+        candidate["assets"]["https://cdn.fixture.invalid/a.js"] = json!(["document"]);
+        assert!(serde_json::from_value::<Probe>(candidate).is_err());
+    }
     fn fixture() -> serde_json::Value {
         json!({"schema":1,"scope":"root_frame_accessibility_tree","status":"observed","reason":null,"nodes":2,"controls":[{"number":1,"role":"textbox","label":"Name","description":null,"context":[],"context_incomplete":false,"required":null,"disabled":null}],"omitted_controls":0,"unlabelled_controls":0,"omitted_texts":0})
     }

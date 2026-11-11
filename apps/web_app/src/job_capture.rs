@@ -723,6 +723,9 @@ fn worker(request: Request) -> Result<Value, String> {
         .unwrap_or("not_started");
     let needs_review = frozen.is_err()
         || state != "no_new_requests"
+        || report["unavailable_robots_asset_origins"]
+            .as_array()
+            .is_some_and(|origins| !origins.is_empty())
         || report["records"]
             .as_array()
             .is_some_and(|r| r.iter().any(|v| v["outcome"]["state"] == "needs_review"));

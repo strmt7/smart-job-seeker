@@ -361,7 +361,7 @@ fn get_response(
                 } else {
                     format!("{host}:{}", parsed.port)
                 };
-                write_request(
+                let request_header_names = write_request(
                     &mut stream,
                     &host,
                     &parsed.request_target,
@@ -369,7 +369,9 @@ fn get_response(
                     None,
                     asset,
                 )?;
-                return http::receive(&mut stream, "GET", max_bytes);
+                let mut response = http::receive(&mut stream, "GET", max_bytes)?;
+                response.request_header_names = Some(request_header_names);
+                return Ok(response);
             }
             Err(e) => last_err = Some(NetError::Io(format!("connect {addr}: {e}"))),
         }
@@ -428,7 +430,7 @@ fn write_request<S: Write>(
     method: &str,
     body: Option<&[u8]>,
     asset: bool,
-) -> Result<(), NetError> {
+) -> Result<Vec<String>, NetError> {
     if host.is_empty()
         || !host.is_ascii()
         || host.bytes().any(|c| c <= 32 || c == 127)
@@ -448,6 +450,21 @@ fn write_request<S: Write>(
     } else {
         format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: {USER_AGENT}\r\nAccept: application/json\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",bytes.len())
     };
+    let mut fields = [httparse::EMPTY_HEADER; 16];
+    let mut parsed = httparse::Request::new(&mut fields);
+    if !matches!(
+        parsed.parse(head.as_bytes()),
+        Ok(httparse::Status::Complete(_))
+    ) {
+        return Err(NetError::InvalidResponse(
+            "invalid outgoing request headers",
+        ));
+    }
+    let names = parsed
+        .headers
+        .iter()
+        .map(|h| h.name.to_ascii_lowercase())
+        .collect();
     stream
         .write_all(head.as_bytes())
         .and_then(|_| stream.write_all(bytes))
@@ -460,7 +477,8 @@ fn write_request<S: Write>(
             } else {
                 NetError::Io(format!("write: {e}"))
             }
-        })
+        })?;
+    Ok(names)
 }
 
 pub fn decode_chunked(body: &[u8]) -> Option<Vec<u8>> {
@@ -630,10 +648,26 @@ mod tests {
             assert!(written.is_empty());
         }
         let mut written = Vec::new();
-        write_request(&mut written, "example.org", "/job", "GET", None, true).unwrap();
+        let names = write_request(&mut written, "example.org", "/job", "GET", None, true).unwrap();
+        assert_eq!(
+            names,
+            [
+                "host",
+                "user-agent",
+                "accept",
+                "accept-encoding",
+                "connection"
+            ]
+        );
         let text = String::from_utf8(written).unwrap();
         assert!(text.contains("Accept: */*\r\n"));
         assert!(text.contains("Accept-Encoding: identity\r\n"));
+        assert!(!text.to_ascii_lowercase().contains("\r\norigin:"));
+        let mut response = std::io::Cursor::new(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+        assert!(read_asset_response(&mut response, "GET", 1024)
+            .unwrap()
+            .request_header_names
+            .is_none());
         assert!(
             !text.contains("Cookie:")
                 && !text.contains("Authorization:")

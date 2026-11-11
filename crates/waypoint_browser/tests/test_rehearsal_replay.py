@@ -35,6 +35,28 @@ class Fixture:
 class ReplayTests(unittest.TestCase):
     def setUp(self):self.fixture=Fixture()
     def tearDown(self):self.fixture.close()
+    def test_origin_bound_variant_requires_get_document_and_absent_origin(self):
+        item=self.fixture.resources[0]
+        item['headers'].append({'name':'Vary','value':'Accept-Encoding, Origin'})
+        item['request_origin_absent']=True
+        archive=self.fixture.archive()
+        request={'url':item['url'],'method':'GET','headers':{}}
+        self.assertEqual(archive.response(request,'Document')[1],'recorded_response')
+        for kind in [None,'Fetch','XHR','Image','Script']:
+            self.assertEqual(archive.response(request,kind)[1],'origin_variant_not_recorded')
+        for headers in [{'Origin':'null'},{'origin':''},{'ORIGIN':'https://fixture.invalid'},
+                        {'Accept':'text/html','accept':'text/html'},{'bad name':'x'}]:
+            self.assertEqual(archive.response({**request,'headers':headers},'Document')[1],'origin_variant_not_recorded')
+
+    def test_origin_variant_manifest_cannot_omit_or_forge_its_binding(self):
+        item=self.fixture.resources[0]
+        original=list(item['headers'])
+        for vary,marker in [('Origin',None),('Origin',False),('Origin',1),('*',True),('Origin, Accept',True),('Accept-Encoding',True)]:
+            item['headers']=original+[{'name':'Vary','value':vary}]
+            item.pop('request_origin_absent',None)
+            if marker is not None:item['request_origin_absent']=marker
+            with self.subTest(vary=vary,marker=marker),self.assertRaisesRegex(replay.ReplayError,'unbound_replay_variant'):
+                self.fixture.archive()
     def test_decoded_response_preserves_bytes_and_repairs_transport_headers(self):
         self.fixture.add('https://fixture.invalid/style','style.bin',b'body{color:green}',headers=[{'name':'Content-Encoding','value':'gzip'},{'name':'Content-Length','value':'99'},{'name':'Content-Type','value':'text/css'}])
         archive=self.fixture.archive();response,reason=archive.response({'url':'https://fixture.invalid/style','method':'GET'})
@@ -449,6 +471,51 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(result['child_documents'],[origin+'/frame'])
         self.assertEqual(result['ineligible_requests'],1)
         self.assertEqual(result['blocked'],6)
+    def test_typed_assets_require_the_owned_discovery_context_and_anonymous_get(self):
+        url='https://cdn.fixture.invalid/app.js'
+        self.frame(url=url,method='GET',resource_type='Script')
+        self.assertEqual(self.report()['assets'],{})
+        self.broker.host({'id':1,'method':'Page.navigate','sessionId':'page','params':{'url':self.fixture.archive().entry_url}})
+        self.frame(url=url,method='GET',resource_type='Script')
+        self.frame(url='https://cdn.fixture.invalid/style',method='GET',resource_type='Stylesheet')
+        self.frame(url='https://cdn.fixture.invalid/manifest',method='GET',resource_type='Fetch')
+        for label,changes in [('write',{'method':'POST'}),('auth',{'headers':{'Authorization':'fictional'}}),
+                              ('cookie',{'headers':{'Cookie':'fictional=private'}}),('body',{'postData':''})]:
+            self.frame(url='https://cdn.fixture.invalid/'+label,method=changes.pop('method','GET'),resource_type='Script',**changes)
+        self.frame(url='https://cdn.fixture.invalid/document',method='GET',resource_type='Document')
+        self.broker.sessions['other']='page'
+        self.broker.browser({'method':'Fetch.requestPaused','sessionId':'other','params':{'requestId':'other',
+            'resourceType':'Script','request':{'url':'https://unrelated.fixture.invalid/app.js','method':'GET'}}})
+        report=self.report()
+        self.assertEqual(report['assets'],{url:['script'],'https://cdn.fixture.invalid/style':['stylesheet'],
+                                          'https://cdn.fixture.invalid/manifest':['json']})
+        self.assertEqual(report['ineligible_requests'],4)
+    def test_published_fetch_preload_matches_observed_other_requests_without_broadening_other_types(self):
+        data=b'''<head><base href="https://cdn.fixture.invalid/assets/">
+          <link rel="preload" as="fetch" href="bootstrap.data?x=1&amp;y=2">
+          <link rel="preload" as="fetch" type="text/html" href="document">
+          <template><link rel="preload" as="fetch" href="inert"></template>
+          </head><body><link rel="preload" as="fetch" href="body"></body>'''
+        (self.fixture.root/'index.html').write_bytes(data)
+        self.fixture.files['index.html']=digest(data);self.fixture.resources[0]['body_sha256']=digest(data)
+        archive=self.fixture.archive()
+        url='https://cdn.fixture.invalid/assets/bootstrap.data?x=1&y=2'
+        self.assertEqual(archive.fetch_preloads,{url})
+        self.broker=replay.Broker(archive,self.sent.append,self.emitted.append,discovery=True)
+        self.broker.sessions['page']='page'
+        self.broker.host({'id':1,'method':'Page.navigate','sessionId':'page','params':{'url':archive.entry_url}})
+        self.frame(url=url,method='GET',resource_type='Other')
+        self.frame(url='https://cdn.fixture.invalid/unpublished',method='GET',resource_type='Other')
+        self.assertEqual(self.report()['assets'],{url:['json']})
+    def test_unreadable_preload_projection_is_visible_and_does_not_destroy_legacy_replay(self):
+        data=b'\xff'
+        (self.fixture.root/'index.html').write_bytes(data)
+        self.fixture.files['index.html']=digest(data);self.fixture.resources[0]['body_sha256']=digest(data)
+        archive=self.fixture.archive()
+        self.assertEqual(archive.preload_projection_failures,1)
+        self.assertIsNotNone(archive.response({'url':archive.entry_url,'method':'GET'})[0])
+        self.broker=replay.Broker(archive,self.sent.append,self.emitted.append,discovery=True)
+        self.assertEqual(self.report()['preload_projection_failures'],1)
     def test_frontier_is_bounded_and_overflow_remains_visible(self):
         for index in range(132):self.frame(url=f'https://fixture.invalid/{index}',method='GET')
         report=self.report();self.assertEqual(len(report['urls']),128);self.assertEqual(report['omitted_requests'],4)

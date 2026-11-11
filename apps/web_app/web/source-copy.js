@@ -377,10 +377,12 @@
         }
         summary.textContent = 'Capture details';
         const report = state.result.result?.report;
-        const labels = { origin_not_declared: 'Some linked domains were outside this copy.', source_not_allowed: 'A source needs permission review.', robots_denied: 'A resource does not allow automated reading.', robots_unavailable: 'A resource’s reading rules could not be verified.', network: 'A resource could not be downloaded.', budget_exceeded: 'A capture limit was reached.', archive_rejected: 'A response could not be preserved reliably.', invalid_redirect: 'A redirect needs review.', redirect_limit: 'A redirect chain exceeded its limit.', redirect_loop: 'A redirect loop was found.' };
+        const labels = { origin_not_declared: 'Some linked domains were outside this copy.', source_not_allowed: 'A source needs permission review.', robots_denied: 'A resource does not allow automated reading.', robots_unavailable: 'A resource’s reading rules could not be verified.', network: 'A resource could not be downloaded.', budget_exceeded: 'A capture limit was reached.', archive_rejected: 'A response could not be preserved reliably.', asset_unavailable: 'A supporting file could not be verified for this copy.', representation_unsupported: 'A response variant could not be verified for this copy.', invalid_redirect: 'A redirect needs review.', redirect_limit: 'A redirect chain exceeded its limit.', redirect_loop: 'A redirect loop was found.' };
         const reasons = new Set((report?.records || []).filter(row => row.outcome?.state === 'needs_review').map(row => row.outcome.reason));
         for (const reason of reasons) findings.append(el('p', labels[reason] || 'A resource needs review.', 'footnote'));
+        if (Array.isArray(report?.unavailable_robots_asset_origins) && report.unavailable_robots_asset_origins.length) findings.append(el('p', 'Reading rules were unavailable for some supporting files. Review this copy.', 'review-label'));
         const rounds = report?.discovery?.rounds;
+        if (Array.isArray(rounds) && rounds.some(round => round.preload_projection_failures > 0)) findings.append(el('p', 'Some supporting-file declarations could not be inspected. Review this copy.', 'review-label'));
         if (Array.isArray(rounds)) findings.append(el('p', `${rounds.length} resource-discovery pass${rounds.length === 1 ? '' : 'es'} recorded.`, 'footnote'));
         findings.append(outlineView(report?.discovery?.form_outline,el,{api:client,jobId:job.id,attemptId:state.result.attempt_id,renderEvidence:dependencies.renderEvidence}));
         findings.append(el('p', `Saved under application record ${state.result.attempt_id}.`, 'footnote'));

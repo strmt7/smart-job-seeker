@@ -21,6 +21,9 @@ pub enum BodyFraming {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CapturedResponse {
     pub request_method: String,
+    /// Complete names from the request actually written by this client.
+    /// A response-only stream has no evidence about absent request headers.
+    pub request_header_names: Option<Vec<String>>,
     pub status: u16,
     /// Original field bytes, in received order. Transfer framing is decoded below.
     pub headers: Vec<Header>,
@@ -277,6 +280,7 @@ pub(crate) fn receive<S: Read>(
                 let value = parsed.take().unwrap();
                 return Ok(CapturedResponse {
                     request_method: method.to_owned(),
+                    request_header_names: None,
                     status: value.status,
                     headers: value.headers,
                     body,
