@@ -6,6 +6,12 @@ requested scope. [Finding-state policy and current inventory](FINDING_STATE_REVI
 prohibit manual closure across all detection tools; unresolved observations stay
 visible and publication remains the user's decision.
 
+The [runtime ownership checkpoint](g1/RUNTIME_OWNERSHIP_2026-11-11.md) fixes
+untracked app-started Ollama processes and establishes the teardown primitive
+for isolated automatic model admission. Rehearsal still requires an already
+qualified resident vision model; model choice, private endpoint/store binding
+and effective capture-worker memory budgets remain integration work.
+
 Status: active development, updated 2026-11-11. This plan translates the requested
 product into implementation and evidence gates. It supplements, rather than
 replaces, the repository's handoff and `AGENTS.md` invariants. There is no

@@ -1,3 +1,12 @@
+## App-owned local runtime cleanup - 2026-11-11
+
+App-started Ollama now has a retained Windows process-tree owner, memory bounds
+and verified teardown; existing services remain borrowed. Native checks cover
+failed handoff, root exit, explicit stop and forced owner exit, including an
+unrelated process that uses the same executable. A real isolated Ollama probe
+also passed without loading a model. [Evidence and remaining integration](docs/g1/RUNTIME_OWNERSHIP_2026-11-11.md).
+Automatic model admission for rehearsal remains unfinished.
+
 ## Visual inspection before recorded-form actions - 2026-11-11
 
 The saved-copy rehearsal now requires an eligible local vision model before

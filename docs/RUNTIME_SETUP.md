@@ -1,7 +1,29 @@
 # Windows runtime setup
 
-Updated 2026-11-10. These mechanisms are implemented in the prototype; a clean
+Updated 2026-11-11. These mechanisms are implemented in the prototype; a clean
 Windows virtual-machine installation is still an acceptance gate.
+
+## Runtime lifetime
+
+When **Start local runtime** finds an existing Ollama service, it borrows that
+service. If Smart Jobseeker starts Ollama itself, it retains a Windows job owner
+until app shutdown. Startup failure, lost ownership handoff, root-process exit
+and app termination close the owned process tree. Normal shutdown waits for
+the root and checks that the job has drained. Shutdown never stops an unrelated
+service by process name or port number.
+
+The owner records the PID, native creation token, executable name and parent
+identity. It requires current job membership as well as matching process
+identity for liveness. It samples host memory while running, with a 3 GiB
+continuation reserve, and admits an aggregate process-memory limit no larger
+than 20 GiB or observed free RAM minus that reserve. Starting a model still
+has its separate, stricter resource and identity checks. These observations
+are bounded controls, not a reservation against competing host allocations.
+
+This change does not load a model automatically. Rehearsal still needs a
+qualified resident vision model; isolated automatic model admission remains
+integration work. [Native lifecycle evidence](g1/RUNTIME_OWNERSHIP_2026-11-11.md)
+records the actual tests and their limits.
 
 ## Default installation
 

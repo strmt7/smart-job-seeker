@@ -67,45 +67,54 @@ fn classify_port(addr: std::net::SocketAddr) -> Result<bool, String> {
 }
 
 #[cfg(windows)]
-fn runtime_command(binary: &std::path::Path, addr: std::net::SocketAddr) -> std::process::Command {
-    use std::{
-        os::windows::process::CommandExt,
-        process::{Command, Stdio},
-    };
-    let mut command = Command::new(binary);
-    command
+fn runtime_command(binary: &std::path::Path, addr: std::net::SocketAddr) -> processkit::Command {
+    use processkit::{Command, Stdin, StdioMode};
+    Command::new(binary)
         .arg("serve")
         .env("OLLAMA_HOST", addr.to_string())
         .env("OLLAMA_MAX_LOADED_MODELS", "1")
         .env("OLLAMA_NUM_PARALLEL", "1")
-        .creation_flags(0x0800_0000)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    command
+        .env("OLLAMA_NO_CLOUD", "1")
+        .stdin(Stdin::empty())
+        .stdout(StdioMode::Null)
+        .stderr(StdioMode::Null)
+        .create_no_window()
+}
+
+#[cfg(windows)]
+static OWNED: Mutex<Option<crate::owned_runtime::OwnedRuntime>> = Mutex::new(None);
+static SHUTTING_DOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub(crate) fn shutdown() -> Result<(), String> {
+    SHUTTING_DOWN.store(true, std::sync::atomic::Ordering::Release);
+    #[cfg(windows)]
+    if let Some(mut owner) = OWNED
+        .lock()
+        .map_err(|_| "Runtime ownership is unavailable")?
+        .take()
+    {
+        owner.stop()?;
+    }
+    Ok(())
 }
 
 #[cfg(windows)]
 fn wait_for_runtime(
     addr: std::net::SocketAddr,
-    child: &mut std::process::Child,
+    child: &crate::owned_runtime::OwnedRuntime,
 ) -> Result<(), String> {
     use std::time::{Duration, Instant};
     let deadline = Instant::now() + Duration::from_secs(20);
     while Instant::now() < deadline {
-        if runtime_ready(addr) {
-            return Ok(());
-        }
-        if child
-            .try_wait()
-            .map_err(|_| "Could not monitor the runtime startup")?
-            .is_some()
-        {
+        if !child.running()? {
             return Err("The local runtime exited before it became available".into());
+        }
+        if runtime_ready(addr) && child.running()? {
+            return Ok(());
         }
         std::thread::sleep(Duration::from_millis(250));
     }
-    Err("Runtime startup was not confirmed; it may still be starting, so check its status before retrying".into())
+    Err("Runtime startup was not confirmed; its owned process will be stopped".into())
 }
 
 #[cfg(windows)]
@@ -119,11 +128,35 @@ fn run() -> Result<Value, String> {
     let binary = installed_binary()
         .map(Ok)
         .unwrap_or_else(|| crate::runtime_setup::ensure(crate::runtime_setup::Tool::Ollama))?;
-    let mut child = runtime_command(&binary, addr)
-        .spawn()
-        .map_err(|_| "Could not start the installed local runtime")?;
-    wait_for_runtime(addr, &mut child)?;
-    Ok(json!({"already_running":false}))
+    if SHUTTING_DOWN.load(std::sync::atomic::Ordering::Acquire) {
+        return Err("The application is shutting down".into());
+    }
+    let mut system = sysinfo::System::new().map_err(|_| "Cannot sample runtime memory")?;
+    system.refresh_memory();
+    let memory =
+        crate::owned_runtime::memory_budget(system.available_memory(), system.total_memory())?;
+    let mut child =
+        crate::owned_runtime::OwnedRuntime::spawn(runtime_command(&binary, addr), memory)?;
+    if let Err(error) = wait_for_runtime(addr, &child) {
+        return match child.stop() {
+            Ok(()) => Err(error),
+            Err(cleanup) => Err(format!("{error}; runtime cleanup failed: {cleanup}")),
+        };
+    }
+    let identity = child.identity();
+    let result = json!({"already_running":false,"owned_by_app":true,"pid":identity.pid(),"creation_token":identity.start_time(),"executable":identity.exe_name(),"parent_pid":identity.ppid(),"process_memory_limit":memory});
+    let mut owner = OWNED
+        .lock()
+        .map_err(|_| "Runtime ownership is unavailable")?;
+    if SHUTTING_DOWN.load(std::sync::atomic::Ordering::Acquire) {
+        child.stop()?;
+        return Err("The application stopped during runtime startup".into());
+    }
+    if let Some(mut previous) = owner.take() {
+        previous.stop()?;
+    }
+    *owner = Some(child);
+    Ok(result)
 }
 #[cfg(windows)]
 pub(crate) fn installed_binary() -> Option<std::path::PathBuf> {
@@ -260,24 +293,19 @@ mod tests {
             .prefix("runtime-test-")
             .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target"))
             .unwrap();
-        struct OwnedChild(std::process::Child);
-        impl Drop for OwnedChild {
-            fn drop(&mut self) {
-                let _ = self.0.kill();
-                let _ = self.0.wait();
-            }
-        }
-        let child = runtime_command(&binary, addr)
-            .env("OLLAMA_MODELS", directory.path())
-            .spawn()
-            .unwrap();
-        let mut child = OwnedChild(child);
-        wait_for_runtime(addr, &mut child.0).unwrap();
+        let mut child = crate::owned_runtime::OwnedRuntime::spawn(
+            runtime_command(&binary, addr).env("OLLAMA_MODELS", directory.path()),
+            1024 * 1024 * 1024,
+        )
+        .unwrap();
+        wait_for_runtime(addr, &child).unwrap();
         let (status, body) =
             waypoint_inference::ollama::http_request(addr, "GET", "/api/ps", None, 3000).unwrap();
         assert_eq!(status, 200);
         let body: Value = serde_json::from_slice(&body).unwrap();
         assert!(body["models"].as_array().is_some_and(Vec::is_empty));
+        child.stop().unwrap();
+        assert!(!runtime_ready(addr));
         assert_eq!(crate::resident_model_status().unwrap(), existing);
     }
     #[cfg(windows)]

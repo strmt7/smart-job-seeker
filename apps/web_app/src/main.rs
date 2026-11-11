@@ -70,6 +70,8 @@ mod manual_job;
 mod model_install;
 mod model_start;
 mod native_month;
+#[cfg(windows)]
+mod owned_runtime;
 mod pdf_extract;
 mod pdf_job;
 mod pdf_preview_task;
@@ -9530,7 +9532,11 @@ fn main() {
     {
         std::process::exit(job_capture::worker_main());
     }
-    if let Err(error) = run() {
+    let result = run();
+    if let Err(error) = runtime_start::shutdown() {
+        eprintln!("Owned local runtime shutdown failed: {error}");
+    }
+    if let Err(error) = result {
         let message = startup_error_message(&error.to_string());
         eprintln!("{message}");
         #[cfg(windows)]
