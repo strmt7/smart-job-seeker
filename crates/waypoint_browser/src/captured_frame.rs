@@ -129,6 +129,7 @@ pub struct RecordedFieldCapture {
     command: BrowserCommand,
     network_before: u64,
     document: RecordedDocument,
+    control: RecordedControlIdentity,
 }
 
 /// A fresh, focused target image made by the recorded driver before an action.
@@ -138,6 +139,44 @@ pub struct RecordedTargetCapture {
     label: String,
     kind: &'static str,
     required_marker: bool,
+    witness: Option<RecordedFieldWitness>,
+}
+
+/// Native logical control identity, independent of a temporary frame lease.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct RecordedControlIdentity {
+    origin: String,
+    selector: String,
+    sections: Vec<String>,
+}
+
+/// Only an observed recorded target can create this read-only witness.
+#[derive(Clone)]
+pub struct RecordedFieldWitness {
+    selector: String,
+    control: RecordedControlIdentity,
+    schema: waypoint_applications::form_mapping::FormSchema,
+    document: RecordedDocument,
+    network_before: u64,
+    kind: RecordedFieldKind,
+}
+
+/// Coherent current evidence; it never proves successful or valid entry.
+pub struct RecordedFieldObservation {
+    image: String,
+    value: Option<String>,
+    control: RecordedControlIdentity,
+}
+impl RecordedFieldObservation {
+    pub fn image(&self) -> &str {
+        &self.image
+    }
+    pub fn value(&self) -> Option<&str> {
+        self.value.as_deref()
+    }
+    pub fn control(&self) -> &RecordedControlIdentity {
+        &self.control
+    }
 }
 
 #[cfg(any(windows, test))]
@@ -169,6 +208,12 @@ fn required_marker_unambiguous(form: &LiveForm, field: &FormField) -> bool {
 }
 
 impl RecordedTargetCapture {
+    pub fn witness(&self) -> Option<RecordedFieldWitness> {
+        self.witness.clone()
+    }
+    pub fn control(&self) -> Option<&RecordedControlIdentity> {
+        self.witness.as_ref().map(|witness| &witness.control)
+    }
     pub fn image(&self) -> &str {
         &self.image
     }
@@ -185,7 +230,7 @@ impl RecordedTargetCapture {
     }
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 struct RecordedDocument {
     url: String,
     frame: String,
@@ -194,6 +239,9 @@ struct RecordedDocument {
 }
 
 impl RecordedFieldCapture {
+    pub fn control(&self) -> &RecordedControlIdentity {
+        &self.control
+    }
     pub fn required_marker(&self) -> bool {
         self.required_marker
     }
@@ -368,6 +416,7 @@ impl CdpDriver {
         self.scroll_field_into_view(&target.selector)?;
         let image = self.screenshot_field_context(&target.selector)?;
         review_target(&RecordedTargetCapture {
+            witness: None,
             image,
             label: target.label.clone(),
             required_marker: false,
@@ -533,7 +582,16 @@ impl CdpDriver {
             self.scroll_field_into_view(selector)?;
             self.screenshot_field_context(selector)?
         };
+        let control = self.recorded_control_identity(form, selector)?;
         review_target(&RecordedTargetCapture {
+            witness: Some(RecordedFieldWitness {
+                selector: selector.to_owned(),
+                control: control.clone(),
+                schema: form.schema.clone(),
+                document: document.clone(),
+                network_before,
+                kind,
+            }),
             image,
             label: field.label.clone(),
             required_marker: required_marker_unambiguous(form, field),
@@ -588,6 +646,7 @@ impl CdpDriver {
         self.observed_non_read_requests()?;
         self.stop_if_non_read_request_observed(network_before)?;
         Ok(RecordedFieldCapture {
+            control,
             image,
             label: field.label.clone(),
             required_marker: required_marker_unambiguous(form, field),
@@ -595,6 +654,74 @@ impl CdpDriver {
             command,
             network_before,
             document,
+        })
+    }
+
+    /// A read-only logical identity. It conveys no field-entry authority.
+    pub fn recorded_control_identity(
+        &mut self,
+        form: &LiveForm,
+        selector: &str,
+    ) -> Result<RecordedControlIdentity, DriverError> {
+        self.require_recorded_frames()?;
+        let mut fields = form
+            .schema
+            .fields
+            .iter()
+            .filter(|field| field.selector == selector);
+        let field = fields.next().ok_or_else(review)?;
+        if fields.next().is_some() {
+            return Err(review());
+        }
+        Ok(RecordedControlIdentity {
+            origin: form.origin.clone(),
+            selector: self.decode_captured_selector(selector)?.into_owned(),
+            sections: field
+                .context
+                .sections
+                .iter()
+                .map(|section| section.label.clone())
+                .collect(),
+        })
+    }
+
+    /// Inspect after a failed action without changing values, retrying or
+    /// granting entry. Navigation/schema/barrier/network changes refuse evidence.
+    pub fn observe_recorded_field(
+        &mut self,
+        witness: &RecordedFieldWitness,
+    ) -> Result<RecordedFieldObservation, DriverError> {
+        self.require_recorded_frames()?;
+        let check = |driver: &mut Self| {
+            let current = driver.inspect_current()?;
+            if current.origin != witness.control.origin
+                || current.schema != witness.schema
+                || current.independent_field_entry_blocked()
+                || driver.recorded_document()? != witness.document
+            {
+                return Err(review());
+            }
+            driver.stop_if_non_read_request_observed(witness.network_before)
+        };
+        check(self)?;
+        let text = matches!(witness.kind, RecordedFieldKind::Text);
+        let read = |driver: &mut Self| -> Result<Option<String>, DriverError> {
+            if text {
+                Ok(Some(driver.text_value_snapshot(&witness.selector)?.value))
+            } else {
+                Ok(None)
+            }
+        };
+        let value = read(self)?;
+        let image = self.screenshot_field_context(&witness.selector)?;
+        if read(self)? != value {
+            return Err(review());
+        }
+        check(self)?;
+        Ok(RecordedFieldObservation {
+            image,
+            value,
+            control: witness.control.clone(),
         })
     }
 

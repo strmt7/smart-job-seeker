@@ -130,22 +130,28 @@ fn discovery_archives_observed_public_ats_frame() {
 #[test]
 #[ignore = "explicit private engine, synthetic HTTP resources and owned memory containment"]
 fn coordinator_archive_drives_contained_form() {
-    run_coordinator(false, false, false);
+    run_coordinator(false, false, false, false);
 }
 #[test]
 #[ignore = "explicit private engine, automatic fictional resource discovery and owned memory containment"]
 fn discovery_archives_transitive_resources_before_candidate_entry() {
-    run_coordinator(true, false, false);
+    run_coordinator(true, false, false, false);
 }
 #[test]
 #[ignore = "explicit private engine, fictional private-URL discovery and owned memory containment"]
 fn private_resources_are_not_fetched_before_offline_candidate_entry() {
-    run_coordinator(true, true, false);
+    run_coordinator(true, true, false, false);
 }
 #[test]
 #[ignore = "explicit contained browser and fictional custom controls; no live source"]
 fn independent_fields_preserve_custom_review_and_hard_barriers() {
-    run_coordinator(true, false, true);
+    run_coordinator(true, false, true, false);
+}
+
+#[test]
+#[ignore = "explicit contained browser and fictional input mutation; no live site"]
+fn failed_entry_retains_bound_readback_without_approving_it() {
+    run_coordinator(false, false, false, true);
 }
 
 fn qualification_config() -> (RehearsalConfig, PathBuf, PathBuf) {
@@ -168,7 +174,7 @@ fn qualification_config() -> (RehearsalConfig, PathBuf, PathBuf) {
         PathBuf::from(std::env::var_os("WAYPOINT_REHEARSAL_PYTHON").unwrap()),
     )
 }
-fn run_coordinator(discovery: bool, privacy: bool, custom_controls: bool) {
+fn run_coordinator(discovery: bool, privacy: bool, custom_controls: bool, failed_entry: bool) {
     let (mut config, folder, python) = qualification_config();
     let html="<!doctype html><meta charset=utf-8><title>Fictional coordinated form</title><link rel=stylesheet href=/style.css><h1>Fictional coordinated form</h1><fieldset><legend>Your details</legend><label>Full name<input id=name required value=source-default-must-not-be-recorded></label></fieldset><button type=button id=next>Continue</button><section id=questions></section><script src=/app.js></script>";
     let html = if custom_controls {
@@ -504,8 +510,71 @@ fn run_coordinator(discovery: bool, privacy: bool, custom_controls: bool) {
     driver
         .verify_text_value("#email", "fictional@example.invalid")
         .unwrap();
+    if failed_entry {
+        assert_eq!(driver.rehearsal_replay_report().unwrap()["served"], 4);
+        driver
+            .cdp
+            .call(
+                "Runtime.evaluate",
+                serde_json::json!({"expression":r#"(()=>{
+            const label=document.createElement('label'); label.textContent='Fictional telephone';
+            const input=document.createElement('input'); input.id='masked'; input.type='tel';
+            input.oninput=()=>{input.value=input.value.replace(/[^0-9]/g,'')};
+            label.append(input); document.body.append(label);
+        })()"#}),
+            )
+            .unwrap();
+        let form = driver.inspect_current().unwrap();
+        let field = form
+            .schema
+            .fields
+            .iter()
+            .find(|f| f.label == "Fictional telephone")
+            .unwrap();
+        let mut witness = None;
+        let result = driver.rehearse_recorded_field_reviewed(
+            &form,
+            &field.selector,
+            "+12025550123",
+            &[],
+            |target| {
+                witness = target.witness();
+                Ok(())
+            },
+        );
+        assert!(result.is_err());
+        let witness = witness.unwrap();
+        let observation = driver.observe_recorded_field(&witness).unwrap();
+        assert_eq!(observation.value(), Some("12025550123"));
+        assert!(driver
+            .verify_text_value(&field.selector, "+12025550123")
+            .is_err());
+        std::fs::write(
+            folder.join("failed-entry-screenshot.base64"),
+            observation.image(),
+        )
+        .unwrap();
+        std::fs::write(folder.join("failed-entry.private.json"), serde_json::to_vec_pretty(&serde_json::json!({
+            "status":"entry_unverified", "native_value":observation.value(), "control":observation.control(),
+            "entry_verified":false,"replay_at_observation":driver.rehearsal_replay_report().unwrap()})).unwrap()).unwrap();
+        driver.cdp.call("Runtime.evaluate", serde_json::json!({"expression":"(()=>{const el=document.createElement('div');el.className='g-recaptcha';document.body.append(el)})()"})).unwrap();
+        assert!(driver.observe_recorded_field(&witness).is_err());
+        driver.cdp.call("Runtime.evaluate", serde_json::json!({"expression":"document.querySelector('.g-recaptcha').remove();document.querySelector('#masked').setAttribute('aria-label','Changed field')"})).unwrap();
+        assert!(driver.observe_recorded_field(&witness).is_err());
+        driver.cdp.call("Runtime.evaluate", serde_json::json!({"expression":"history.replaceState(null,'',location.href+'#changed')"})).unwrap();
+        assert!(driver.observe_recorded_field(&witness).is_err());
+    }
     let replay = driver.rehearsal_replay_report().unwrap();
-    assert_eq!(replay["served"], if discovery { 5 } else { 4 });
+    assert_eq!(
+        replay["served"],
+        if failed_entry {
+            6
+        } else if discovery {
+            5
+        } else {
+            4
+        }
+    );
     assert_eq!(replay["cached_non_read_replies"], 0);
     assert_eq!(
         requests.lock().unwrap().len(),

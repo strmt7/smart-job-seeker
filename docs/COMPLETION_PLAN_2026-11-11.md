@@ -6,7 +6,7 @@ model mechanisms, but broad real-world application coverage and clean-host
 installation are not established. Older measured checkpoints retain their
 original source and fixture scopes.
 
-Current committed baseline: `fc5a4a436d2a8c89e64261449d7b677d296f0bec`, with
+Latest verified hosted baseline: `fc5a4a436d2a8c89e64261449d7b677d296f0bec`, with
 successful hosted CI, coverage and CodeQL. A subsequent locally validated
 [stylesheet continuation](g1/ABSENT_ORIGIN_STYLESHEETS_2026-11-11.md) restores
 eligible absent-Origin CSS capture/replay. Workspace1,312 passed/594 ignored,
@@ -20,6 +20,21 @@ plan. The [active queue](ACTIVE_DEVELOPMENT_PLAN.json) identifies work packages,
 dependencies and existing harnesses for continuation of the **same active goal**.
 It supplements the original T001-T050 design contract; it does not rewrite its
 historical statuses or authorize another goal, delegation, release or submission.
+
+## Latest continuation
+
+[Independent entry evidence](g1/INDEPENDENT_ENTRY_EVIDENCE_2026-11-11.md) implements
+schema2 control/value/image comparisons and native-bound failed-state diagnostics.
+A known source's initial9-control truth was frozen before local-model entry;
+3/6 answerable controls verify,1 entry remains unverified,2 are unreached and3
+answers stay unknown. The Phone diagnostic shows +1 202-555-0123 versus intended
++12025550123. Keep that mismatch unverified until strict typed native, visual
+and oracle treatment is consistent; no general text normalization is authorized.
+
+Next R04 slice: authoritative research, native type/validity inspection and
+negative fixtures for telephone presentation; actual native values must never be
+replaced by intended values in reporting. R02 remains open for varied held-out
+sources and complete native workflow proof, alongside generic planner work.
 
 ## Immediate execution order
 

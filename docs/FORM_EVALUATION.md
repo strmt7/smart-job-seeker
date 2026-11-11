@@ -15,7 +15,67 @@ reports its exact input-byte SHA-256 and any parse failure. This changes neither
 live-site permissions nor the requirement for fictional offline entry. It does
 not replace the planned generic candidate-aware application planner.
 
-## Corpus contract
+## Schema 2: independent answers and control identity
+
+Schema 1 remains readable with its original label/status-based meaning. New
+schema-2 cases add independent expected answers and logical native control
+identities. The controller never sends annotations or answer keys to the model.
+Do not upgrade old reports by relabeling them or treating their field credit as
+value-level correctness.
+
+Schema 2 keeps the original input/profile, family, partition, revision and size
+bindings. Each expected field additionally requires:
+
+| Field | Meaning |
+| --- | --- |
+| `control` | Exact native `origin`, lease-independent `selector` and ordered section-label path; repeated labels do not match by order |
+| `required` | Explicit Boolean; an unknown required answer prevents workflow credit |
+| `expected` | Literal `value` for text/select/radio, or `sha256` for a file; exactly `null` for unknown answers |
+
+Native saved-page inventories now expose kinds and logical identities without
+candidate values. The view retains its full `field_count` and explicit
+`omitted_fields` count when the bounded 40-field list is incomplete. It describes
+supported native controls; custom-control walls and unseen sections remain
+separate. Identity descriptors do not authorize interaction. Temporary frame
+leases are removed only by the driver after scope validation, not by a model or
+string heuristic in the evaluator.
+
+Successful rehearsal records publish `native_value` and `native_verified` only
+following the existing native command/readback checks and final revalidation.
+Visual matching alone is insufficient: schema 2 also requires the correct
+control, label/kind, exact independently expected answer, native proof and the
+actual screenshot's SHA-256. File credit compares the expected digest with the
+attachment digest whose bytes the native driver verified; a filename is not
+content proof. The absolute owned attempt screenshot directory must be supplied
+to `evaluate_case(..., evidence_root=...)`; missing/changed images cannot pass.
+The compiled qualifier supplies that directory for its actual result attempt.
+
+Incorrect values, unverified entries, unknown-answer entry, duplicate controls
+and unexpected entries retain separate counts. Every answerable field remains
+in the denominator, including controls never reached. A passing field gate
+requires all declared answerable values and no critical or ambiguous entry.
+
+A case's `workflow` is either `null` or independently annotated `final_review`
+control identity and `required_sections`. Only declared-form truth can request
+workflow credit. Actual native final-review evidence, matching image, visited
+sections, zero unresolved required controls, no required unknowns and the field
+gate are all necessary for `verified_declared_final_review`. This is a scoped
+final-review result, never submission or delivery. The general product does not
+yet emit this complete workflow proof; metadata-only unit tests of that contract
+do not establish real application completion.
+
+## Failed-entry evidence
+
+An eligible recorded target can produce a read-only witness before an action.
+If entry fails, the renderer can retain a current diagnostic screenshot and
+bounded text value, with before/after checks of document, schema, barriers,
+network and value stability. Changed or unavailable evidence is explicitly
+unavailable. Diagnostic observations cannot become approval or successful-entry
+proof; `entry_unverified` stays unverified, and the original failure is retained.
+The witness is unavailable for section-navigation targets and cannot be created
+from model-authored identifiers.
+
+## Corpus contract (legacy schema 1)
 
 Version 1 contains `schema: 1`, a stable `corpus_id`, positive integer `revision`
 and `cases`. Metadata is capped at 1 MiB, 256 cases and 128 expected fields per
@@ -57,9 +117,9 @@ fails if this gate is unmet, while retaining observations and completing cleanup
 The controller's outer `complete` flag also covers collection/teardown; neither
 flag is a model-promotion or whole-application result. Workflow
 completion remains explicitly `not_qualified`; field counts do not prove that
-all sections or a final review page were reached. Stable identifiers for repeated
-controls, complete-form truth, independent value-level review, aggregate held-out
-acceptance and repeated model-promotion comparisons remain work in R02/R04.
+all sections or a final review page were reached. Schema 2 adds control/value comparisons above. Complete-form native proof,
+aggregate held-out acceptance and repeated model-promotion comparisons remain
+work in R02/R04.
 
 ## Initial coverage and next work
 

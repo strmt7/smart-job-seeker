@@ -201,7 +201,8 @@ def main():
             if binding is not None:
                 if bind_case(args.corpus, args.case_id, manifest, profile) != binding:
                     raise RuntimeError('Frozen corpus inputs changed during qualification')
-                report['evaluation'] = evaluate_case(binding, preview['rehearsal'], preview['model_admission'])
+                evidence_root = workspace / 'application-records' / (hashlib.sha256(job.encode()).hexdigest()[:16] + '-' + outcome['attempt_id']) / 'screenshots'
+                report['evaluation'] = evaluate_case(binding, preview['rehearsal'], preview['model_admission'], evidence_root=evidence_root)
             else:
                 assert len(preview['rehearsal']['fields']) == 3
                 assert all(item['status'] == 'visually_matched' for item in preview['rehearsal']['fields'])

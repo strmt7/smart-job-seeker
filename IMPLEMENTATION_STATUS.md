@@ -1,3 +1,12 @@
+## Independent entry truth and failed-state captures - 2026-11-11
+
+Versioned expected-answer/control/image comparisons now distinguish successful
+entry from correct answers. Failed entries retain bound screenshots/text while
+staying unverified. A frozen known-source case verifies3/6 answerable controls;
+Phone retains a formatted value and fails the current literal gate. No section
+advances or held-out/general workflow success are claimed.
+[Measured evidence and next work](docs/g1/INDEPENDENT_ENTRY_EVIDENCE_2026-11-11.md).
+
 ## Observed stylesheet replay and retained Phone failure - 2026-11-11
 
 Native-observed absent-Origin stylesheets now retain their scoped request binding.

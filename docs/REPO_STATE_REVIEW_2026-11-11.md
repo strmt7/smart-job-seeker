@@ -1,8 +1,8 @@
 # Repository state review - 11 November 2026
 
-Reviewed committed source: `fc5a4a436d2a8c89e64261449d7b677d296f0bec`, on
-`main`, followed by a locally validated stylesheet capture/replay continuation.
-Hosted baseline checks do not cover that unpushed continuation.
+Reviewed committed source: `8cd7441013a7e54d1cf157c9dc97ef48d6c2146d`, on
+`main`, followed by independent entry-truth and failed-state observation work.
+Hosted baseline checks do not establish this continuation's validation.
 This is an implementation/evidence review, not an exhaustive code or security
 audit. The existing product-development goal was verified **active**. No new
 goal, scheduler, service or agent team was created.
@@ -22,10 +22,10 @@ its old failures and totals must not be mistaken for current results.
 
 | Scope | Current evidence | Limit |
 | --- | --- | --- |
-| Local continuation | Managed workspace 1,312 passed / 594 ignored; Clippy, formatting and canonical build passed | Current scoped stylesheet change; no broad form or clean-install acceptance |
+| Local continuation | Managed workspace 1,312 passed / 595 ignored; Clippy, formatting and canonical build passed | Current scoped stylesheet change; no broad form or clean-install acceptance |
 | Hosted checks | CI, coverage and CodeQL all completed successfully for `fc5a4a43`, rechecked during this review | Passing CI is not unfamiliar-form or clean-install acceptance |
 | Local-model journey | One development fixture improved from 0/3 to 3/3 verified fields with two section advances | Fixed fictional profile; no whole-workflow qualification or held-out result |
-| Evaluation corpus | Two development cases, zero held-out cases; input/model binding and conservative accounting exist | Not representative; independent expected-value and full-workflow truth remain incomplete |
+| Evaluation corpus | Legacy two-case seed plus a schema2 known-source development case; zero held-out coverage. Independent expected-value/control/image comparisons now run | Not representative; general native full-workflow proof and unseen-family promotion remain open |
 | Stylesheet continuation | Replay54, browser-unit98/12 ignored, one selected native case, a new styled real archive and local12B-model observation | Phone target now matches; entry fails exact-value validation and remains unverified; no section advanced |
 
 The committed local/model results and their exact binary-scope caveat are in
@@ -68,17 +68,18 @@ can establish that an arbitrary live interaction will never transmit data.
    native/visual execution. Other mapping mechanisms exist, but that successful
    fixture is not evidence of a candidate-aware autonomous planner. Measure the
    local model's own choices; developer corrections are development data.
-2. **The evaluation oracle is incomplete (P0, R02).** Current `form_corpus.py`
-   credits unique label/kind records with `visually_matched` status. It does not
-   independently compare expected answer values or establish full-form truth.
-   Repeated labels remain explicitly ambiguous. Add independently annotated value,
-   control/section and final-review truth before broad accuracy claims. Keep
-   answer keys outside prompts and distinguish conservative abstention from
-   silent omission. Model-generated verification can share model decision errors.
+2. **Representative truth remains incomplete (P0, R02).** Schema 2 now compares
+   independent values, control/section identity and actual image bytes. A known
+   source was annotated before model entry: three of six answerable controls
+   pass, one remains unverified and two are unreached. This is not held-out
+   coverage or whole-workflow truth. Legacy reports retain their narrow meaning.
+   Continue varied source families, permission lineage and full native final-review
+   evidence; developer corrections and model verification are not independent truth.
 3. **Some real copies are not usable forms (P0, R03/R04).** A new Greenhouse
    copy now retains its missing CSS, and local-model target review recognizes Phone.
-   Phone entry fails native exact-value/validity verification; its cause and failed
-   post-entry evidence need generic investigation. An Ashby copy renders
+   Phone entry fails native exact-value/validity verification. Its new failed-state
+   image/readback show +1 202-555-0123 versus intended +12025550123; presentation
+   equality must be handled consistently without broad text/validity relaxation. An Ashby copy renders
    styling but needs a robots-disallowed data path; that remains unsupported.
    Workable/Ashby saved coverage does not establish live multistep completion.
    Never count archive creation, zero blocked requests or an empty control list
@@ -110,7 +111,7 @@ can establish that an arbitrary live interaction will never transmit data.
   small useful tranches. Do not build a second evaluation framework.
 - **Large implementation modules:** current line counts including tests are
   `main.rs` 17,033; `fit_task.rs` 10,441; `form_preview.rs` 7,407; browser `lib.rs`
-  8,063. Extract ownership/protocol mechanisms when changing them; avoid an
+  8064. Extract ownership/protocol mechanisms when changing them; avoid an
   unrelated rewrite or framework migration.
 - **Expensive context and reruns:** default semantic results can be dominated by
   status documents. After initial routing, verify exact live paths/symbols with
@@ -143,6 +144,7 @@ this does not establish that every dependency is latest or that no defects exist
 Private current-review receipts are under `target/repo-overview/`; the host
 snapshot is `target/development-host-d9b71a684fe3499289d3417883cf4097.private.json`.
 The stylesheet continuation has local unit/native/compiled/model evidence within
-its stated scope. Next: independent value/control/workflow truth and held-out
-evaluation, generic failed-entry evidence, then the candidate-aware planner.
+its stated scope. Next: narrowly typed telephone presentation handling, varied held-out evaluation
+and the generic candidate-aware planner.
+[Independent value and failed-entry evidence](g1/INDEPENDENT_ENTRY_EVIDENCE_2026-11-11.md).
 Use the same active goal; remaining R03 coverage stays open. No release or application was sent.

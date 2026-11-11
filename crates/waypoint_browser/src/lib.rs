@@ -22,7 +22,8 @@
 
 mod captured_frame;
 pub use captured_frame::{
-    CapturedFrame, CapturedFrames, RecordedFieldCapture, RecordedFieldKind, RecordedTargetCapture,
+    CapturedFrame, CapturedFrames, RecordedControlIdentity, RecordedFieldCapture,
+    RecordedFieldKind, RecordedFieldObservation, RecordedFieldWitness, RecordedTargetCapture,
 };
 #[cfg(windows)]
 pub use captured_frame::{RecordedSectionOutcome, RecordedSectionStop};

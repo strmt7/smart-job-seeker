@@ -292,6 +292,7 @@ fn render_at(
 
 #[cfg(windows)]
 const REHEARSAL_LIMIT: usize = 8;
+const VIEW_FIELD_LIMIT: usize = 40;
 #[cfg(windows)]
 #[cfg(windows)]
 const SECTION_ADVANCE_LIMIT: usize = 2;
@@ -664,6 +665,7 @@ impl Rehearsal {
             let mut result =
                 json!({"view":view,"label":bounded_text(&field.label),"status":"entry_unverified"});
             let mut target_refused = false;
+            let mut witness = None;
             let verified: Vec<_> = captures.iter().map(|(_, capture, _)| capture).collect();
             match driver.rehearse_recorded_field_reviewed(
                 form,
@@ -671,6 +673,8 @@ impl Rehearsal {
                 value,
                 &verified,
                 |target| {
+                    result["control"] = json!(target.control());
+                    witness = target.witness();
                     let reviewed =
                         self.vision
                             .review_target(directory, view, "before_entry", target);
@@ -679,6 +683,7 @@ impl Rehearsal {
                 },
             ) {
                 Ok(capture) => {
+                    result["control"] = json!(capture.control());
                     result["kind"] = json!(capture.kind());
                     result["status"] = json!("visual_unavailable");
                     let image_saved = if let Ok((name, digest)) =
@@ -707,6 +712,30 @@ impl Rehearsal {
                         result["status"] = json!("before_entry_review_required");
                     }
                     result["review_reason"] = json!(bounded_text(&error.to_string()));
+                    if !target_refused {
+                        result["native_verified"] = json!(false);
+                        result["failure_observation"] = match witness
+                            .as_ref()
+                            .and_then(|witness| driver.observe_recorded_field(witness).ok())
+                        {
+                            Some(observation) => {
+                                match save_image(directory, 100 + index, observation.image()) {
+                                    Ok((name, hash)) => {
+                                        result["image"] = json!(name);
+                                        result["sha256"] = json!(hash);
+                                        json!({"status":"observed","scope":"current_same_document_and_schema",
+                                        "control":observation.control(),"native_value":observation.value(),"entry_verified":false})
+                                    }
+                                    Err(_) => {
+                                        json!({"status":"unavailable","reason":"image_not_retained","entry_verified":false})
+                                    }
+                                }
+                            }
+                            None => {
+                                json!({"status":"unavailable","reason":"current_bound_evidence_unavailable","entry_verified":false})
+                            }
+                        };
+                    }
                     self.halted = true;
                 }
             }
@@ -721,6 +750,8 @@ impl Rehearsal {
                 .is_ok_and(|current| current == *form);
             for (index, capture, image_saved) in captures {
                 if unchanged && driver.verify_recorded_field(&capture).is_ok() {
+                    self.fields[index]["native_verified"] = json!(true);
+                    self.fields[index]["native_value"] = json!(capture.value());
                     if matches!(capture.kind(), waypoint_browser::RecordedFieldKind::File) {
                         self.fields[index]["attachment"] = json!({
                             "name":capture.value(), "sha256":waypoint_domain::sha256_hex(SAMPLE_PDF),
@@ -729,6 +760,7 @@ impl Rehearsal {
                     self.captures.push((index, capture, image_saved));
                 } else {
                     self.fields[index]["status"] = json!("changed_after_entry");
+                    self.fields[index]["native_verified"] = json!(false);
                     self.halted = true;
                 }
             }
@@ -772,7 +804,24 @@ fn capture_view(
             form.walls.push(wall);
         }
     }
-    save_view(directory, sequence, label, form, image, embedded)
+    let controls = form
+        .schema
+        .fields
+        .iter()
+        .take(VIEW_FIELD_LIMIT)
+        .map(|field| driver.recorded_control_identity(&form, &field.selector))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    let mut view = save_view(directory, sequence, label, form, image, embedded)?;
+    for (field, control) in view["fields"]
+        .as_array_mut()
+        .ok_or("Saved control inventory is unavailable")?
+        .iter_mut()
+        .zip(controls)
+    {
+        field["control"] = json!(control);
+    }
+    Ok(view)
 }
 
 #[cfg(windows)]
@@ -797,8 +846,18 @@ fn save_view(
         .schema
         .fields
         .iter()
-        .take(40)
-        .map(|field| json!({"label":bounded_text(&field.label),"required":field.required}))
+        .take(VIEW_FIELD_LIMIT)
+        .map(|field| {
+            use waypoint_applications::form_mapping::FormFieldType;
+            let kind = match field.field_type {
+                FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea => "text",
+                FormFieldType::Select { .. } => "select",
+                FormFieldType::Radio { .. } => "radio",
+                FormFieldType::File => "file",
+                _ => "unsupported",
+            };
+            json!({"label":bounded_text(&field.label),"required":field.required,"kind":kind})
+        })
         .collect();
     let walls: Vec<_> = form
         .walls
@@ -808,7 +867,7 @@ fn save_view(
         .collect();
     Ok(
         json!({"kind":if embedded{"frame"}else{"page"},"label":bounded_text(label),"origin":bounded_text(&form.origin),
-        "image":name,"sha256":sha256,"fields":fields,"field_count":form.schema.fields.len(),"walls":walls,"wall_count":form.walls.len(),"omitted_walls":form.walls.len().saturating_sub(walls.len()),"independent_entry":{"blocked":form.independent_field_entry_blocked(),"barriers":form.independent_field_barriers().iter().take(8).map(|value|bounded_text(value)).collect::<Vec<_>>(),"barrier_count":form.independent_field_barriers().len()}}),
+        "image":name,"sha256":sha256,"fields":fields,"field_count":form.schema.fields.len(),"omitted_fields":form.schema.fields.len().saturating_sub(VIEW_FIELD_LIMIT),"walls":walls,"wall_count":form.walls.len(),"omitted_walls":form.walls.len().saturating_sub(walls.len()),"independent_entry":{"blocked":form.independent_field_entry_blocked(),"barriers":form.independent_field_barriers().iter().take(8).map(|value|bounded_text(value)).collect::<Vec<_>>(),"barrier_count":form.independent_field_barriers().len()}}),
     )
 }
 

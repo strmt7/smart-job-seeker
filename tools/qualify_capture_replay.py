@@ -21,9 +21,11 @@ def main():
     parser.add_argument('--discover',action='store_true',help='Discover transitive resources through render-only browser rounds')
     parser.add_argument('--privacy',action='store_true',help='Discover/refuse fictional private URLs before offline candidate entry')
     parser.add_argument('--custom-controls',action='store_true',help='Verify independent entry while custom widgets still block advancement')
+    parser.add_argument('--failed-entry',action='store_true',help='Qualify failed input readback/image evidence without accepting the entry')
     args=parser.parse_args()
+    if args.failed_entry and (args.discover or args.privacy or args.custom_controls):parser.error('--failed-entry selects a separate native scenario')
     args.discover=args.discover or args.privacy or args.custom_controls
-    args.coordinator=args.coordinator or args.discover
+    args.coordinator=args.coordinator or args.discover or args.failed_entry
     if os.name!='nt' or not args.engine.is_absolute() or not args.python.is_absolute() or not args.python.is_file():parser.error('Windows and explicit absolute engine/interpreter paths required')
     cargo=shutil.which('cargo')
     if not cargo:parser.error('Cargo is required for this development qualification')
@@ -47,6 +49,7 @@ def main():
         case='discovery_archives_transitive_resources_before_candidate_entry' if args.discover else 'coordinator_archive_drives_contained_form'
         if args.privacy:case='private_resources_are_not_fetched_before_offline_candidate_entry'
         if args.custom_controls:case='independent_fields_preserve_custom_review_and_hard_barriers'
+        if args.failed_entry:case='failed_entry_retains_bound_readback_without_approving_it'
         selection=['--lib','capture_session::qualification::'+case] if args.coordinator else ['--test','capture_replay_live']
         log=folder/'native.private.log';report['run']=run([cargo,'test','-p','waypoint_browser',*selection,'--','--ignored','--nocapture','--test-threads=1'],env,log,180)
         if report['run']['exit_code']:raise RuntimeError('Capture bridge failed; inspect '+str(log))
@@ -56,6 +59,12 @@ def main():
         report['native_sha256']=sha(native)
         (folder/'screenshot.png').write_bytes(base64.b64decode((folder/'http-captured-screenshot.base64').read_bytes(),validate=True))
         report['screenshot_sha256']=sha(folder/'screenshot.png')
+        if args.failed_entry:
+            failure=json.loads((folder/'failed-entry.private.json').read_bytes())
+            if failure.get('status')!='entry_unverified' or failure.get('entry_verified') is not False:raise RuntimeError('Failed entry was mislabeled')
+            (folder/'failed-entry.png').write_bytes(base64.b64decode((folder/'failed-entry-screenshot.base64').read_bytes(),validate=True))
+            report['failed_entry_sha256']=sha(folder/'failed-entry.private.json')
+            report['failed_entry_image_sha256']=sha(folder/'failed-entry.png')
         if hashes()!=report['source_sha256'] or inventory(args.engine)!=files:raise RuntimeError('Source or engine changed during capture qualification')
         report['complete']=True
     finally:

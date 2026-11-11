@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
   "reviewed_on": "2026-11-11",
-  "reviewed_source": "fc5a4a436d2a8c89e64261449d7b677d296f0bec",
+  "reviewed_source": "8cd7441013a7e54d1cf157c9dc97ef48d6c2146d",
   "goal": "Continue the existing active Smart Jobseeker product-development goal",
   "plan": "docs/COMPLETION_PLAN_2026-11-11.md",
   "assessment": "docs/REPO_STATE_REVIEW_2026-11-11.md",
-  "next_task": "R02",
+  "next_task": "R04",
   "boundaries": [
     "main only",
     "headless development only",
@@ -81,7 +81,8 @@
       ],
       "evidence": [
         "docs/FORM_EVALUATION.md",
-        "docs/g1/FORM_CORPUS_SCOPE_2026-11-11.md"
+        "docs/g1/FORM_CORPUS_SCOPE_2026-11-11.md",
+        "docs/g1/INDEPENDENT_ENTRY_EVIDENCE_2026-11-11.md"
       ],
       "execution_batch": "B",
       "steps": [
@@ -90,11 +91,12 @@
         "Freeze employer/layout-family held-out partition before tuning.",
         "Report field, workflow, abstention, error, elapsed and resource denominators; repeat model-sensitive promotion candidates."
       ],
-      "next_action": "Implement independently annotated expected-value/control/section/workflow truth in a versioned extension of the existing evaluator, then freeze a small varied held-out tranche. Keep two current development cases / zero held-out and the new unclassified Phone failure distinct.",
+      "next_action": "Collect a small varied held-out tranche using schema2 and retained permission/source lineage. Native whole-workflow proof, unseen employers/layouts, repeated promotions and broad coverage remain open; do not count the known-source case as held out.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "completed_scopes": [
         "Bounded corpus identity/partition/input protocol and explicit field gate; two development cases, no held-out coverage.",
-        "Actual compiled local12B-model before/after evidence, deterministic final accounting and verified owned cleanup."
+        "Actual compiled local12B-model before/after evidence, deterministic final accounting and verified owned cleanup.",
+        "Schema2 independent expected values, control/section identity, bound actual image hashes and explicit workflow truth protocol; legacy reports retain original meaning. One known-source initial9-control development case frozen before model entry; field gate correctly fails3/6 with one unverified Phone."
       ],
       "start_requirements": [
         "Existing versioned input-binding/evaluation protocol is implemented; reviewed in tools/form_corpus.py and docs/FORM_EVALUATION.md."
@@ -145,7 +147,7 @@
     {
       "id": "R04",
       "priority": "P0",
-      "status": "planned",
+      "status": "in_progress",
       "depends_on": [
         "R02",
         "R03"
@@ -161,7 +163,9 @@
         "Custom choices, repeated histories, conditional/multistep/frame scenarios",
         "Independent before/after visual and native checks; no-progress review fallback"
       ],
-      "evidence": [],
+      "evidence": [
+        "docs/g1/INDEPENDENT_ENTRY_EVIDENCE_2026-11-11.md"
+      ],
       "execution_batch": "C",
       "steps": [
         "Preserve a generic bounded post-entry failure observation and screenshot with provenance; qualify input mutation/formatting and prerequisite-control behavior on contained varied fixtures before using that evidence for planner repair.",
@@ -170,11 +174,15 @@
         "After every action, read back native state and perform local-model visual review; detect stale state and no progress.",
         "Measure the local model on the frozen corpus; provide actionable review records rather than invented answers."
       ],
-      "next_action": "Retain failed post-entry value/image evidence generically before diagnosing masked/dependent controls; then connect candidate-supported facts and typed model planning with independent validation. Do not assume Phone normalization or override exact-value checks.",
+      "next_action": "Research authoritative telephone input/number presentation rules, inspect native tel type/validity evidence, then implement narrowly typed presentation equivalence consistently across native verification, actual-value recording, visual comparison and schema2 truth. Preserve all validity/freshness/authorization checks and exact matching for other text; qualify negative fixtures before the known-source model case.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "start_requirements": [
-        "At least a usable frozen tranche with independent answer/control/workflow truth.",
-        "Native/visual observations and proposed typed actions are available in contained fictional/offline execution; no live employer writes."
+        "The frozen schema2 known-source initial-control case and native mutation fixture admit investigation of the observed actuator failure. This does not admit broad planner promotion; that still requires the varied held-out tranche and full workflow truth.",
+        "Native/visual observations and typed actions stay in contained fictional/offline execution; no live employer writes."
+      ],
+      "completed_scopes": [
+        "Native-bound failed-entry witness and coherent diagnostic image/text without accepting the entry; challenge/schema/document changes refuse observations.",
+        "Actual failed Phone image/value retained: +1 202-555-0123 versus intended +12025550123. Independent gate stays failed; no section advances."
       ]
     },
     {
@@ -330,7 +338,7 @@
     {
       "id": "R10",
       "priority": "P1",
-      "status": "planned",
+      "status": "in_progress",
       "depends_on": [
         "R05",
         "R06"
@@ -346,7 +354,9 @@
         "Crash/cancel/restart/ambiguous-write reconciliation without automatic retry",
         "Email preparation/correlation; no application email sent"
       ],
-      "evidence": [],
+      "evidence": [
+        "docs/g1/INDEPENDENT_ENTRY_EVIDENCE_2026-11-11.md"
+      ],
       "execution_batch": "E",
       "steps": [
         "Complete per-attempt manifest for original ad, final PDFs, answers, screenshots, hashes and honest outcomes.",
@@ -355,7 +365,10 @@
         "Exercise final dispatch/confirmation/idempotency mechanisms only on fictional loopback forms/local mail server; retain explicit user-grant design."
       ],
       "next_action": "Complete immutable per-attempt evidence including failed-entry screenshots/readback and explicit unavailable observations; preserve original ads, exact attachments, answers and uncertain outcomes.",
-      "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package."
+      "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
+      "completed_scopes": [
+        "Bound failed-entry screenshots/readback now persist with entry_unverified, original failure and explicit unavailable states; full attempt/recovery/email gates remain open."
+      ]
     },
     {
       "id": "R11",
@@ -501,7 +514,7 @@
     "binding": "Existing active Smart Jobseeker goal; reverified active on 2026-11-11; objective unchanged.",
     "entry_point": "AGENTS.md",
     "queue": "docs/ACTIVE_DEVELOPMENT_PLAN.json",
-    "selection": "Continue R02 independent expected-value/control/workflow truth and frozen held-out collection using existing evaluation tools. Retain the locally qualified R03 stylesheet slice and its failed Phone entry; next R04 work needs generic failed-entry evidence and masked/dependent-control qualification. Do not repeat unchanged model/settings checks or treat controller completion as workflow success.",
+    "selection": "Continue R04 observed telephone presentation mismatch using authoritative research and native/visual/value truth, without broad text normalization or relaxed validity. Keep R02 held-out collection and all other product gates open. Existing field and workflow failures are not completion; preserve active owned handles and current source identity.",
     "completion": "A package completion does not complete the product goal. Keep the overall goal active until all required product work is achieved.",
     "scheduling": "No new agents, automation, service or background scheduler created by this plan."
   },
@@ -524,6 +537,24 @@
     "build_state": "Last focused test compile failed; three stale start callers remain in current source. No current full-workspace pass claimed."
   },
   "working_tree_checkpoint": {
+    "baseline_head": "8cd7441013a7e54d1cf157c9dc97ef48d6c2146d",
+    "validated_changes": "Independent schema2 answer/control/image truth and native-bound failed-entry evidence; actual Phone presentation mismatch retained without accepting it.",
+    "validated_source_sha256": {
+      "apps/web_app/src/recorded_preview.rs": "ce555081ad0e6c25a1a53a47afdbccfec1dd5269e051d4c55588d70731d973fa",
+      "crates/waypoint_browser/src/captured_frame.rs": "1e0bc519e0437b674459bf8f463dfe75c0226cc43ed77076c58a3f2649b681de",
+      "crates/waypoint_browser/src/lib.rs": "2b18a293ec2303422f9996ecf2e70e399c038eacc62bc134d6c0706601c2036e",
+      "crates/waypoint_browser/src/capture_session_qualification.rs": "d683bf563614a9f59646c923fc3d82300d45a93805e3452971e4984850eac9c8",
+      "tools/form_corpus.py": "a0b387bd28deac3afbbb4b31f07d3d98c089c4c9e26297e09168eac6121a80e0",
+      "tools/qualify_capture_replay.py": "493a535ac2f8fe1a701b02a150ed78e67d4ef555b45dcf78e6dc607e209fd689",
+      "tools/qualify_model_preferences.py": "497184e17dee761e2148588f26ed3029015231aa1f08e2b9c0928d71daa03a9c",
+      "tools/tests/test_form_corpus.py": "794c7569275a5802d8f9f6bd497ca6b3def970fc3c15c52eaac9495063e5bf5e"
+    },
+    "app_sha256": "a735fe969a509e9bd2de794d4a387f9a95db50645c8e7760fb76b118ec454850",
+    "build_state": "Workspace1312 passed/595 ignored, tools88 passed, Clippy/build pass. Native failure case1 passed; known local12B case3/6 correct,1 unverified,2 unreached,3 unknown. Field/workflow gates fail honestly.",
+    "evidence": "docs/g1/INDEPENDENT_ENTRY_EVIDENCE_2026-11-11.md"
+  },
+  "dependency_semantics": "depends_on are completion prerequisites; start_requirements admit bounded implementation before the whole prerequisite package completes. Containment, UI consistency and resource ownership apply continuously.",
+  "last_validated_checkpoint": {
     "baseline_head": "fc5a4a436d2a8c89e64261449d7b677d296f0bec",
     "validated_changes": "Absent-Origin stylesheet binding with native/compiled/read-only/offline model evidence; remaining Phone entry fails and is unverified.",
     "validated_source_sha256": {
@@ -538,13 +569,6 @@
     "build_state": "Managed workspace1312 passed/594 ignored, Clippy/fmt/build pass; replay54, native1, source-copy16 resources, model3 verified fields + unverified Phone. No full-workflow or held-out claim.",
     "evidence": "docs/g1/ABSENT_ORIGIN_STYLESHEETS_2026-11-11.md"
   },
-  "dependency_semantics": "depends_on are completion prerequisites; start_requirements admit bounded implementation before the whole prerequisite package completes. Containment, UI consistency and resource ownership apply continuously.",
-  "last_validated_checkpoint": {
-    "baseline_head": "1b3f7a10e0f533b39dc2df6f3c1765afe6c11f6a",
-    "validated_changes": "Case-bound corpus accounting and embedded selector/section namespace freshness repair.",
-    "build_state": "Local workspace1308 passed/594 ignored, agent tools78 passed, Clippy/fmt/build passed. Model development run3/3 fields and2 section advances; final metadata/test-only refinements have separate scope.",
-    "evidence": "docs/g1/FORM_CORPUS_SCOPE_2026-11-11.md"
-  },
   "current_hosted_checks": {
     "head": "fc5a4a436d2a8c89e64261449d7b677d296f0bec",
     "all_completed_successfully": true,
@@ -557,17 +581,16 @@
   },
   "immediate_slices": [
     {
+      "task": "R04",
+      "deliverable": "Evidence-backed strictly typed telephone presentation handling across native/visual/oracle layers; actual values stay actual and all non-tel/constraint/freshness checks remain strict."
+    },
+    {
       "task": "R02",
-      "contract": "docs/COMPLETION_PLAN_2026-11-11.md#immediate-execution-slices",
-      "deliverable": "Independent value/control/workflow oracle and a small frozen varied held-out tranche; preserve current development observations."
+      "deliverable": "Varied frozen held-out cases, permission lineage, independent complete-form truth and repeated promotion evidence."
     },
     {
       "task": "R04",
-      "deliverable": "Generic failed-entry evidence and typed candidate-aware planning under R05 containment; qualify masked/dependent controls without weakening verification."
-    },
-    {
-      "task": "R03",
-      "deliverable": "Continue unseen eligible rendering and label-context qualification as corpus grows; stylesheet implementation has scoped local evidence."
+      "deliverable": "Connect generic candidate-aware planning over the qualified capabilities, with typed repairs and manual review."
     }
   ]
 }
