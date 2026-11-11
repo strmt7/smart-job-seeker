@@ -48,6 +48,31 @@ function harness(api, onFinished) {
   assert(button(gated,'View target image'));
   assert.equal(find(gated,node=>node.textContent==='Before entry \u00b7 Parent name \u00b7 Target and image match'),undefined);
 
+  const blocked = harness(async () => {}).preview({views:[{
+    ...preview.views[0], walls:['Custom country needs review'],wall_count:10,omitted_walls:2,
+    independent_entry:{blocked:true,barriers:['captcha present']},
+  }],rehearsal:{scope:'fictional_saved_form',fields:[
+    {view:1,label:'Parent name',status:'before_entry_review_required',review_reason:'Image label could not be matched'},
+    {view:1,label:'Other name',status:'entry_unverified'},
+  ],sections:[{view:1,status:'stopped',reason:'page_needs_review'}]}},{});
+  for (const text of ['2 additional review notes are recorded for this view.', 'Entry stopped before filling fields in this view.',
+    'captcha present','Parent name · Visual review stopped entry before any value was entered',
+    'Other name · Entry could not be verified','Image label could not be matched','This section needs review before continuing.']) {
+    assert(find(blocked,node=>node.textContent===text),text);
+  }
+  assert.equal(find(blocked,node=>node.textContent.includes('Text verified in form')),undefined);
+  const notes = find(blocked,node=>node.tag==='details' && node.children.some(child=>child.tag==='summary' && child.textContent==='Section review notes'));
+  assert(notes, 'Secondary review notes use the shared disclosure pattern');
+  assert(find(notes,node=>node.tag==='li' && node.textContent==='Custom country needs review'));
+  assert.equal(find(notes,node=>node.textContent==='captcha present'),undefined,'An entry barrier remains visible outside the collapsed review notes');
+  const independent = harness(async () => {}).preview({views:[{
+    ...preview.views[0],walls:['Custom country needs review'],wall_count:1,omitted_walls:1,
+    independent_entry:{blocked:false,barriers:[]},
+  }]},{});
+  assert(find(independent,node=>node.textContent==='Supported fields can be tested independently. Review notes still prevent completing this section.'));
+  assert(find(independent,node=>node.textContent==='1 additional review note is recorded for this view.'));
+  assert.equal(find(independent,node=>node.textContent==='Entry stopped before filling fields in this view.'),undefined);
+
   const rehearsal = {...preview, rehearsal: {scope:'fictional_text_only', fields:[
     {view:2,label:'Child answer',status:'visual_unavailable',image:'0006.png',sha256:digest},
     {view:2,label:'Unclear field',status:'visual_review_failed'},

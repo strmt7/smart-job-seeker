@@ -849,7 +849,8 @@ mod tests {
 
     #[test]
     fn discovery_scroll_never_bypasses_a_captcha_or_other_wall() {
-        let mut live = LiveForm { origin: "https://example.org".into(), schema: FormSchema { origin: "https://example.org".into(), fields: vec![], multi_step: false, steps: 1 }, walls: vec!["a custom control needs manual review: A field may be obscured, clipped or transparent; check overlays and the visible browser".into()] };
+        let mut live = LiveForm { independent_fields: None,
+origin: "https://example.org".into(), schema: FormSchema { origin: "https://example.org".into(), fields: vec![], multi_step: false, steps: 1 }, walls: vec!["a custom control needs manual review: A field may be obscured, clipped or transparent; check overlays and the visible browser".into()] };
         assert!(should_seek_obscured_form(&live));
         live.walls.push("captcha present".into());
         assert!(!should_seek_obscured_form(&live));
@@ -874,6 +875,7 @@ mod tests {
             autocomplete: None,
         };
         let previous = LiveForm {
+            independent_fields: None,
             origin: "https://example.org".into(),
             schema: FormSchema {
                 origin: "https://example.org".into(),
@@ -1163,6 +1165,7 @@ mod tests {
             model_review_selectors: Default::default(),
         };
         let mut fresh = LiveForm {
+            independent_fields: None,
             origin: schema.origin.clone(),
             schema,
             walls: vec!["captcha present".into()],
@@ -2200,6 +2203,7 @@ mod tests {
                 vec![]
             };
             Ok(LiveForm {
+                independent_fields: None,
                 origin: "https://jobs.example.org".into(),
                 schema: FormSchema {
                     origin: "https://jobs.example.org".into(),

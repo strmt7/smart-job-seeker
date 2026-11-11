@@ -7,6 +7,13 @@ record offers a view selector, observed field labels, review messages and a
 saved image for each available view. Selecting an image opens the existing
 zoomable viewer.
 
+Section review notes use an expandable list, with omitted notes counted. Entry
+barriers remain visible outside that list. A refusal during target-image review
+is shown as a stop before entry; it is not reported as failed readback. Supported
+fields may be tested independently of unresolved custom controls only when the
+native inspection remains unchanged. Those notes still prevent completing the
+section. The private attempt metadata retains the model's target observations.
+
 The app checks that the source copy completed and belongs to the current job URL.
 The worker checks the manifest against the saved inventory and starts the
 checksum-bound replay browser. It saves the page and up to four directly captured

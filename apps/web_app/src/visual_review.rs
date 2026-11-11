@@ -374,6 +374,45 @@ fn compare(observed: &Value, expected: &[(String, String)]) -> Value {
     json!({"observations":items,"comparisons":comparisons,"observation_limit_reached":items.len() == MAX_OBSERVATIONS})
 }
 
+/// The native inspection can establish a unique required field whose rendered
+/// label adds one asterisk. Preserve the transcription and exact value checks;
+/// never strip punctuation from optional fields or accept multiple observations.
+fn compare_required_marker(
+    observed: &Value,
+    expected: &[(String, String)],
+    allowed: bool,
+) -> Value {
+    if !allowed || expected.len() != 1 || expected[0].0.trim_end().ends_with('*') {
+        return compare(observed, expected);
+    }
+    let label = normalized_label(&expected[0].0);
+    let mut aligned = observed.clone();
+    let mut changed = false;
+    for item in aligned["observations"]
+        .as_array_mut()
+        .expect("validated observations")
+    {
+        let name = normalized_label(item["label"].as_str().expect("validated label"));
+        if let Some(base) = name.strip_suffix('*').map(str::trim_end).filter(|base| {
+            *base == label
+                || (!label.contains('—')
+                    && base
+                        .rsplit('—')
+                        .next()
+                        .is_some_and(|leaf| leaf.trim() == label))
+        }) {
+            item["label"] = json!(base);
+            changed = true;
+        }
+    }
+    let mut review = compare(&aligned, expected);
+    review["observations"] = observed["observations"].clone();
+    if changed {
+        review["required_marker_alignment"] = json!(true);
+    }
+    review
+}
+
 fn twelve_hour_time(value: &str) -> Option<String> {
     let mut parts = value.split_whitespace();
     let clock = parts.next()?;
@@ -962,6 +1001,7 @@ pub(crate) fn analyze_targeted_with_verified_text(
             context,
             verified_text_present: true,
             guard: None,
+            ..Default::default()
         },
     )
 }
@@ -980,7 +1020,7 @@ pub(crate) fn review_recorded_target(
     model: &mut VisionIdentityGuard,
     addr: std::net::SocketAddr,
     target: &waypoint_browser::RecordedTargetCapture,
-) -> RecordedVisionOutcome {
+) -> (RecordedVisionOutcome, Option<Value>) {
     let name = model.model.clone();
     let guard = model.request_guard.clone();
     // No expected label, type or answer is included in the model prompt.
@@ -999,20 +1039,24 @@ pub(crate) fn review_recorded_target(
             )
             .and_then(|value| validate(&value))
             .map(|observed| {
-                compare(
+                compare_required_marker(
                     &observed,
                     &[(target.label().to_owned(), target.kind().to_owned())],
+                    target.required_marker(),
                 )
             }))
         },
     ) {
-        Ok(Ok(review)) => match review["comparisons"][0]["status"].as_str() {
-            Some("matches_transcription") => RecordedVisionOutcome::Matched,
-            Some("differs_from_transcription") => RecordedVisionOutcome::Difference,
-            _ => RecordedVisionOutcome::Unobserved,
-        },
-        Ok(Err(_)) => RecordedVisionOutcome::Failed,
-        Err(_) => RecordedVisionOutcome::Stopped,
+        Ok(Ok(review)) => {
+            let outcome = match review["comparisons"][0]["status"].as_str() {
+                Some("matches_transcription") => RecordedVisionOutcome::Matched,
+                Some("differs_from_transcription") => RecordedVisionOutcome::Difference,
+                _ => RecordedVisionOutcome::Unobserved,
+            };
+            (outcome, Some(review))
+        }
+        Ok(Err(_)) => (RecordedVisionOutcome::Failed, None),
+        Err(_) => (RecordedVisionOutcome::Stopped, None),
     }
 }
 
@@ -1041,6 +1085,7 @@ pub(crate) fn review_recorded_field(
                 TargetOptions {
                     context: None,
                     verified_text_present: text,
+                    required_marker: capture.required_marker(),
                     guard: guard.as_ref(),
                 },
             ))
@@ -1060,6 +1105,7 @@ pub(crate) fn review_recorded_field(
 struct TargetOptions<'a> {
     context: Option<u32>,
     verified_text_present: bool,
+    required_marker: bool,
     guard: Option<&'a RequestGuard>,
 }
 
@@ -1074,6 +1120,7 @@ fn analyze_targeted(
     let TargetOptions {
         context,
         verified_text_present,
+        required_marker,
         guard,
     } = options;
     validate_targeted_expected(label, expected)?;
@@ -1100,7 +1147,11 @@ fn analyze_targeted(
         guard,
     )?;
     let observed = validate(&result)?;
-    Ok(compare(&observed, expected))
+    Ok(compare_required_marker(
+        &observed,
+        expected,
+        required_marker,
+    ))
 }
 
 fn validate_targeted_expected(label: &str, expected: &[(String, String)]) -> Result<(), String> {
@@ -3136,6 +3187,62 @@ mod tests {
         .unwrap();
         let result = compare(&different, &[("First name".into(), "Example".into())]);
         assert_eq!(result["comparisons"][0]["status"], "unobserved");
+    }
+
+    #[test]
+    fn required_marker_alignment_keeps_raw_observations_and_refuses_collisions() {
+        let expected = [("First Name".into(), "text".into())];
+        for label in [
+            "First Name*",
+            "First Name *",
+            "Apply for this job — First Name*",
+        ] {
+            let observed =
+                validate(&json!({"observations":[{"label":label,"visible_value":"text"}]}))
+                    .unwrap();
+            let review = compare_required_marker(&observed, &expected, true);
+            assert_eq!(review["comparisons"][0]["status"], "matches_transcription");
+            assert_eq!(review["observations"], observed["observations"]);
+            assert_eq!(review["required_marker_alignment"], true);
+            assert_eq!(
+                compare_required_marker(&observed, &expected, false)["comparisons"][0]["status"],
+                "unobserved"
+            );
+        }
+        for label in [
+            "First Name**",
+            "First Name†",
+            "First Names*",
+            "Other First Name*",
+        ] {
+            let observed =
+                validate(&json!({"observations":[{"label":label,"visible_value":"text"}]}))
+                    .unwrap();
+            assert_eq!(
+                compare_required_marker(&observed, &expected, true)["comparisons"][0]["status"],
+                "unobserved"
+            );
+        }
+        let wrong =
+            validate(&json!({"observations":[{"label":"First Name*","visible_value":"select"}]}))
+                .unwrap();
+        assert_eq!(
+            compare_required_marker(&wrong, &expected, true)["comparisons"][0]["status"],
+            "differs_from_transcription"
+        );
+        let duplicate = validate(&json!({"observations":[{"label":"First Name*","visible_value":"text"},{"label":"First Name","visible_value":"text"}]})).unwrap();
+        assert_eq!(
+            compare_required_marker(&duplicate, &expected, true)["comparisons"][0]["status"],
+            "unobserved"
+        );
+        let answer =
+            validate(&json!({"observations":[{"label":"First Name*","visible_value":"Avery*"}]}))
+                .unwrap();
+        assert_eq!(
+            compare_required_marker(&answer, &[("First Name".into(), "Avery".into())], true)
+                ["comparisons"][0]["status"],
+            "differs_from_transcription"
+        );
     }
 
     #[test]

@@ -1391,6 +1391,7 @@ mod tests {
     fn hidden_required_control_explains_review_without_changing_wall_binding() {
         let wall = "a required hidden control needs manual review".to_string();
         let live = LiveForm {
+            independent_fields: None,
             origin: "https://example.invalid".into(),
             schema: FormSchema {
                 origin: "https://example.invalid".into(),
@@ -1425,6 +1426,7 @@ mod tests {
             autocomplete: Some("email webauthn".into()),
         };
         let live = LiveForm {
+            independent_fields: None,
             origin: "https://example.invalid".into(),
             schema: FormSchema {
                 origin: "https://example.invalid".into(),
@@ -1773,6 +1775,7 @@ mod tests {
         };
         let mut driver = FixtureDriver {
             live: LiveForm {
+                independent_fields: None,
                 origin: schema.origin.clone(),
                 schema: schema.clone(),
                 walls: vec![],
@@ -1870,6 +1873,7 @@ mod tests {
             model_review_selectors: Default::default(),
         };
         let mut driver = InspectDriver(LiveForm {
+            independent_fields: None,
             origin: schema.origin.clone(),
             schema,
             walls: vec![],
@@ -4088,6 +4092,7 @@ mod tests {
     impl BrowserDriver for WalledDriver {
         fn open(&mut self, _: &str) -> Result<LiveForm, DriverError> {
             Ok(LiveForm {
+                independent_fields: None,
                 origin: "https://example.test".into(),
                 schema: FormSchema {
                     origin: "https://example.test".into(),
@@ -4129,6 +4134,7 @@ mod tests {
             }
         }
         let live = LiveForm {
+            independent_fields: None,
             origin: "https://example.test".into(),
             schema: FormSchema {
                 origin: "https://example.test".into(),
@@ -4217,6 +4223,7 @@ mod tests {
             steps: 1,
         };
         let live = LiveForm {
+            independent_fields: None,
             origin: schema.origin.clone(),
             schema: schema.clone(),
             walls: vec![],
@@ -4272,6 +4279,7 @@ mod tests {
             steps: 1,
         };
         let live = LiveForm {
+            independent_fields: None,
             origin: schema.origin.clone(),
             schema: schema.clone(),
             walls: vec![],
@@ -4331,6 +4339,7 @@ mod tests {
             }
         }
         let live = LiveForm {
+            independent_fields: None,
             origin: "https://example.test".into(),
             schema: FormSchema {
                 origin: "https://example.test".into(),
@@ -4396,6 +4405,7 @@ mod tests {
         let unresolved = "a button has an unresolved accessible name; manual review is needed";
         let custom = "a custom control needs manual review: Position";
         let live = LiveForm {
+            independent_fields: None,
             origin: "https://example.invalid".into(),
             schema: FormSchema {
                 origin: "https://example.invalid".into(),
@@ -4424,7 +4434,8 @@ mod tests {
     #[test]
     fn hidden_empty_form_suggests_scrolling_without_promising_a_fix() {
         let mut live = LiveForm {
-            origin: "https://example.invalid".into(),
+            independent_fields: None,
+origin: "https://example.invalid".into(),
             schema: FormSchema { origin: "https://example.invalid".into(), fields: vec![], multi_step: false, steps: 1 },
             walls: vec!["a custom control needs manual review: A field may be obscured, clipped or transparent; check overlays and the visible browser".into()],
         };
@@ -6127,6 +6138,7 @@ mod tests {
             }
         };
         let live = LiveForm {
+            independent_fields: None,
             origin: "https://example.test".into(),
             schema: FormSchema {
                 origin: "https://example.test".into(),
@@ -6205,6 +6217,7 @@ mod tests {
             autocomplete: Some("given-name".into()),
         };
         let live = LiveForm {
+            independent_fields: None,
             origin: "https://example.test".into(),
             schema: FormSchema {
                 origin: "https://example.test".into(),
@@ -6340,6 +6353,7 @@ mod tests {
             autocomplete: Some("given-name".into()),
         };
         let live = LiveForm {
+            independent_fields: None,
             origin: "https://example.test".into(),
             schema: FormSchema {
                 origin: "https://example.test".into(),
@@ -6383,6 +6397,7 @@ mod tests {
             autocomplete: Some("given-name".into()),
         };
         let live = LiveForm {
+            independent_fields: None,
             origin: "https://example.test".into(),
             schema: FormSchema {
                 origin: "https://example.test".into(),
@@ -6417,6 +6432,7 @@ mod tests {
             waypoint_browser::INVALID_FIELD_REVIEW_PREFIX
         );
         let live = LiveForm {
+            independent_fields: None,
             origin: "https://example.test".into(),
             schema: FormSchema {
                 origin: "https://example.test".into(),
@@ -6472,6 +6488,7 @@ mod tests {
             })
             .collect();
         let live = LiveForm {
+            independent_fields: None,
             origin: "https://example.test".into(),
             schema: FormSchema {
                 origin: "https://example.test".into(),

@@ -16,9 +16,212 @@ use crate::receipt::ReceiptKind;
 pub struct LiveForm {
     pub origin: String,
     pub schema: FormSchema,
-    /// Hard blockers discovered on the page ("captcha", "login required", ...).
-    /// A wall is never something the app tries to climb.
+    /// Completion barriers and unresolved controls. Every item still blocks
+    /// advancement; page-wide barriers also prohibit independent field entry.
     pub walls: Vec<String>,
+    /// Snapshot-bound eligibility for independent, supported field entry.
+    /// This never authorizes navigation, submission or an external write.
+    pub independent_fields: Option<IndependentFieldAccess>,
+}
+
+/// A visible custom widget that remains unresolved. Its presence must continue
+/// to block completion, but need not prevent entering a separate known field.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CustomControlReview {
+    pub label: Option<String>,
+    pub required: bool,
+}
+
+impl CustomControlReview {
+    fn message(&self) -> String {
+        let prefix = if self.required {
+            "a required custom control needs manual review"
+        } else {
+            "a custom control needs manual review"
+        };
+        match &self.label {
+            Some(label) => format!("{prefix}: {label}"),
+            None => prefix.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CompletionReview {
+    CustomControl(CustomControlReview),
+    HiddenRequiredControl,
+    ChallengeSupportReference,
+}
+
+impl CompletionReview {
+    fn message(&self) -> String {
+        match self {
+            Self::CustomControl(control) => control.message(),
+            Self::HiddenRequiredControl => "a required hidden control needs manual review".into(),
+            Self::ChallengeSupportReference => {
+                "CAPTCHA support is referenced; completion needs review".into()
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IndependentFieldAccess {
+    schema_identity: String,
+    inspected_walls: Vec<String>,
+    page_barriers: Vec<String>,
+}
+
+impl LiveForm {
+    /// Called by a complete browser inspection. Page-wide barriers and custom
+    /// widget reviews remain separate until their human-readable presentation.
+    pub fn from_inspection(
+        schema: FormSchema,
+        page_barriers: Vec<String>,
+        completion_reviews: Vec<CompletionReview>,
+    ) -> Self {
+        let mut walls = page_barriers.clone();
+        walls.extend(completion_reviews.iter().map(CompletionReview::message));
+        walls.sort();
+        walls.dedup();
+        let evidence = IndependentFieldAccess {
+            schema_identity: schema.schema_hash_input(),
+            inspected_walls: walls.clone(),
+            page_barriers,
+        };
+        Self {
+            origin: schema.origin.clone(),
+            schema,
+            walls,
+            independent_fields: Some(evidence),
+        }
+    }
+
+    /// Unknown/legacy walls still block. Any later change to the schema, origin
+    /// or review observations invalidates the inspection's entry eligibility.
+    pub fn independent_field_entry_blocked(&self) -> bool {
+        match &self.independent_fields {
+            Some(evidence) => {
+                !evidence.page_barriers.is_empty()
+                    || evidence.inspected_walls != self.walls
+                    || evidence.schema_identity != self.schema.schema_hash_input()
+                    || self.origin != self.schema.origin
+            }
+            None => !self.walls.is_empty(),
+        }
+    }
+
+    /// Explain a stop without treating a model's opinion as inspection evidence.
+    pub fn independent_field_barriers(&self) -> Vec<String> {
+        match &self.independent_fields {
+            Some(evidence)
+                if evidence.inspected_walls == self.walls
+                    && evidence.schema_identity == self.schema.schema_hash_input()
+                    && self.origin == self.schema.origin =>
+            {
+                evidence.page_barriers.clone()
+            }
+            Some(_) => vec![
+                "The form changed after inspection; inspect it again before entering fields."
+                    .into(),
+            ],
+            None => self.walls.clone(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod independent_field_tests {
+    use super::*;
+
+    fn schema() -> FormSchema {
+        FormSchema {
+            origin: "https://example.org".into(),
+            fields: vec![],
+            multi_step: false,
+            steps: 1,
+        }
+    }
+
+    fn custom(label: &str) -> CompletionReview {
+        CompletionReview::CustomControl(CustomControlReview {
+            label: Some(label.into()),
+            required: true,
+        })
+    }
+
+    #[test]
+    fn custom_review_permits_independent_entry_but_remains_a_completion_barrier() {
+        let form = LiveForm::from_inspection(schema(), vec![], vec![custom("Country")]);
+        assert!(!form.independent_field_entry_blocked());
+        assert_eq!(
+            form.walls,
+            ["a required custom control needs manual review: Country"]
+        );
+        let mut legacy = form.clone();
+        legacy.independent_fields = None;
+        assert!(legacy.independent_field_entry_blocked());
+    }
+
+    #[test]
+    fn hard_barrier_cannot_be_downgraded_by_a_matching_custom_control_message() {
+        let review = custom("Country");
+        let form = LiveForm::from_inspection(schema(), vec![review.message()], vec![review]);
+        assert_eq!(form.walls.len(), 1);
+        assert!(form.independent_field_entry_blocked());
+        let captcha = LiveForm::from_inspection(
+            schema(),
+            vec!["captcha present".into()],
+            vec![custom("captcha present")],
+        );
+        assert!(captcha.independent_field_entry_blocked());
+    }
+
+    #[test]
+    fn changed_or_removed_review_and_schema_origin_invalidate_entry_evidence() {
+        let original = LiveForm::from_inspection(schema(), vec![], vec![custom("Country")]);
+        let mut added = original.clone();
+        added.walls.push("new inspection uncertainty".into());
+        assert!(added.independent_field_entry_blocked());
+        let mut removed = original.clone();
+        removed.walls.clear();
+        assert!(removed.independent_field_entry_blocked());
+        let mut changed = original.clone();
+        changed.schema.steps = 2;
+        assert!(changed.independent_field_entry_blocked());
+        let mut origin = original;
+        origin.origin = "https://other.example.org".into();
+        assert!(origin.independent_field_entry_blocked());
+    }
+
+    #[test]
+    fn unknown_legacy_wall_is_never_treated_as_a_custom_control_advisory() {
+        let form = LiveForm {
+            origin: schema().origin.clone(),
+            schema: schema(),
+            walls: vec!["a custom control needs manual review: Country".into()],
+            independent_fields: None,
+        };
+        assert!(form.independent_field_entry_blocked());
+    }
+
+    #[test]
+    fn passive_challenge_reference_and_hidden_required_control_still_block_completion() {
+        let form = LiveForm::from_inspection(
+            schema(),
+            vec![],
+            vec![
+                CompletionReview::ChallengeSupportReference,
+                CompletionReview::HiddenRequiredControl,
+            ],
+        );
+        assert!(!form.independent_field_entry_blocked());
+        assert_eq!(form.walls.len(), 2);
+        assert!(form
+            .walls
+            .iter()
+            .any(|wall| wall.contains("CAPTCHA support")));
+    }
 }
 
 /// What the site said after the write.

@@ -293,7 +293,6 @@ fn render_at(
 #[cfg(windows)]
 const REHEARSAL_LIMIT: usize = 8;
 #[cfg(windows)]
-const FIELDS_PER_SECTION: usize = 4;
 #[cfg(windows)]
 const SECTION_ADVANCE_LIMIT: usize = 2;
 
@@ -338,7 +337,14 @@ fn record_scope(
         let Some(rehearsal) = rehearsal.as_deref_mut() else {
             return Ok(());
         };
-        if rehearsal.halted || form.schema.fields.is_empty() || !form.walls.is_empty() {
+        if rehearsal.halted || form.schema.fields.is_empty() {
+            return Ok(());
+        }
+        if form.independent_field_entry_blocked() {
+            rehearsal.halted = true;
+            rehearsal
+                .sections
+                .push(json!({"view":view,"status":"stopped","reason":"page_needs_review","barriers":form.independent_field_barriers()}));
             return Ok(());
         }
         let first_capture = rehearsal.captures.len();
@@ -513,15 +519,18 @@ impl RehearsalVision {
             record["image"] = json!(image);
             record["sha256"] = json!(digest);
         }
-        let outcome = if let (Some(model), Ok(_), Ok(())) =
+        let (outcome, transcription) = if let (Some(model), Ok(_), Ok(())) =
             (self.model.as_mut(), saved, crate::check_inference_memory())
         {
             crate::visual_review::review_recorded_target(model, self.addr, target)
         } else {
-            RecordedVisionOutcome::Stopped
+            (RecordedVisionOutcome::Stopped, None)
         };
         let accepted = matches!(outcome, RecordedVisionOutcome::Matched);
         record["status"] = json!(recorded_vision_status(outcome));
+        if let Some(transcription) = transcription {
+            record["transcription"] = transcription;
+        }
         self.targets.push(record);
         if accepted {
             Ok(())
@@ -593,7 +602,10 @@ impl Rehearsal {
     ) {
         use waypoint_applications::driver::BrowserDriver;
         use waypoint_applications::form_mapping::{FormFieldType, PacketValue};
-        if self.halted || self.fields.len() >= REHEARSAL_LIMIT || !form.walls.is_empty() {
+        if self.halted
+            || self.fields.len() >= REHEARSAL_LIMIT
+            || form.independent_field_entry_blocked()
+        {
             return;
         }
         let profile = json!({
@@ -605,7 +617,7 @@ impl Rehearsal {
             return;
         };
         let mut captures = Vec::new();
-        let field_limit = (self.fields.len() + FIELDS_PER_SECTION).min(REHEARSAL_LIMIT);
+        let field_limit = REHEARSAL_LIMIT;
         for field in &form.schema.fields {
             if self.fields.len() >= field_limit {
                 break;
@@ -647,7 +659,9 @@ impl Rehearsal {
                 value
             };
             let index = self.fields.len();
-            let mut result = json!({"view":view,"label":bounded_text(&field.label),"status":"readback_unavailable"});
+            let mut result =
+                json!({"view":view,"label":bounded_text(&field.label),"status":"entry_unverified"});
+            let mut target_refused = false;
             let verified: Vec<_> = captures.iter().map(|(_, capture, _)| capture).collect();
             match driver.rehearse_recorded_field_reviewed(
                 form,
@@ -655,8 +669,11 @@ impl Rehearsal {
                 value,
                 &verified,
                 |target| {
-                    self.vision
-                        .review_target(directory, view, "before_entry", target)
+                    let reviewed =
+                        self.vision
+                            .review_target(directory, view, "before_entry", target);
+                    target_refused = reviewed.is_err();
+                    reviewed
                 },
             ) {
                 Ok(capture) => {
@@ -683,7 +700,13 @@ impl Rehearsal {
                     }
                     captures.push((index, capture, image_saved));
                 }
-                Err(_) => self.halted = true,
+                Err(error) => {
+                    if target_refused {
+                        result["status"] = json!("before_entry_review_required");
+                    }
+                    result["review_reason"] = json!(bounded_text(&error.to_string()));
+                    self.halted = true;
+                }
             }
             self.fields.push(result);
             if self.halted {
@@ -783,7 +806,7 @@ fn save_view(
         .collect();
     Ok(
         json!({"kind":if embedded{"frame"}else{"page"},"label":bounded_text(label),"origin":bounded_text(&form.origin),
-        "image":name,"sha256":sha256,"fields":fields,"field_count":form.schema.fields.len(),"walls":walls}),
+        "image":name,"sha256":sha256,"fields":fields,"field_count":form.schema.fields.len(),"walls":walls,"wall_count":form.walls.len(),"omitted_walls":form.walls.len().saturating_sub(walls.len()),"independent_entry":{"blocked":form.independent_field_entry_blocked(),"barriers":form.independent_field_barriers().iter().take(8).map(|value|bounded_text(value)).collect::<Vec<_>>(),"barrier_count":form.independent_field_barriers().len()}}),
     )
 }
 

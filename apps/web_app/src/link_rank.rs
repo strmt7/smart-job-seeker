@@ -728,6 +728,7 @@ mod tests {
             }
             fn inspect_current(&mut self) -> Result<LiveForm, DriverError> {
                 Ok(LiveForm {
+                    independent_fields: None,
                     origin: "https://example.org".into(),
                     schema: FormSchema {
                         origin: "https://example.org".into(),

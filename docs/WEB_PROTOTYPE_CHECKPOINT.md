@@ -1,3 +1,13 @@
+## Partial saved-form visual entry - 2026-11-11
+
+The selected local 12B model and compiled production route visually matched
+three entered fictional fields on one archived real form and refused a fourth
+whose label was not in the crop. The preview now distinguishes that pre-entry
+stop from an unverified write, keeps barriers visible and groups secondary notes.
+Workspace checks, native barrier/privacy/discovery regressions and nine scoped
+component width/CSS-zoom combinations passed.
+[Evidence and limits](g1/INDEPENDENT_FIELD_REVIEW_2026-11-11.md).
+
 ## Bound public asset context - 2026-11-11
 
 Validated Origin/GET-variant binding and a bounded resource-limit adjustment

@@ -1,3 +1,13 @@
+## Partial real saved-form entry - 2026-11-11
+
+The compiled route and local 12B model entered, read back and visually matched
+three fictional fields on one saved employer page, then stopped before Phone
+because its label was outside the crop. Snapshot-bound independent-field
+eligibility retains all completion warnings; actual challenge elements and
+changed inspections still block entry. The preview distinguishes refusal before
+entry from unverified entry and groups secondary review notes.
+[Measured scope and remaining limits](docs/g1/INDEPENDENT_FIELD_REVIEW_2026-11-11.md).
+
 ## Bound public asset context - 2026-11-11
 
 Saved copies can preserve a validated browser-observed public Origin and explicit

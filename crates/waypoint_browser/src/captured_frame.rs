@@ -125,6 +125,7 @@ pub struct RecordedFieldCapture {
     image: String,
     label: String,
     kind: RecordedFieldKind,
+    required_marker: bool,
     command: BrowserCommand,
     network_before: u64,
     document: RecordedDocument,
@@ -136,6 +137,35 @@ pub struct RecordedTargetCapture {
     image: String,
     label: String,
     kind: &'static str,
+    required_marker: bool,
+}
+
+#[cfg(any(windows, test))]
+fn required_marker_unambiguous(form: &LiveForm, field: &FormField) -> bool {
+    let normalized = |label: &str| {
+        label
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase()
+    };
+    let label = normalized(&field.label);
+    field.required
+        && !label.is_empty()
+        && !label.ends_with('*')
+        && form
+            .schema
+            .fields
+            .iter()
+            .filter(|other| {
+                let other = normalized(&other.label);
+                other == label
+                    || other
+                        .strip_suffix('*')
+                        .is_some_and(|base| base.trim_end() == label)
+            })
+            .count()
+            == 1
 }
 
 impl RecordedTargetCapture {
@@ -148,6 +178,11 @@ impl RecordedTargetCapture {
     pub fn kind(&self) -> &str {
         self.kind
     }
+    /// A trailing required asterisk may differ from the accessible label only
+    /// when the inspected field is required and has no conflicting field label.
+    pub fn required_marker(&self) -> bool {
+        self.required_marker
+    }
 }
 
 #[derive(PartialEq, Eq)]
@@ -159,6 +194,9 @@ struct RecordedDocument {
 }
 
 impl RecordedFieldCapture {
+    pub fn required_marker(&self) -> bool {
+        self.required_marker
+    }
     pub fn image(&self) -> &str {
         &self.image
     }
@@ -332,6 +370,7 @@ impl CdpDriver {
         review_target(&RecordedTargetCapture {
             image,
             label: target.label.clone(),
+            required_marker: false,
             kind: "button",
         })?;
         if self.recorded_document()? != document || self.inspect_current()? != *before {
@@ -432,7 +471,7 @@ impl CdpDriver {
         let [field] = fields.as_slice() else {
             return Err(review());
         };
-        if !form.walls.is_empty()
+        if form.independent_field_entry_blocked()
             || field.sensitive
             || value.trim().is_empty()
             || value.len() > 1000
@@ -479,13 +518,14 @@ impl CdpDriver {
             _ => return Err(review()),
         };
         let document = self.recorded_document()?;
-        let check_scope = |driver: &mut Self| {
-            if driver.inspect_current()? != *form || driver.recorded_document()? != document {
-                return Err(review());
+        let check_scope = |driver: &mut Self, phase: &str| {
+            let current = driver.inspect_current()?;
+            if current != *form || driver.recorded_document()? != document {
+                return Err(DriverError(format!("The saved form changed {phase}; inspect it again before continuing (schema changed: {}, review notes changed: {}).", current.schema != form.schema, current.walls != form.walls)));
             }
             Ok(())
         };
-        check_scope(self)?;
+        check_scope(self, "before the field review")?;
         let network_before = self.observed_non_read_requests()?;
         let image = if matches!(kind, RecordedFieldKind::Radio) {
             self.screenshot_recorded_radio(selector, value, false)?
@@ -496,6 +536,7 @@ impl CdpDriver {
         review_target(&RecordedTargetCapture {
             image,
             label: field.label.clone(),
+            required_marker: required_marker_unambiguous(form, field),
             kind: match kind {
                 RecordedFieldKind::Text => "text",
                 RecordedFieldKind::Select => "select",
@@ -503,7 +544,7 @@ impl CdpDriver {
                 RecordedFieldKind::File => "file",
             },
         })?;
-        check_scope(self)?;
+        check_scope(self, "after the field image review")?;
         self.stop_if_non_read_request_observed(network_before)?;
         for capture in verified_fields {
             self.verify_recorded_field(capture)?;
@@ -542,13 +583,14 @@ impl CdpDriver {
         } else {
             self.screenshot_field_context(selector)?
         };
-        check_scope(self)?;
+        check_scope(self, "after field entry")?;
         self.verify_recorded_command(&command)?;
         self.observed_non_read_requests()?;
         self.stop_if_non_read_request_observed(network_before)?;
         Ok(RecordedFieldCapture {
             image,
             label: field.label.clone(),
+            required_marker: required_marker_unambiguous(form, field),
             kind,
             command,
             network_before,
@@ -1287,6 +1329,37 @@ fn recorded_field_crop(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use waypoint_applications::form_mapping::FormSchema;
+
+    #[test]
+    fn required_marker_evidence_needs_unique_inspected_required_field() {
+        let field: FormField = serde_json::from_value(json!({"selector":"#name","label":"Name","field_type":"text","required":true,"sensitive":false})).unwrap();
+        let mut form = LiveForm::from_inspection(
+            FormSchema {
+                origin: "https://example.org".into(),
+                fields: vec![field.clone()],
+                multi_step: false,
+                steps: 1,
+            },
+            vec![],
+            vec![],
+        );
+        assert!(required_marker_unambiguous(&form, &field));
+        let mut optional = field.clone();
+        optional.required = false;
+        assert!(!required_marker_unambiguous(&form, &optional));
+        for label in ["Name", "NAME *", "Name*"] {
+            let mut duplicate = field.clone();
+            duplicate.selector = "#other".into();
+            duplicate.label = label.into();
+            form.schema.fields.push(duplicate);
+            assert!(!required_marker_unambiguous(&form, &field));
+            form.schema.fields.pop();
+        }
+        let mut literal = field.clone();
+        literal.label = "Name*".into();
+        assert!(!required_marker_unambiguous(&form, &literal));
+    }
 
     #[test]
     fn recorded_forward_labels_leave_submit_and_ambiguous_phrases_for_review() {

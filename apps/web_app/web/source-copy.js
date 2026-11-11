@@ -153,8 +153,24 @@
         for (const field of fields) list.append(el('li', `${field.label || 'Unlabelled field'}${field.required ? ' · Required' : ''}`));
         details.append(list);
       }
-      for (const wall of (Array.isArray(view.walls) ? view.walls.slice(0, 8) : [])) {
-        if (typeof wall === 'string') details.append(el('p', wall, 'review-label'));
+      const walls = Array.isArray(view.walls) ? view.walls.slice(0, 8).filter(wall => typeof wall === 'string') : [];
+      const omitted = count(view.omitted_walls);
+      if (walls.length || omitted) {
+        const notes = el('details', '', 'source-copy-result');
+        notes.append(el('summary', 'Section review notes'));
+        const list = el('ul');
+        for (const wall of walls) list.append(el('li', wall.slice(0, 500)));
+        notes.append(list);
+        if (omitted) notes.append(el('p', `${omitted} additional review ${omitted === 1 ? 'note is' : 'notes are'} recorded for this view.`, 'footnote'));
+        details.append(notes);
+      }
+      if (view.independent_entry?.blocked === true) {
+        details.append(el('p', 'Entry stopped before filling fields in this view.', 'review-label'));
+        for (const barrier of (Array.isArray(view.independent_entry.barriers) ? view.independent_entry.barriers.slice(0, 8) : [])) {
+          if (typeof barrier === 'string') details.append(el('p', barrier.slice(0, 500), 'footnote'));
+        }
+      } else if (view.independent_entry?.blocked === false && (count(view.wall_count) || 0) > 0) {
+        details.append(el('p', 'Supported fields can be tested independently. Review notes still prevent completing this section.', 'footnote'));
       }
       if (rehearsal) {
         const viewNumber = Number(select.value) + 1;
@@ -170,6 +186,8 @@
             visual_unavailable: `${stateLabel} verified in form · visual review unavailable`,
             changed_after_entry: 'Field could not be reverified after entry',
             readback_unavailable: 'Field needs manual review',
+            before_entry_review_required: 'Visual review stopped entry before any value was entered',
+            entry_unverified: 'Entry could not be verified',
           };
           const row = el('div', '', 'source-copy-actions');
           row.append(el('span', `${check.label || 'Field'} · ${states[check.status] || 'Needs review'}`, 'footnote'));
@@ -183,6 +201,7 @@
             row.append(button);
           }
           details.append(row);
+          if (typeof check.review_reason === 'string' && check.review_reason) details.append(el('p', check.review_reason.slice(0, 500), 'footnote'));
         }
         const targets = Array.isArray(rehearsal.visual_gate?.targets) ? rehearsal.visual_gate.targets.slice(0, 10).filter(target => target?.view === viewNumber) : [];
         for (const target of targets) {
@@ -212,7 +231,7 @@
             limit_reached: 'The rehearsal reached its section or field limit.',
             control_changed: 'The forward control changed during inspection.',
             document_changed: 'The saved document changed during navigation.',
-            page_needs_review: 'The next view has an inspection warning.',
+            page_needs_review: 'This section needs review before continuing.',
             field_changed: 'A field could not be reverified before continuing.',
             replay_gap: 'The next action needed a request the rehearsal could not replay safely.',
             no_new_section: 'The forward action exposed no new form fields.',

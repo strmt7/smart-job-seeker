@@ -124,18 +124,24 @@ fn discovery_archives_observed_public_ats_frame() {
 #[test]
 #[ignore = "explicit private engine, synthetic HTTP resources and owned memory containment"]
 fn coordinator_archive_drives_contained_form() {
-    run_coordinator(false, false);
+    run_coordinator(false, false, false);
 }
 #[test]
 #[ignore = "explicit private engine, automatic fictional resource discovery and owned memory containment"]
 fn discovery_archives_transitive_resources_before_candidate_entry() {
-    run_coordinator(true, false);
+    run_coordinator(true, false, false);
 }
 #[test]
 #[ignore = "explicit private engine, fictional private-URL discovery and owned memory containment"]
 fn private_resources_are_not_fetched_before_offline_candidate_entry() {
-    run_coordinator(true, true);
+    run_coordinator(true, true, false);
 }
+#[test]
+#[ignore = "explicit contained browser and fictional custom controls; no live source"]
+fn independent_fields_preserve_custom_review_and_hard_barriers() {
+    run_coordinator(true, false, true);
+}
+
 fn qualification_config() -> (RehearsalConfig, PathBuf, PathBuf) {
     let target =
         std::fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target")).unwrap();
@@ -156,9 +162,15 @@ fn qualification_config() -> (RehearsalConfig, PathBuf, PathBuf) {
         PathBuf::from(std::env::var_os("WAYPOINT_REHEARSAL_PYTHON").unwrap()),
     )
 }
-fn run_coordinator(discovery: bool, privacy: bool) {
+fn run_coordinator(discovery: bool, privacy: bool, custom_controls: bool) {
     let (mut config, folder, python) = qualification_config();
     let html="<!doctype html><meta charset=utf-8><title>Fictional coordinated form</title><link rel=stylesheet href=/style.css><h1>Fictional coordinated form</h1><fieldset><legend>Your details</legend><label>Full name<input id=name required value=source-default-must-not-be-recorded></label></fieldset><button type=button id=next>Continue</button><section id=questions></section><script src=/app.js></script>";
+    let html = if custom_controls {
+        html.replace(" value=source-default-must-not-be-recorded", "").replace("<button type=button id=next>",
+            "<div role=combobox aria-label='Unresolved country' aria-required=true tabindex=0 style='width:240px;height:36px;border:1px solid'>Choose country</div><button type=button id=next>")
+    } else {
+        html.to_owned()
+    };
     let script = if discovery {
         "fetch('/questions').then(r=>r.json()).then(v=>{const label=document.createElement('label');label.textContent=v.label;const input=document.createElement('input');input.id='email';input.type='email';label.append(input);const section=document.getElementById('questions');section.append(label);section.hidden=true;document.getElementById('next').onclick=()=>section.hidden=false;});"
     } else {
@@ -190,7 +202,7 @@ fn run_coordinator(discovery: bool, privacy: bool) {
         ),
         (
             "https://fixture.invalid/flow",
-            html,
+            html.as_str(),
             "text/html; charset=utf-8",
             "Set-Cookie: fictional=discarded\r\n",
         ),
@@ -351,6 +363,75 @@ fn run_coordinator(discovery: bool, privacy: bool) {
     let (mut driver, ready) = CdpDriver::launch_rehearsal(&python, config).unwrap();
     assert_eq!(ready.entry_url, "https://fixture.invalid/flow#application");
     driver.open(&ready.entry_url).unwrap();
+    if custom_controls {
+        use crate::captured_frame::{RecordedSectionOutcome, RecordedSectionStop};
+        driver.cdp.call("Runtime.evaluate", serde_json::json!({"expression":"(()=>{const s=document.createElement('script');s.id='captcha-support-fixture';document.head.append(s);const h=document.createElement('input');h.required=true;h.setAttribute('aria-hidden','true');h.style.opacity='0';document.body.append(h);})()"})).unwrap();
+        let form = driver.inspect_current().unwrap();
+        assert!(form
+            .walls
+            .iter()
+            .any(|wall| wall.contains("Unresolved country")));
+        assert!(!form.independent_field_entry_blocked());
+        assert!(form
+            .walls
+            .iter()
+            .any(|wall| wall.contains("CAPTCHA support")));
+        assert!(form
+            .walls
+            .iter()
+            .any(|wall| wall.contains("required hidden control")));
+        std::fs::write(folder.join("custom-inspection.private.json"), serde_json::to_vec_pretty(&serde_json::json!({"fields":form.schema.fields,"walls":form.walls,"entry_blocked":form.independent_field_entry_blocked()})).unwrap()).unwrap();
+        let [field] = form.schema.fields.as_slice() else {
+            panic!(
+                "Expected one initial supported field, got {}",
+                form.schema.fields.len()
+            );
+        };
+        let selector = field.selector.clone();
+        let capture = driver
+            .rehearse_recorded_field(&form, &selector, "Fictional Candidate")
+            .unwrap();
+        driver.verify_recorded_field(&capture).unwrap();
+        driver
+            .verify_text_value("#name", "Fictional Candidate")
+            .unwrap();
+        assert!(matches!(
+            driver
+                .advance_recorded_section(&form, &[], &[&capture], true)
+                .unwrap(),
+            RecordedSectionOutcome::Stopped(RecordedSectionStop::PageNeedsReview)
+        ));
+        assert_eq!(driver.inspect_current().unwrap(), form);
+        driver.cdp.call("Runtime.evaluate", serde_json::json!({"expression":"(()=>{const el=document.createElement('div');el.className='g-recaptcha';el.textContent='Fictional CAPTCHA barrier';document.body.append(el);})()"})).unwrap();
+        let blocked = driver.inspect_current().unwrap();
+        assert!(blocked.walls.iter().any(|wall| wall == "captcha present"));
+        assert!(blocked.independent_field_entry_blocked());
+        assert!(driver
+            .rehearse_recorded_field(&blocked, &selector, "Fictional Candidate")
+            .is_err());
+        assert!(driver
+            .rehearse_recorded_field(&form, &selector, "Fictional Candidate")
+            .is_err());
+        driver
+            .verify_text_value(&selector, "Fictional Candidate")
+            .unwrap();
+        assert_eq!(requests.lock().unwrap().len(), expected_requests);
+        std::fs::write(
+            folder.join("http-captured-screenshot.base64"),
+            driver.screenshot_base64().unwrap(),
+        )
+        .unwrap();
+        let replay = driver.rehearsal_replay_report().unwrap();
+        assert_eq!(replay["cached_non_read_replies"], 0);
+        assert!(driver.commit().is_err());
+        driver.execute(&BrowserCommand::Close).unwrap();
+        std::fs::write(folder.join("http-captured.private.json"),serde_json::to_vec_pretty(&serde_json::json!({
+            "complete":true,"scope":"fictional custom-control review and independent field entry; hard and stale barriers remain blocked",
+            "capture":frozen.report,"report":replay,"transport_dropped_before_entry":true,
+            "independent_fields_verified":1,"advancement_blocked":true,"hard_barrier_blocked":true,"stale_inspection_blocked":true})).unwrap()).unwrap();
+        return;
+    }
+
     driver
         .execute(&BrowserCommand::Fill {
             selector: "#name".into(),

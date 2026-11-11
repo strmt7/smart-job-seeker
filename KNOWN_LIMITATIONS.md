@@ -1,5 +1,13 @@
 # Known limitations register (T050)
 
+Partial saved-form entry, 2026-11-11: one real archived page passed three
+fictional fields through native readback and local-model visual review. Phone
+stopped before entry because the saved layout left its label outside the crop.
+Custom choices, attachments and later steps were not completed. A required-label
+asterisk can now align only with unique native required-field evidence; no
+answer-value matching was relaxed. This is not general employer-site coverage.
+[Evidence](docs/g1/INDEPENDENT_FIELD_REVIEW_2026-11-11.md).
+
 Public request-context update, 2026-11-11: observed public Origin and GET
 preflight-absence binding are implemented. One real saved page now renders a
 styled application screen but still cannot expose fields without additional

@@ -10,10 +10,14 @@ original source and fixture scopes.
 
 Three real public page copies save, with incomplete rendering explicitly retained.
 Validated public Origin/GET-variant binding now lets one copy render its styled
-application screen. Classify the remaining refused data requests and qualify
-unproven no-CORS asset context without widening application-write access; then
-repeat usable offline forms and the local model's own qualification.
-[Current evidence](g1/PUBLIC_REQUEST_CONTEXT_2026-11-11.md).
+application screen. Its remaining API path is robots-disallowed; keep that case
+under review rather than sending an alternate read protocol. A different saved
+real form now passes three fictional fields through native readback and local
+12B-model vision, then stops before a field whose label is missing from the crop.
+Qualify unproven no-CORS asset context and improve generic rendering/label
+context without widening application-write access or accepting missing visual
+evidence. Repeat on unseen forms before claiming broader completion.
+[Current evidence](g1/INDEPENDENT_FIELD_REVIEW_2026-11-11.md).
 
 Connect saved, encrypted model preferences to automatic admission of a bounded
 private runtime for saved-copy rehearsal. Verify the compiled route, visual field
@@ -27,7 +31,7 @@ fictional qualification; it is not evidence of general employer-site completion.
 | Priority | Work | Completion evidence required |
 | --- | --- | --- |
 | Complete, scoped | Automatic model admission and cancellation | Passed compiled settings persistence, stale-write refusal, model-backed section rehearsal, cancellation after warm-up, owned-process exit and unchanged shared service |
-| 2 | Qualify saved-site diversity | Permission-eligible anonymous source copies, unseen layouts and ATS families, embedded content and server-dependent stops; classify unsupported cases honestly |
+| 2 | Qualify saved-site diversity | Partial entry measured on one saved real form; next resolve permitted rendering/label-context gaps, qualify unseen layouts and ATS families, embedded content and server-dependent stops; classify unsupported cases honestly |
 | 3 | Qualify candidate-data isolation | Fictional canary candidate facts and documents, independent write-transport adversarial checks, revoked/stale approvals and blocked unexpected destinations; no real candidate entry before this gate |
 | 4 | Broaden intelligent form completion | Model decisions plus independent DOM/readback and visual evidence for custom choices, repeating employment/education, validation, page changes and uploads; unknown answers remain review items |
 | 5 | Qualify document tailoring end to end | Varied authorized PDF/DOCX sources through factual drafting, natural-language revision, PDF output, rendered inspection and ATS parsing; held-out evidence, no invented qualifications or screening guarantees |

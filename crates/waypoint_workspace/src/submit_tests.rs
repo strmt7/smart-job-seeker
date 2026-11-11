@@ -52,6 +52,7 @@ fn answerable_schema() -> FormSchema {
 
 fn live(schema: FormSchema) -> LiveForm {
     LiveForm {
+        independent_fields: None,
         origin: schema.origin.clone(),
         schema,
         walls: vec![],

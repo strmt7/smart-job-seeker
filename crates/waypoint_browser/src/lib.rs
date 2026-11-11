@@ -2768,7 +2768,7 @@ impl CdpDriver {
 
     fn inspect_current_once(&mut self) -> Result<LiveForm, DriverError> {
         let current_url = self.current_url()?;
-        let (schema, mut walls) = self.read_form(&current_url)?;
+        let (schema, mut walls, reviews) = self.read_form(&current_url)?;
         if current_url.starts_with("https://") || current_url.starts_with("http://") {
             let frame_tree = self.cdp.call("Page.getFrameTree", json!({})).ok();
             let frame = frame_tree
@@ -2806,11 +2806,7 @@ impl CdpDriver {
                 _ => walls.push("The main page response status could not be verified; manual review is required".into()),
             }
         }
-        Ok(LiveForm {
-            origin: schema.origin.clone(),
-            schema,
-            walls,
-        })
+        Ok(LiveForm::from_inspection(schema, walls, reviews))
     }
 
     /// Inspect rendered visibility and derive a structural selector without changing the page.
@@ -3441,9 +3437,16 @@ impl CdpDriver {
     fn read_form(
         &mut self,
         url: &str,
-    ) -> Result<(waypoint_applications::form_mapping::FormSchema, Vec<String>), DriverError> {
+    ) -> Result<
+        (
+            waypoint_applications::form_mapping::FormSchema,
+            Vec<String>,
+            Vec<waypoint_applications::driver::CompletionReview>,
+        ),
+        DriverError,
+    > {
         let root = self.document_with_frames(true)?;
-        let (mut schema, mut walls) = self.read_form_document(url, &root)?;
+        let (mut schema, mut walls, mut reviews) = self.read_form_document(url, &root)?;
         // The queue owns only the root and the few documents actually inspected.
         // Each selector binds every frame and document along its path.
         let started = Instant::now();
@@ -3519,7 +3522,7 @@ impl CdpDriver {
                     });
                     let Some(child) = child else { continue };
                     inspected_count += 1;
-                    let (mut embedded, mut embedded_walls) =
+                    let (mut embedded, mut embedded_walls, mut embedded_reviews) =
                         self.read_form_document(url, &child)?;
                     if schema.fields.len().saturating_add(embedded.fields.len()) > 160 {
                         return Err(DriverError("Form has too many controls for one inspection; manual review is needed".into()));
@@ -3535,6 +3538,7 @@ impl CdpDriver {
                     schema.fields.extend(embedded.fields);
                     schema.multi_step |= embedded.multi_step;
                     walls.append(&mut embedded_walls);
+                    reviews.append(&mut embedded_reviews);
                     queue.push_back((child, child_prefix, depth + 1));
                 }
                 let mut frames = Vec::new();
@@ -3638,7 +3642,7 @@ impl CdpDriver {
                         continue;
                     };
                     inspected_count += 1;
-                    let (mut embedded, mut embedded_walls) =
+                    let (mut embedded, mut embedded_walls, mut embedded_reviews) =
                         self.read_form_document(url, &child)?;
                     if schema.fields.len().saturating_add(embedded.fields.len()) > 160 {
                         return Err(DriverError("Form has too many controls for one inspection; manual review is needed".into()));
@@ -3654,6 +3658,7 @@ impl CdpDriver {
                     schema.fields.extend(embedded.fields);
                     schema.multi_step |= embedded.multi_step;
                     walls.append(&mut embedded_walls);
+                    reviews.append(&mut embedded_reviews);
                     queue.push_back((child, child_prefix, depth + 1));
                 }
             }
@@ -3663,14 +3668,21 @@ impl CdpDriver {
         inspected?;
         walls.sort();
         walls.dedup();
-        Ok((schema, walls))
+        Ok((schema, walls, reviews))
     }
 
     fn read_form_document(
         &mut self,
         url: &str,
         root: &Value,
-    ) -> Result<(waypoint_applications::form_mapping::FormSchema, Vec<String>), DriverError> {
+    ) -> Result<
+        (
+            waypoint_applications::form_mapping::FormSchema,
+            Vec<String>,
+            Vec<waypoint_applications::driver::CompletionReview>,
+        ),
+        DriverError,
+    > {
         let datalists = static_datalists(root);
         let mut controls = vec![];
         let mut hidden_selectors = std::collections::HashSet::new();
@@ -3689,6 +3701,7 @@ impl CdpDriver {
         let mut group_scan_budget = 50_000usize;
         let mut group_scan_incomplete = false;
         let mut wall_flags: Vec<String> = vec![];
+        let mut reviews = Vec::new();
         let mut custom_nodes = Vec::new();
         let mut next_nodes = Vec::new();
         let mut next_references = Vec::new();
@@ -3702,8 +3715,8 @@ impl CdpDriver {
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_ascii_lowercase();
-            // Captchas hide in ordinary markup (a div, an iframe), not only in
-            // form controls, so every node is checked.
+            // Challenge elements remain page barriers. A script reference alone
+            // is an unresolved completion dependency, not an interactive wall.
             let attrs = attributes(node);
             if let Some(children) = node
                 .get("children")
@@ -3862,7 +3875,11 @@ impl CdpDriver {
                         || lv.contains("cf-turnstile")
                         || lv.contains("challenges.cloudflare.com/turnstile")
                     {
-                        wall_flags.push("captcha present".into());
+                        if tag == "script" {
+                            reviews.push(waypoint_applications::driver::CompletionReview::ChallengeSupportReference);
+                        } else {
+                            wall_flags.push("captcha present".into());
+                        }
                     }
                 }
             }
@@ -3901,7 +3918,8 @@ impl CdpDriver {
                     .get("type")
                     .is_some_and(|kind| kind.eq_ignore_ascii_case("hidden"))
             {
-                wall_flags.push("a required hidden control needs manual review".into());
+                reviews
+                    .push(waypoint_applications::driver::CompletionReview::HiddenRequiredControl);
             }
             // ARIA puts the required state on the radiogroup, not normally
             // on each option. Native radio inputs have their own mapping;
@@ -4408,7 +4426,9 @@ impl CdpDriver {
                             .get("aria-required")
                             .is_some_and(|value| value.eq_ignore_ascii_case("true"));
                     if !rendered && required {
-                        wall_flags.push("a required hidden control needs manual review".into());
+                        reviews.push(
+                            waypoint_applications::driver::CompletionReview::HiddenRequiredControl,
+                        );
                     }
                     if needs_review {
                         wall_flags.push("a custom control needs manual review".into());
@@ -4453,15 +4473,11 @@ impl CdpDriver {
                     } else {
                         label
                     };
-                    let prefix = if required {
-                        "a required custom control needs manual review"
-                    } else {
-                        "a custom control needs manual review"
-                    };
-                    wall_flags.push(match label {
-                        Some(label) => format!("{prefix}: {label}"),
-                        None => prefix.into(),
-                    });
+                    reviews.push(
+                        waypoint_applications::driver::CompletionReview::CustomControl(
+                            waypoint_applications::driver::CustomControlReview { label, required },
+                        ),
+                    );
                 }
             }
             for (node, closed_form) in shadow_nodes {
@@ -5351,7 +5367,7 @@ impl CdpDriver {
             multi_step: possible_next_step,
             steps: 1,
         };
-        Ok((schema, walls))
+        Ok((schema, walls, reviews))
     }
 
     /* ------------------------------- actions -------------------------------- */
@@ -7758,6 +7774,7 @@ mod traversal_tests {
     #[test]
     fn changed_inspection_retries_boundedly_and_keeps_manual_review_wall() {
         let form = || LiveForm {
+            independent_fields: None,
             origin: "https://example.invalid".into(),
             schema: waypoint_applications::form_mapping::FormSchema {
                 origin: "https://example.invalid".into(),
@@ -7840,6 +7857,7 @@ mod traversal_tests {
     #[test]
     fn delayed_inspection_keeps_previously_observed_walls() {
         let mut next = LiveForm {
+            independent_fields: None,
             origin: "https://example.invalid".into(),
             schema: waypoint_applications::form_mapping::FormSchema {
                 origin: "https://example.invalid".into(),
@@ -7859,6 +7877,7 @@ mod traversal_tests {
     fn loading_test_page(selectors: &[&str]) -> LiveForm {
         use waypoint_applications::form_mapping::{FormField, FormFieldType, FormSchema};
         LiveForm {
+            independent_fields: None,
             origin: "https://example.invalid".into(),
             schema: FormSchema {
                 origin: "https://example.invalid".into(),
