@@ -1,3 +1,14 @@
+## Visual inspection before recorded-form actions - 2026-11-11
+
+The saved-copy rehearsal now requires an eligible local vision model before
+entry, reviews each target while the browser is active, and checks the filled
+result before continuing. Missing or uncertain visual evidence stops the run.
+Three fictional owned-model fixtures passed 13 target and 11 completed-field
+checks, including radio groups, PDF inputs and section changes. The compiled
+no-model route stopped without entry. [Measured scope and limitations](docs/g1/IN_SESSION_REHEARSAL_VISION_2026-11-11.md).
+Older checkpoints below retain their original behavior and evidence; the
+current rehearsal no longer continues after a failed visual check.
+
 ## Recorded section changes in saved-page rehearsal - 2026-11-11
 
 - Rehearsal can follow two verified forward actions when the required controls have current readback evidence and the saved responses support progression. Each section keeps its own image, field results and transition or review outcome.

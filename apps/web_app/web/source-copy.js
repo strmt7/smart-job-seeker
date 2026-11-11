@@ -130,6 +130,9 @@
     if (rehearsal) {
       section.append(el('p', 'Rehearsal uses fictional details in the saved copy. Other fields, later steps and server validation still need review.', 'footnote'));
       if (rehearsal.halted) section.append(el('p', 'The rehearsal stopped for review.', 'review-label'));
+      if (rehearsal.visual_gate?.required && !rehearsal.visual_gate.available) {
+        section.append(el('p', 'A loaded local vision model is required before autofill. Check the model settings.', 'review-label'));
+      }
     }
     section.append(label, details, show, imageArea);
     let revision = 0;
@@ -177,6 +180,20 @@
             const button = el('button', 'View field image', 'secondary');
             button.type = 'button';
             button.addEventListener('click', () => showImage(check, button));
+            row.append(button);
+          }
+          details.append(row);
+        }
+        const targets = Array.isArray(rehearsal.visual_gate?.targets) ? rehearsal.visual_gate.targets.slice(0, 10).filter(target => target?.view === viewNumber) : [];
+        for (const target of targets) {
+          const phase = target.phase === 'before_section' ? 'Before section change' : 'Before entry';
+          const state = target.status === 'visually_matched' ? 'Target and image match' : 'Visual inspection needs review';
+          const row = el('div', '', 'source-copy-actions');
+          row.append(el('span', `${phase} \u00b7 ${target.label || 'Control'} \u00b7 ${state}`, 'footnote'));
+          if (target.image) {
+            const button = el('button', 'View target image', 'secondary');
+            button.type = 'button';
+            button.addEventListener('click', () => showImage(target, button));
             row.append(button);
           }
           details.append(row);

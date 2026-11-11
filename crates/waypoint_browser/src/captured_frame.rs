@@ -130,6 +130,26 @@ pub struct RecordedFieldCapture {
     document: RecordedDocument,
 }
 
+/// A fresh, focused target image made by the recorded driver before an action.
+/// The caller may refuse the action; accepting never bypasses native checks.
+pub struct RecordedTargetCapture {
+    image: String,
+    label: String,
+    kind: &'static str,
+}
+
+impl RecordedTargetCapture {
+    pub fn image(&self) -> &str {
+        &self.image
+    }
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+    pub fn kind(&self) -> &str {
+        self.kind
+    }
+}
+
 #[derive(PartialEq, Eq)]
 struct RecordedDocument {
     url: String,
@@ -224,6 +244,24 @@ impl CdpDriver {
         verified_fields: &[&RecordedFieldCapture],
         budget_available: bool,
     ) -> Result<RecordedSectionOutcome, DriverError> {
+        self.advance_recorded_section_reviewed(
+            before,
+            visited,
+            verified_fields,
+            budget_available,
+            |_| Ok(()),
+        )
+    }
+
+    #[cfg(windows)]
+    pub fn advance_recorded_section_reviewed(
+        &mut self,
+        before: &LiveForm,
+        visited: &[LiveForm],
+        verified_fields: &[&RecordedFieldCapture],
+        budget_available: bool,
+        mut review_target: impl FnMut(&RecordedTargetCapture) -> Result<(), DriverError>,
+    ) -> Result<RecordedSectionOutcome, DriverError> {
         use RecordedSectionOutcome::{Advanced, Stopped};
         use RecordedSectionStop::*;
         self.require_recorded_frames()?;
@@ -290,6 +328,12 @@ impl CdpDriver {
                 .all(|key| replay[*key] == replay_before[*key]))
         };
         self.scroll_field_into_view(&target.selector)?;
+        let image = self.screenshot_field_context(&target.selector)?;
+        review_target(&RecordedTargetCapture {
+            image,
+            label: target.label.clone(),
+            kind: "button",
+        })?;
         if self.recorded_document()? != document || self.inspect_current()? != *before {
             return Ok(Stopped(DocumentChanged));
         }
@@ -366,6 +410,17 @@ impl CdpDriver {
         selector: &str,
         value: &str,
     ) -> Result<RecordedFieldCapture, DriverError> {
+        self.rehearse_recorded_field_reviewed(form, selector, value, &[], |_| Ok(()))
+    }
+
+    pub fn rehearse_recorded_field_reviewed(
+        &mut self,
+        form: &LiveForm,
+        selector: &str,
+        value: &str,
+        verified_fields: &[&RecordedFieldCapture],
+        mut review_target: impl FnMut(&RecordedTargetCapture) -> Result<(), DriverError>,
+    ) -> Result<RecordedFieldCapture, DriverError> {
         use waypoint_applications::form_mapping::FormFieldType;
         self.require_recorded_frames()?;
         let fields: Vec<_> = form
@@ -432,6 +487,27 @@ impl CdpDriver {
         };
         check_scope(self)?;
         let network_before = self.observed_non_read_requests()?;
+        let image = if matches!(kind, RecordedFieldKind::Radio) {
+            self.screenshot_recorded_radio(selector, value, false)?
+        } else {
+            self.scroll_field_into_view(selector)?;
+            self.screenshot_field_context(selector)?
+        };
+        review_target(&RecordedTargetCapture {
+            image,
+            label: field.label.clone(),
+            kind: match kind {
+                RecordedFieldKind::Text => "text",
+                RecordedFieldKind::Select => "select",
+                RecordedFieldKind::Radio => "radio",
+                RecordedFieldKind::File => "file",
+            },
+        })?;
+        check_scope(self)?;
+        self.stop_if_non_read_request_observed(network_before)?;
+        for capture in verified_fields {
+            self.verify_recorded_field(capture)?;
+        }
         match kind {
             RecordedFieldKind::Text => {
                 self.ensure_text_replaceable(selector, value)?;
@@ -462,7 +538,7 @@ impl CdpDriver {
         self.stop_if_non_read_request_observed(network_before)?;
         self.verify_recorded_command(&command)?;
         let image = if matches!(kind, RecordedFieldKind::Radio) {
-            self.screenshot_recorded_radio(selector, value)?
+            self.screenshot_recorded_radio(selector, value, true)?
         } else {
             self.screenshot_field_context(selector)?
         };
@@ -540,9 +616,10 @@ impl CdpDriver {
         &mut self,
         selector: &str,
         label: &str,
+        require_checked: bool,
     ) -> Result<String, DriverError> {
         let node = self
-            .radio_selection(selector, label, false, true)?
+            .radio_selection_inner(selector, label, false, true, require_checked)?
             .ok_or_else(review)?;
         self.cdp
             .call("DOM.scrollIntoViewIfNeeded", json!({"nodeId":node}))

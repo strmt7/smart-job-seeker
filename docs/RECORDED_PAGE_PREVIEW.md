@@ -65,17 +65,33 @@ records the control used and the reason progression stopped. A section
 without a recognized forward control makes no delivery or readiness claim.
 The source collector may lack resources needed after a forward action.
 
-The browser closes before optional visual review. When an eligible local
-vision model is already loaded, it receives the focused image. Text controls
-also get a field label and independently verified text-presence cue. Choices
-are transcribed from the selected state in the image. File input review reads
-the displayed filename. Expected values stay in the comparison code. The
-model's identity is checked before and after inference. Application records
-distinguish a visual match, different or unreadable transcription,
-unavailable vision, a failed image review and failed DOM verification. A crop
-error is recorded for that field. Review continues while the same local model
-remains eligible. The result retains its name and digest, and each saved image
-has a digest and can be opened with the shared viewer.
+### Visual inspection during rehearsal
+
+Rehearsal requires an eligible loaded local vision model before entering any
+field. Without one it saves the available page views, reports the missing
+model and stops. Ordinary recorded previews still work without a model.
+
+Before each entry, the driver captures the focused control and asks the model
+to identify its visible label and type. Neither the expected label, control
+type nor the intended answer is supplied in this prompt. Only an unambiguous
+matching observation permits entry. Native checks still enforce the current
+document, schema, scope and prior completed-field receipts after that model
+wait. A visual match never grants permission or bypasses those checks.
+
+After entry, the model transcribes the captured result before another field
+or section can be attempted. Text controls also get an independently verified
+text-presence cue. Expected answers stay in local comparison code. Readback is
+checked again after inference and at the end of each view. Forward controls
+also require a matching visual label and button classification before clicking.
+
+The model's identity is checked before and after each inference. Unavailable
+or unclear vision, an image-persistence failure, a changed identity or a failed
+native recheck stops progression. The record retains the model name and digest,
+separate before-action images and completed-field images, their hashes and
+review outcomes. The existing viewer opens both image types. These checks
+remain bounded by the eight-field, two-transition and worker resource limits.
+They are observations of an isolated saved page; visual inference can still be
+wrong, and this does not establish safe interaction with arbitrary live sites.
 
 This exercise covers the saved responses and supported controls. It makes no
 live application request and creates no approval. Real candidate data, other
@@ -83,6 +99,10 @@ attachment types, custom choice widgets, unrecorded later steps and server
 validation remain outside this rehearsal.
 
 ### Rehearsal qualification
+
+The [in-session visual checkpoint](g1/IN_SESSION_REHEARSAL_VISION_2026-11-11.md)
+records the newer before-action gates. The following runs describe earlier
+rehearsal revisions and their measured scopes.
 
 The compiled headless Windows UI opened a fictional saved frame, filled first
 name and email, and retained two independently verified field images with

@@ -158,7 +158,7 @@ fn render_at(
     }
     let (mut driver, ready) =
         CdpDriver::launch_rehearsal(python, config).map_err(|error| error.to_string())?;
-    let mut rehearsal = source.rehearse.then(Rehearsal::default);
+    let mut rehearsal = source.rehearse.then(|| Rehearsal::new(vision_addr));
     let result: Result<Value, String> = (|| {
         if ready.entry_url != entry
             || ready
@@ -234,7 +234,7 @@ fn render_at(
         .map_err(|error| error.to_string())?;
     let mut result = result?;
     if let Some(rehearsal) = rehearsal {
-        result["rehearsal"] = rehearsal.review(vision_addr);
+        result["rehearsal"] = rehearsal.finish();
     }
     Ok(result)
 }
@@ -299,11 +299,13 @@ fn record_scope(
             .iter()
             .map(|(_, capture, _)| capture)
             .collect();
-        let advance = driver.advance_recorded_section(
+        let vision = &mut rehearsal.vision;
+        let advance = driver.advance_recorded_section_reviewed(
             &form,
             &prior,
             &verified,
             rehearsal.advances < SECTION_ADVANCE_LIMIT && rehearsal.fields.len() < REHEARSAL_LIMIT,
+            |target| vision.review_target(directory, view, "before_section", target),
         );
         match advance {
             Ok(RecordedSectionOutcome::Advanced {
@@ -406,8 +408,97 @@ fn sample_attachment(
 }
 
 #[cfg(windows)]
-#[derive(Default)]
+struct RehearsalVision {
+    addr: std::net::SocketAddr,
+    model: Option<crate::visual_review::VisionIdentityGuard>,
+    identity: Value,
+    targets: Vec<Value>,
+}
+
+#[cfg(windows)]
+impl RehearsalVision {
+    fn new(addr: std::net::SocketAddr) -> Self {
+        let identity = crate::check_inference_memory()
+            .ok()
+            .and_then(|()| crate::resident_model_identity_at(addr).ok().flatten());
+        let metadata = identity
+            .as_ref()
+            .map(|value| json!({"name":value.name,"digest":value.digest}));
+        Self {
+            addr,
+            model: identity.map(crate::visual_review::VisionIdentityGuard::from_identity),
+            identity: metadata.unwrap_or(Value::Null),
+            targets: Vec::new(),
+        }
+    }
+
+    fn review_target(
+        &mut self,
+        directory: &Path,
+        view: usize,
+        phase: &str,
+        target: &waypoint_browser::RecordedTargetCapture,
+    ) -> Result<(), waypoint_applications::driver::DriverError> {
+        use crate::visual_review::RecordedVisionOutcome;
+        let refused = || {
+            waypoint_applications::driver::DriverError(
+                "Visual inspection needs review before this action".into(),
+            )
+        };
+        if self.targets.len() >= REHEARSAL_LIMIT + SECTION_ADVANCE_LIMIT {
+            return Err(refused());
+        }
+        let mut record = json!({"view":view,"phase":phase,"label":bounded_text(target.label()),"kind":target.kind(),"status":"visual_unavailable"});
+        let saved = save_image(directory, 20 + self.targets.len(), target.image());
+        if let Ok((image, digest)) = &saved {
+            record["image"] = json!(image);
+            record["sha256"] = json!(digest);
+        }
+        let outcome = if let (Some(model), Ok(_), Ok(())) =
+            (self.model.as_mut(), saved, crate::check_inference_memory())
+        {
+            crate::visual_review::review_recorded_target(model, self.addr, target)
+        } else {
+            RecordedVisionOutcome::Stopped
+        };
+        let accepted = matches!(outcome, RecordedVisionOutcome::Matched);
+        record["status"] = json!(recorded_vision_status(outcome));
+        self.targets.push(record);
+        if accepted {
+            Ok(())
+        } else {
+            Err(refused())
+        }
+    }
+
+    fn review_field(&mut self, capture: &waypoint_browser::RecordedFieldCapture) -> &'static str {
+        if crate::check_inference_memory().is_err() {
+            return "visual_unavailable";
+        }
+        let Some(model) = self.model.as_mut() else {
+            return "visual_unavailable";
+        };
+        recorded_vision_status(crate::visual_review::review_recorded_field(
+            model, self.addr, capture,
+        ))
+    }
+}
+
+#[cfg(windows)]
+fn recorded_vision_status(outcome: crate::visual_review::RecordedVisionOutcome) -> &'static str {
+    use crate::visual_review::RecordedVisionOutcome;
+    match outcome {
+        RecordedVisionOutcome::Matched => "visually_matched",
+        RecordedVisionOutcome::Difference => "visual_difference",
+        RecordedVisionOutcome::Unobserved => "visual_unobserved",
+        RecordedVisionOutcome::Failed => "visual_review_failed",
+        RecordedVisionOutcome::Stopped => "visual_unavailable",
+    }
+}
+
+#[cfg(windows)]
 struct Rehearsal {
+    vision: RehearsalVision,
     fields: Vec<Value>,
     captures: Vec<(usize, waypoint_browser::RecordedFieldCapture, bool)>,
     halted: bool,
@@ -417,6 +508,19 @@ struct Rehearsal {
 
 #[cfg(windows)]
 impl Rehearsal {
+    fn new(addr: std::net::SocketAddr) -> Self {
+        let vision = RehearsalVision::new(addr);
+        let halted = vision.model.is_none();
+        Self {
+            vision,
+            fields: Vec::new(),
+            captures: Vec::new(),
+            halted,
+            sections: Vec::new(),
+            advances: 0,
+        }
+    }
+
     fn exercise(
         &mut self,
         driver: &mut waypoint_browser::CdpDriver,
@@ -481,7 +585,17 @@ impl Rehearsal {
             };
             let index = self.fields.len();
             let mut result = json!({"view":view,"label":bounded_text(&field.label),"status":"readback_unavailable"});
-            match driver.rehearse_recorded_field(form, &field.selector, value) {
+            let verified: Vec<_> = captures.iter().map(|(_, capture, _)| capture).collect();
+            match driver.rehearse_recorded_field_reviewed(
+                form,
+                &field.selector,
+                value,
+                &verified,
+                |target| {
+                    self.vision
+                        .review_target(directory, view, "before_entry", target)
+                },
+            ) {
                 Ok(capture) => {
                     result["kind"] = json!(capture.kind());
                     result["status"] = json!("visual_unavailable");
@@ -494,6 +608,16 @@ impl Rehearsal {
                     } else {
                         false
                     };
+                    if image_saved {
+                        result["status"] = json!(self.vision.review_field(&capture));
+                    }
+                    if !image_saved || result["status"] != "visually_matched" {
+                        self.halted = true;
+                    }
+                    if driver.verify_recorded_field(&capture).is_err() {
+                        result["status"] = json!("changed_after_entry");
+                        self.halted = true;
+                    }
                     captures.push((index, capture, image_saved));
                 }
                 Err(_) => self.halted = true,
@@ -523,35 +647,9 @@ impl Rehearsal {
         }
     }
 
-    fn review(mut self, addr: std::net::SocketAddr) -> Value {
-        use crate::visual_review::RecordedVisionOutcome;
-        let mut vision_model = None;
-        if !self.captures.is_empty() && crate::check_inference_memory().is_ok() {
-            if let Ok(Some(identity)) = crate::resident_model_identity_at(addr) {
-                vision_model = Some(json!({"name":identity.name,"digest":identity.digest}));
-                let mut model = crate::visual_review::VisionIdentityGuard::from_identity(identity);
-                for (index, capture, _) in self
-                    .captures
-                    .iter()
-                    .filter(|(_, _, image_saved)| *image_saved)
-                {
-                    if crate::check_inference_memory().is_err() {
-                        break;
-                    }
-                    let status = match crate::visual_review::review_recorded_field(
-                        &mut model, addr, capture,
-                    ) {
-                        RecordedVisionOutcome::Matched => "visually_matched",
-                        RecordedVisionOutcome::Difference => "visual_difference",
-                        RecordedVisionOutcome::Unobserved => "visual_unobserved",
-                        RecordedVisionOutcome::Failed => "visual_review_failed",
-                        RecordedVisionOutcome::Stopped => break,
-                    };
-                    self.fields[*index]["status"] = json!(status);
-                }
-            }
-        }
-        json!({"scope":"fictional_saved_form","field_limit":REHEARSAL_LIMIT,"section_advance_limit":SECTION_ADVANCE_LIMIT,"halted":self.halted,"fields":self.fields,"sections":self.sections,"vision_model":vision_model})
+    fn finish(self) -> Value {
+        json!({"scope":"fictional_saved_form","field_limit":REHEARSAL_LIMIT,"section_advance_limit":SECTION_ADVANCE_LIMIT,"halted":self.halted,"fields":self.fields,"sections":self.sections,"vision_model":self.vision.identity,
+            "visual_gate":{"required":true,"available":self.vision.model.is_some(),"targets":self.vision.targets}})
     }
 }
 
@@ -724,6 +822,84 @@ mod tests {
             .unwrap()
             .expect("The private model must meet the product resident budget");
         assert_eq!(identity.name, model);
+        // A visual refusal must occur before native entry or section clicking.
+        // This separate replay is never used as model-quality evidence.
+        {
+            use waypoint_applications::{
+                driver::{BrowserDriver, DriverError},
+                form_mapping::BrowserCommand,
+            };
+            let mut refusal_config = fixture.config.clone();
+            refusal_config.schema = 2;
+            refusal_config.content_root = fixture.source.directory.join("source-page/archive");
+            let inventory: Inventory = serde_json::from_slice(
+                &read(
+                    &fixture.source.directory.join("source-page/inventory.json"),
+                    128 * 1024,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            refusal_config.content_files = inventory.files;
+            refusal_config.replay_manifest = Some("replay.json".into());
+            let (mut browser, ready) =
+                waypoint_browser::CdpDriver::launch_rehearsal(&fixture.python, refusal_config)
+                    .unwrap();
+            browser.open(&ready.entry_url).unwrap();
+            let frame = browser
+                .captured_frames()
+                .unwrap()
+                .frames
+                .into_iter()
+                .next()
+                .unwrap();
+            let form = browser.enter_captured_frame(&frame).unwrap();
+            let first = form
+                .schema
+                .fields
+                .iter()
+                .find(|field| field.label == "First name")
+                .unwrap();
+            let mut asked = false;
+            let refused = browser.rehearse_recorded_field_reviewed(
+                &form,
+                &first.selector,
+                "Avery",
+                &[],
+                |target| {
+                    asked = true;
+                    assert_eq!(target.label(), "First name");
+                    assert_eq!(target.kind(), "text");
+                    Err(DriverError("Intentional visual refusal".into()))
+                },
+            );
+            assert!(asked && refused.is_err());
+            assert_eq!(
+                browser.text_value_snapshot(&first.selector).unwrap().value,
+                ""
+            );
+            if fixture.section_controls {
+                let entered = browser
+                    .rehearse_recorded_field(&form, &first.selector, "Avery")
+                    .unwrap();
+                let mut asked = false;
+                let refused = browser.advance_recorded_section_reviewed(
+                    &form,
+                    &[],
+                    &[&entered],
+                    true,
+                    |target| {
+                        asked = true;
+                        assert_eq!(target.kind(), "button");
+                        Err(DriverError("Intentional visual refusal".into()))
+                    },
+                );
+                assert!(asked && refused.is_err());
+                assert_eq!(browser.inspect_current().unwrap(), form);
+            }
+            browser.leave_captured_frame().unwrap();
+            browser.execute(&BrowserCommand::Close).unwrap();
+        }
         let result = render_at(
             &fixture.source,
             URL,
@@ -740,6 +916,25 @@ mod tests {
             identity.digest
         );
         assert_eq!(result["rehearsal"]["halted"], false);
+        assert_eq!(result["rehearsal"]["visual_gate"]["required"], true);
+        let targets = result["rehearsal"]["visual_gate"]["targets"]
+            .as_array()
+            .unwrap();
+        assert_eq!(
+            targets.len(),
+            if fixture.section_controls {
+                5
+            } else if fixture.mixed_controls || fixture.upload_controls {
+                4
+            } else {
+                2
+            }
+        );
+        assert!(targets
+            .iter()
+            .all(|target| target["status"] == "visually_matched"
+                && target["sha256"].as_str().is_some_and(|s| s.len() == 64)));
+
         let fields = result["rehearsal"]["fields"].as_array().unwrap();
         let controls: Vec<_> = fields
             .iter()
@@ -802,6 +997,17 @@ mod tests {
             assert_eq!(transitions[1]["to"], 4);
             assert_eq!(transitions[2]["reason"], "no_forward_control");
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rehearsal_without_a_qualified_visual_model_stops_before_entry() {
+        let result = Rehearsal::new("127.0.0.1:0".parse().unwrap()).finish();
+        assert_eq!(result["halted"], true);
+        assert_eq!(result["visual_gate"]["required"], true);
+        assert_eq!(result["visual_gate"]["available"], false);
+        assert_eq!(result["visual_gate"]["targets"], json!([]));
+        assert_eq!(result["fields"], json!([]));
     }
 
     #[test]

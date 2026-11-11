@@ -21,7 +21,9 @@
 //!   them.
 
 mod captured_frame;
-pub use captured_frame::{CapturedFrame, CapturedFrames, RecordedFieldCapture, RecordedFieldKind};
+pub use captured_frame::{
+    CapturedFrame, CapturedFrames, RecordedFieldCapture, RecordedFieldKind, RecordedTargetCapture,
+};
 #[cfg(windows)]
 pub use captured_frame::{RecordedSectionOutcome, RecordedSectionStop};
 pub mod capture_discovery;
@@ -5843,6 +5845,17 @@ impl CdpDriver {
         apply: bool,
         capture_node: bool,
     ) -> Result<Option<u64>, DriverError> {
+        self.radio_selection_inner(selector, label, apply, capture_node, true)
+    }
+
+    fn radio_selection_inner(
+        &mut self,
+        selector: &str,
+        label: &str,
+        apply: bool,
+        capture_node: bool,
+        require_checked: bool,
+    ) -> Result<Option<u64>, DriverError> {
         let node = self
             .node_id(selector)?
             .ok_or_else(|| DriverError("Radio group not found".into()))?;
@@ -5854,7 +5867,7 @@ impl CdpDriver {
             .pointer("/object/objectId")
             .and_then(Value::as_str)
             .ok_or_else(|| DriverError("Cannot inspect radio group".into()))?;
-        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function(label, apply, captureNode) {
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function(label, apply, captureNode, requireChecked) {
           if (this.tagName !== 'INPUT' || this.type !== 'radio' || !this.name) return false;
           const selector = 'fieldset,[role="radiogroup"]';
           const root = this.getRootNode();
@@ -5885,9 +5898,9 @@ impl CdpDriver {
           const chosen = choices[0];
           const visible = node => { if (!node.getClientRects().length) return false; const rect = node.getBoundingClientRect(); let left = rect.left, right = rect.right, top = rect.top, bottom = rect.bottom; for (let item = node, depth = 0; item; item = item.parentElement) { if (++depth > 64) return false; const style = getComputedStyle(item); if (style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0) return false; if (item !== node) { const box = item.getBoundingClientRect(); if (['hidden','clip'].includes(style.overflowX)) { left = Math.max(left, box.left + item.clientLeft); right = Math.min(right, box.left + item.clientLeft + item.clientWidth); } if (['hidden','clip'].includes(style.overflowY)) { top = Math.max(top, box.top + item.clientTop); bottom = Math.min(bottom, box.top + item.clientTop + item.clientHeight); } } } return right > left && bottom > top; }; if (!visible(chosen)) return false;
           if (apply && !chosen.checked) { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked').set.call(chosen, true); chosen.dispatchEvent(new Event('input', {bubbles:true})); chosen.dispatchEvent(new Event('change', {bubbles:true})); }
-          if (!chosen.isConnected || !chosen.checked || unavailable(chosen) || !chosen.validity.valid) return false;
+          if (!chosen.isConnected || unavailable(chosen) || (requireChecked && (!chosen.checked || !chosen.validity.valid))) return false;
           return captureNode ? chosen : true;
-        }"#,"arguments":[{"value":label},{"value":apply},{"value":capture_node}],"returnByValue":!capture_node}));
+        }"#,"arguments":[{"value":label},{"value":apply},{"value":capture_node},{"value":require_checked}],"returnByValue":!capture_node}));
         let released = self
             .cdp
             .call("Runtime.releaseObject", json!({"objectId":object}));

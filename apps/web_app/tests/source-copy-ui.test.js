@@ -42,6 +42,12 @@ function harness(api, onFinished) {
   assert(find(panel,node => node.textContent==='The saved image differs from its record.'));
   assert.equal(find(panel,node => node.tag==='img'),undefined);
 
+  const gated = harness(async () => {}).preview({...preview, rehearsal:{scope:'fictional_saved_form',halted:true,fields:[],visual_gate:{required:true,available:false,targets:[{view:1,phase:'before_entry',label:'Parent name',status:'visual_unobserved',image:'0020.png',sha256:digest}]}}},{});
+  assert(find(gated,node=>node.textContent==='A loaded local vision model is required before autofill. Check the model settings.'));
+  assert(find(gated,node=>node.textContent==='Before entry \u00b7 Parent name \u00b7 Visual inspection needs review'));
+  assert(button(gated,'View target image'));
+  assert.equal(find(gated,node=>node.textContent==='Before entry \u00b7 Parent name \u00b7 Target and image match'),undefined);
+
   const rehearsal = {...preview, rehearsal: {scope:'fictional_text_only', fields:[
     {view:2,label:'Child answer',status:'visual_unavailable',image:'0006.png',sha256:digest},
     {view:2,label:'Unclear field',status:'visual_review_failed'},

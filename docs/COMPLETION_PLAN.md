@@ -23,8 +23,12 @@ fictional text, current scoped DOM readback and focused visual evidence.
 An owned local model has passed a four-field fixture that includes native
 dropdown and radio controls. The compiled saved-copy workflow also verifies
 fictional PDF attachments by content digest and records bounded forward
-progression across saved sections. Extend the evidence contract to
-candidate-data isolation and test diverse held-out forms.
+progression across saved sections. The current refinement moves local visual
+review into the active rehearsal, with checks before entry, after entry and
+before section changes. Three fictional local-model fixtures passed their
+scoped checks; [the evidence](g1/IN_SESSION_REHEARSAL_VISION_2026-11-11.md)
+also records native refusal and no-model behavior. Extend the evidence contract to candidate-data isolation and diverse held-out
+forms.
 Continue the ordered isolation and quality gates below.
 
 ## Operating boundaries
