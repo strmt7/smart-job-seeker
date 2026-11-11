@@ -170,17 +170,16 @@ fn render_at(
             return Err("Saved page entry changed during setup".into());
         }
         let parent = driver.open(entry).map_err(|error| error.to_string())?;
-        let mut views = vec![capture_view(
+        let mut views = Vec::new();
+        record_scope(
             &mut driver,
             screenshots,
-            1,
+            &mut views,
             "Page",
-            parent.clone(),
+            parent,
             false,
-        )?];
-        if let Some(rehearsal) = &mut rehearsal {
-            rehearsal.exercise(&mut driver, screenshots, 1, &parent);
-        }
+            rehearsal.as_mut(),
+        )?;
         let mut uninspected = 0;
         let truncated;
         let mut notices = Vec::new();
@@ -191,24 +190,15 @@ fn render_at(
                 for frame in frames.frames {
                     let view = match driver.enter_captured_frame(&frame) {
                         Ok(form) => {
-                            let captured = capture_view(
+                            let captured = record_scope(
                                 &mut driver,
                                 screenshots,
-                                views.len() + 1,
+                                &mut views,
                                 frame.label(),
-                                form.clone(),
+                                form,
                                 true,
+                                rehearsal.as_mut(),
                             );
-                            if captured.is_ok() {
-                                if let Some(rehearsal) = &mut rehearsal {
-                                    rehearsal.exercise(
-                                        &mut driver,
-                                        screenshots,
-                                        views.len() + 1,
-                                        &form,
-                                    );
-                                }
-                            }
                             driver
                                 .leave_captured_frame()
                                 .map_err(|error| error.to_string())?;
@@ -217,7 +207,7 @@ fn render_at(
                         Err(error) => Err(error.to_string()),
                     };
                     match view {
-                        Ok(view) => views.push(view),
+                        Ok(()) => {}
                         Err(error) => {
                             uninspected += 1;
                             notices.push(bounded_text(&error));
@@ -250,7 +240,116 @@ fn render_at(
 }
 
 #[cfg(windows)]
-const REHEARSAL_LIMIT: usize = 4;
+const REHEARSAL_LIMIT: usize = 8;
+#[cfg(windows)]
+const FIELDS_PER_SECTION: usize = 4;
+#[cfg(windows)]
+const SECTION_ADVANCE_LIMIT: usize = 2;
+
+#[cfg(windows)]
+fn record_scope(
+    driver: &mut waypoint_browser::CdpDriver,
+    directory: &Path,
+    views: &mut Vec<Value>,
+    label: &str,
+    mut form: waypoint_applications::driver::LiveForm,
+    embedded: bool,
+    mut rehearsal: Option<&mut Rehearsal>,
+) -> Result<(), String> {
+    use waypoint_browser::{RecordedSectionOutcome, RecordedSectionStop};
+    let first_view = views.len() + 1;
+    let mut prior = Vec::new();
+    let mut pending: Option<(usize, String)> = None;
+    loop {
+        let view = views.len() + 1;
+        let capture = capture_view(driver, directory, view, label, form.clone(), embedded);
+        let mut capture = match capture {
+            Ok(capture) => capture,
+            Err(error) if pending.is_none() => return Err(error),
+            Err(_) => {
+                if let (Some(rehearsal), Some((from, _))) = (rehearsal.as_deref_mut(), pending) {
+                    rehearsal.sections.push(
+                        json!({"view":from,"status":"stopped","reason":"section_capture_failed"}),
+                    );
+                    rehearsal.halted = true;
+                }
+                return Ok(());
+            }
+        };
+        if let Some(rehearsal) = rehearsal.as_deref_mut() {
+            capture["scope_view"] = json!(first_view);
+            capture["section"] = json!(prior.len() + 1);
+            if let Some((from, control)) = pending.take() {
+                rehearsal.sections.push(json!({"view":from,"status":"advanced","to":view,"control":bounded_text(&control)}));
+            }
+        }
+        views.push(capture);
+        let Some(rehearsal) = rehearsal.as_deref_mut() else {
+            return Ok(());
+        };
+        if rehearsal.halted || form.schema.fields.is_empty() || !form.walls.is_empty() {
+            return Ok(());
+        }
+        let first_capture = rehearsal.captures.len();
+        rehearsal.exercise(driver, directory, view, &form);
+        if rehearsal.halted {
+            return Ok(());
+        }
+        let verified: Vec<_> = rehearsal.captures[first_capture..]
+            .iter()
+            .map(|(_, capture, _)| capture)
+            .collect();
+        let advance = driver.advance_recorded_section(
+            &form,
+            &prior,
+            &verified,
+            rehearsal.advances < SECTION_ADVANCE_LIMIT && rehearsal.fields.len() < REHEARSAL_LIMIT,
+        );
+        match advance {
+            Ok(RecordedSectionOutcome::Advanced {
+                label: control,
+                form: next,
+            }) => {
+                rehearsal.advances += 1;
+                pending = Some((view, control));
+                prior.push(form);
+                form = next;
+            }
+            Ok(RecordedSectionOutcome::Stopped(reason)) => {
+                if matches!(reason, RecordedSectionStop::FieldChanged) {
+                    for (index, _, _) in rehearsal.captures.drain(first_capture..) {
+                        rehearsal.fields[index]["status"] = json!("changed_after_entry");
+                        rehearsal.fields[index]
+                            .as_object_mut()
+                            .expect("field record")
+                            .remove("attachment");
+                    }
+                    rehearsal.halted = true;
+                }
+                if matches!(
+                    reason,
+                    RecordedSectionStop::ReplayGap
+                        | RecordedSectionStop::DocumentChanged
+                        | RecordedSectionStop::PageNeedsReview
+                        | RecordedSectionStop::NoNewSection
+                ) {
+                    rehearsal.halted = true;
+                }
+                rehearsal
+                    .sections
+                    .push(json!({"view":view,"status":"stopped","reason":reason}));
+                return Ok(());
+            }
+            Err(_) => {
+                rehearsal.sections.push(
+                    json!({"view":view,"status":"stopped","reason":"verification_unavailable"}),
+                );
+                rehearsal.halted = true;
+                return Ok(());
+            }
+        }
+    }
+}
 
 #[cfg(windows)]
 const SAMPLE_PDF: &[u8] = include_bytes!("rehearsal-sample.pdf");
@@ -310,8 +409,10 @@ fn sample_attachment(
 #[derive(Default)]
 struct Rehearsal {
     fields: Vec<Value>,
-    captures: Vec<(usize, waypoint_browser::RecordedFieldCapture)>,
+    captures: Vec<(usize, waypoint_browser::RecordedFieldCapture, bool)>,
     halted: bool,
+    sections: Vec<Value>,
+    advances: usize,
 }
 
 #[cfg(windows)]
@@ -337,8 +438,9 @@ impl Rehearsal {
             return;
         };
         let mut captures = Vec::new();
+        let field_limit = (self.fields.len() + FIELDS_PER_SECTION).min(REHEARSAL_LIMIT);
         for field in &form.schema.fields {
-            if self.fields.len() >= REHEARSAL_LIMIT {
+            if self.fields.len() >= field_limit {
                 break;
             }
             if form
@@ -384,7 +486,7 @@ impl Rehearsal {
                     result["kind"] = json!(capture.kind());
                     result["status"] = json!("visual_unavailable");
                     let image_saved = if let Ok((name, digest)) =
-                        save_image(directory, 6 + index, capture.image())
+                        save_image(directory, 10 + index, capture.image())
                     {
                         result["image"] = json!(name);
                         result["sha256"] = json!(digest);
@@ -412,9 +514,7 @@ impl Rehearsal {
                             "name":capture.value(), "sha256":waypoint_domain::sha256_hex(SAMPLE_PDF),
                         });
                     }
-                    if image_saved {
-                        self.captures.push((index, capture));
-                    }
+                    self.captures.push((index, capture, image_saved));
                 } else {
                     self.fields[index]["status"] = json!("changed_after_entry");
                     self.halted = true;
@@ -430,7 +530,11 @@ impl Rehearsal {
             if let Ok(Some(identity)) = crate::resident_model_identity_at(addr) {
                 vision_model = Some(json!({"name":identity.name,"digest":identity.digest}));
                 let mut model = crate::visual_review::VisionIdentityGuard::from_identity(identity);
-                for (index, capture) in &self.captures {
+                for (index, capture, _) in self
+                    .captures
+                    .iter()
+                    .filter(|(_, _, image_saved)| *image_saved)
+                {
                     if crate::check_inference_memory().is_err() {
                         break;
                     }
@@ -447,7 +551,7 @@ impl Rehearsal {
                 }
             }
         }
-        json!({"scope":"fictional_saved_form","field_limit":REHEARSAL_LIMIT,"halted":self.halted,"fields":self.fields,"vision_model":vision_model})
+        json!({"scope":"fictional_saved_form","field_limit":REHEARSAL_LIMIT,"section_advance_limit":SECTION_ADVANCE_LIMIT,"halted":self.halted,"fields":self.fields,"sections":self.sections,"vision_model":vision_model})
     }
 }
 
@@ -482,7 +586,7 @@ fn capture_view(
             form.walls.push(wall);
         }
     }
-    save_view(directory, sequence, label, form, image)
+    save_view(directory, sequence, label, form, image, embedded)
 }
 
 #[cfg(windows)]
@@ -500,6 +604,7 @@ fn save_view(
     label: &str,
     form: waypoint_applications::driver::LiveForm,
     image: String,
+    embedded: bool,
 ) -> Result<Value, String> {
     let (name, sha256) = save_image(directory, sequence, &image)?;
     let fields: Vec<_> = form
@@ -516,7 +621,7 @@ fn save_view(
         .map(|wall| bounded_text(wall))
         .collect();
     Ok(
-        json!({"kind":if sequence==1{"page"}else{"frame"},"label":bounded_text(label),"origin":bounded_text(&form.origin),
+        json!({"kind":if embedded{"frame"}else{"page"},"label":bounded_text(label),"origin":bounded_text(&form.origin),
         "image":name,"sha256":sha256,"fields":fields,"field_count":form.schema.fields.len(),"walls":walls}),
     )
 }
@@ -565,6 +670,8 @@ mod tests {
             mixed_controls: bool,
             #[serde(default)]
             upload_controls: bool,
+            #[serde(default)]
+            section_controls: bool,
         }
         const URL: &str = "https://example.org/fictional-rehearsal";
         let (addr, model, output) = crate::source_vision_qualification::owned_vision_endpoint();
@@ -651,8 +758,21 @@ mod tests {
             ("Resume", "file"),
             ("Cover letter", "file"),
         ];
-        assert!(!(fixture.mixed_controls && fixture.upload_controls));
-        let expected: &[_] = if fixture.upload_controls {
+        let staged = [text[0], text[1], mixed[2]];
+        assert!(
+            [
+                fixture.mixed_controls,
+                fixture.upload_controls,
+                fixture.section_controls
+            ]
+            .into_iter()
+            .filter(|value| *value)
+            .count()
+                <= 1
+        );
+        let expected: &[_] = if fixture.section_controls {
+            &staged
+        } else if fixture.upload_controls {
             &uploads
         } else if fixture.mixed_controls {
             &mixed
@@ -660,8 +780,13 @@ mod tests {
             &text
         };
         assert_eq!(controls, expected);
-        for field in fields {
-            assert_eq!(field["view"], 2);
+        for (index, field) in fields.iter().enumerate() {
+            let expected_view = if fixture.section_controls {
+                index + 2
+            } else {
+                2
+            };
+            assert_eq!(field["view"], expected_view);
             assert_eq!(field["status"], "visually_matched", "{}", field["label"]);
             if field["kind"] == "file" {
                 assert_eq!(
@@ -669,6 +794,13 @@ mod tests {
                     waypoint_domain::sha256_hex(SAMPLE_PDF)
                 );
             }
+        }
+        if fixture.section_controls {
+            let transitions = result["rehearsal"]["sections"].as_array().unwrap();
+            assert_eq!(transitions.len(), 3);
+            assert_eq!(transitions[0]["to"], 3);
+            assert_eq!(transitions[1]["to"], 4);
+            assert_eq!(transitions[2]["reason"], "no_forward_control");
         }
     }
 

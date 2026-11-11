@@ -22,6 +22,8 @@
 
 mod captured_frame;
 pub use captured_frame::{CapturedFrame, CapturedFrames, RecordedFieldCapture, RecordedFieldKind};
+#[cfg(windows)]
+pub use captured_frame::{RecordedSectionOutcome, RecordedSectionStop};
 pub mod capture_discovery;
 pub mod capture_privacy;
 pub mod capture_session;
@@ -286,6 +288,11 @@ const CHOICE_LIST_RESOLVER: &str = r#"const resolveChoiceList = owner => {
 enum ClickGuard<'a> {
     Ordinary,
     NonSubmit,
+    #[cfg(windows)]
+    RecordedSection {
+        label: &'a str,
+        non_read_before: u64,
+    },
     ClosedCombobox,
     RadioOption {
         label: &'a str,
@@ -6026,6 +6033,10 @@ impl CdpDriver {
         let guard_value = match guard {
             ClickGuard::Ordinary => json!({"kind":"ordinary"}),
             ClickGuard::NonSubmit => json!({"kind":"non-submit"}),
+            #[cfg(windows)]
+            ClickGuard::RecordedSection { label, .. } => {
+                json!({"kind":"recorded-section","label":label})
+            }
             ClickGuard::ClosedCombobox => json!({"kind":"combobox"}),
             ClickGuard::RadioOption {
                 label,
@@ -6049,6 +6060,12 @@ impl CdpDriver {
                 return !!control && control.matches('button:not([type="button"]), input[type="submit" i], input[type="image" i]');
             };
             if (guard.kind !== 'ordinary' && unsafeTarget(this)) return 'unsafe';
+            if (guard.kind === 'recorded-section') {
+                if (!this.matches('button[type="button" i], input[type="button" i]') || this.closest('[aria-hidden="true" i], [aria-readonly="true" i]') || this.hasAttribute('formaction') || this.hasAttribute('formmethod') || this.hasAttribute('formtarget')) return 'unsafe';
+                const visible = this.tagName === 'INPUT' ? this.value : this.innerText;
+                const norm = text => text.trim().replace(/\s+/g, ' ').toLowerCase();
+                if (norm(visible || '') !== norm(guard.label)) return 'unsafe';
+            }
             if (guard.kind === 'combobox' && ((this.getAttribute('role') || '').toLowerCase() !== 'combobox' || (this.getAttribute('aria-expanded') || '').toLowerCase() !== 'false')) return false;
             if (guard.kind === 'radio') {
                 const root=this.getRootNode(), groups=root.querySelectorAll(guard.group_selector), group=this.closest('[role="radiogroup"]');
@@ -6143,6 +6160,13 @@ impl CdpDriver {
             return Err(DriverError(
                 "The embedded click position changed; inspect it again".into(),
             ));
+        }
+        #[cfg(windows)]
+        if let ClickGuard::RecordedSection {
+            non_read_before, ..
+        } = guard
+        {
+            self.stop_if_non_read_request_observed(non_read_before)?;
         }
         self.cdp
             .call_session(

@@ -72,6 +72,20 @@ function harness(api, onFinished) {
   assert(find(choice,node => node.textContent==='City · Selection verified in form · visual review unavailable'));
   assert(find(choice,node => node.textContent==='Resume · Attachment verified in form · visual review unavailable'));
   assert(find(choice,node => node.textContent==='sample-resume.pdf'));
+  const stages = harness(async () => {}).preview({
+    views: [...preview.views, {kind:'frame', label:'Qualifications', scope_view:2, section:2,
+      image:'0003.png', sha256:digest, fields:[{label:'Later answer'}]}],
+    rehearsal: {scope:'fictional_saved_form', fields:[{view:3,label:'Later answer',status:'visual_unavailable'}],
+      sections:[{view:2,status:'advanced',to:3,control:'Next step'},
+        {view:3,status:'stopped',reason:'required_fields_unverified'}]},
+  }, {jobId:'job',attemptId:'stages',api:async () => {}});
+  const stageSelect = find(stages,node => node.tag==='select');
+  stageSelect.value='1'; stageSelect.listeners.change();
+  assert(find(stages,node => node.textContent==='Next step opened section 2 in the saved copy.'));
+  stageSelect.value='2'; stageSelect.listeners.change();
+  assert(find(stages,node => node.textContent==='Frame 1 · Qualifications · Section 2'));
+  assert(find(stages,node => node.textContent==='Required fields need review before continuing.'));
+  assert(find(stages,node => node.textContent==='Later answer · Text verified in form · visual review unavailable'));
 })().catch(error=>{console.error(error);process.exitCode=1;});
 
 (async () => {

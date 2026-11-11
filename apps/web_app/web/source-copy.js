@@ -99,14 +99,19 @@
     const section = el(options.inline ? 'div' : 'details', '', 'source-copy-result');
     const rehearsal = ['fictional_text_only', 'fictional_saved_form'].includes(preview?.rehearsal?.scope) ? preview.rehearsal : null;
     if (!options.inline) section.append(el('summary', rehearsal ? 'Offline autofill rehearsal' : 'Recorded page preview'));
-    const captures = Array.isArray(preview?.views) ? preview.views.filter(view => view && ['page','frame'].includes(view.kind)).slice(0, 5) : [];
+    const captures = Array.isArray(preview?.views) ? preview.views.filter(view => view && ['page','frame'].includes(view.kind)).slice(0, 7) : [];
     if (!captures.length) {
       section.append(el('p', 'No view could be saved. Check this record’s screenshots and status.', 'review-label'));
       return section;
     }
     const label = el('label', 'View', 'source-copy-view'), select = el('select');
+    const frames = new Map();
     for (const [index, view] of captures.entries()) {
-      const option = el('option', view.kind === 'page' ? 'Page' : `Frame ${index} · ${view.label || view.origin || 'Embedded page'}`);
+      const scope = count(view.scope_view) || index + 1;
+      if (view.kind === 'frame' && !frames.has(scope)) frames.set(scope, frames.size + 1);
+      const heading = view.kind === 'page' ? 'Page' : `Frame ${frames.get(scope)} · ${view.label || view.origin || 'Embedded page'}`;
+      const stage = count(view.section);
+      const option = el('option', stage > 1 ? `${heading} · Section ${stage}` : heading);
       option.value = String(index);
       select.append(option);
     }
@@ -124,7 +129,7 @@
     }
     if (rehearsal) {
       section.append(el('p', 'Rehearsal uses fictional details in the saved copy. Other fields, later steps and server validation still need review.', 'footnote'));
-      if (rehearsal.halted) section.append(el('p', 'The rehearsal stopped when a field could not be verified.', 'review-label'));
+      if (rehearsal.halted) section.append(el('p', 'The rehearsal stopped for review.', 'review-label'));
     }
     section.append(label, details, show, imageArea);
     let revision = 0;
@@ -149,7 +154,8 @@
         if (typeof wall === 'string') details.append(el('p', wall, 'review-label'));
       }
       if (rehearsal) {
-        const checks = Array.isArray(rehearsal.fields) ? rehearsal.fields.slice(0, 4).filter(field => field?.view === Number(select.value) + 1) : [];
+        const viewNumber = Number(select.value) + 1;
+        const checks = Array.isArray(rehearsal.fields) ? rehearsal.fields.slice(0, 8).filter(field => field?.view === viewNumber) : [];
         if (!checks.length) details.append(el('p', 'No fields were tested in this view.', 'footnote'));
         for (const check of checks) {
           const stateLabel = check.kind === 'file' ? 'Attachment' : ['select', 'radio'].includes(check.kind) ? 'Selection' : 'Text';
@@ -174,6 +180,28 @@
             row.append(button);
           }
           details.append(row);
+        }
+        const transition = Array.isArray(rehearsal.sections) ? rehearsal.sections.slice(0, 7).find(item => item?.view === viewNumber) : null;
+        if (transition?.status === 'advanced' && typeof transition.control === 'string') {
+          const target = captures[(count(transition.to) || 0) - 1];
+          if (target?.section) details.append(el('p', `${transition.control} opened section ${target.section} in the saved copy.`, 'footnote'));
+        } else if (transition?.status === 'stopped') {
+          const reasons = {
+            no_forward_control: 'No further section control was found.',
+            incomplete_controls: 'The section controls could not be fully inspected.',
+            ambiguous_control: 'More than one possible forward control needs review.',
+            unsupported_control: 'The forward control could not be used safely in rehearsal.',
+            required_fields_unverified: 'Required fields need review before continuing.',
+            limit_reached: 'The rehearsal reached its section or field limit.',
+            control_changed: 'The forward control changed during inspection.',
+            document_changed: 'The saved document changed during navigation.',
+            page_needs_review: 'The next view has an inspection warning.',
+            field_changed: 'A field could not be reverified before continuing.',
+            replay_gap: 'The next action needed a request the rehearsal could not replay safely.',
+            no_new_section: 'The forward action exposed no new form fields.',
+            section_capture_failed: 'The next section image could not be saved.',
+          };
+          details.append(el('p', reasons[transition.reason] || 'The next section needs review.', transition.reason === 'no_forward_control' ? 'footnote' : 'review-label'));
         }
       }
     }

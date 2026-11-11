@@ -22,9 +22,9 @@ eligible public ATS origins. The saved-copy autofill rehearsal now uses
 fictional text, current scoped DOM readback and focused visual evidence.
 An owned local model has passed a four-field fixture that includes native
 dropdown and radio controls. The compiled saved-copy workflow also verifies
-fictional PDF attachments by content digest. Extend the same evidence
-contract to section changes and candidate-data isolation, and test diverse
-held-out forms.
+fictional PDF attachments by content digest and records bounded forward
+progression across saved sections. Extend the evidence contract to
+candidate-data isolation and test diverse held-out forms.
 Continue the ordered isolation and quality gates below.
 
 ## Operating boundaries

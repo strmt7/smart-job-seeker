@@ -1,3 +1,8 @@
+## Recorded section changes in saved-page rehearsal - 2026-11-11
+
+- Rehearsal can follow two verified forward actions when the required controls have current readback evidence and the saved responses support progression. Each section keeps its own image, field results and transition or review outcome.
+- A compiled headless fixture reached three sections. Separate cases stopped at a scripted POST, a submit-type control and an unanswered required field. The owned local 12B model matched the three focused field images. [Scope and evidence](docs/RECORDED_PAGE_PREVIEW.md).
+
 ## Fictional PDF attachments in saved-page rehearsal - 2026-11-11
 
 - Rehearsal attaches bundled PDF samples to uniquely identified résumé and cover-letter inputs. A separate private inventory preserves the saved archive and verifies the selected bytes in an isolated browser script world. Attachment receipts require the final in-view recheck.

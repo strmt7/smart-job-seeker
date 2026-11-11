@@ -24,8 +24,8 @@ embedded origins. Frames outside the saved archive can appear unavailable.
 
 Choose **Rehearse autofill** beside a saved page copy. The task uses a built-in
 fictional profile and the same exact-label and standard autocomplete mapping
-used by the ordinary form review. It checks up to four eligible controls in
-the saved page and available frames. These include text fields, native
+used by the ordinary form review. It checks up to four eligible controls per
+section and eight across the saved page and available frames. These include text fields, native
 dropdowns, radio groups and PDF inputs identified uniquely as a résumé or
 cover letter. Choices need one matching displayed option. Sensitive,
 ambiguous and unsupported controls remain unfilled. The job snapshot is
@@ -49,6 +49,22 @@ browser script world checks the selected file's name, size and actual bytes
 against its admitted digest. The record shows an attachment receipt only
 after the final in-view recheck.
 
+### Later sections
+
+Rehearsal can follow up to two forward actions. It needs one clearly labelled
+native forward button, receipts for all required fields in the current view,
+and a successful recheck immediately before the click. Submit controls,
+ambiguous buttons and changed field state stop progression. A later view
+requires additional visible form controls in the same document and frame.
+Recorded read responses can support that transition. Blocked requests,
+observed non-read traffic, unsupported replay changes and missing resources
+remain review outcomes.
+
+Each retained section has its own image and field results. The history
+records the control used and the reason progression stopped. A section
+without a recognized forward control makes no delivery or readiness claim.
+The source collector may lack resources needed after a forward action.
+
 The browser closes before optional visual review. When an eligible local
 vision model is already loaded, it receives the focused image. Text controls
 also get a field label and independently verified text-presence cue. Choices
@@ -63,8 +79,8 @@ has a digest and can be opened with the shared viewer.
 
 This exercise covers the saved responses and supported controls. It makes no
 live application request and creates no approval. Real candidate data, other
-attachment types, custom choice widgets, later steps and server validation
-remain outside this rehearsal.
+attachment types, custom choice widgets, unrecorded later steps and server
+validation remain outside this rehearsal.
 
 ### Rehearsal qualification
 
@@ -113,6 +129,20 @@ has SHA-256 `879277ac2bccc251d65564c9f1015cf8424a011f6de88ef0e31187b9156198d0`.
 The final compiled history view displayed both filenames and fit the field
 image at 1,360, 480 and 320 pixels.
 
+The section fixture used two saved read responses to open three sections
+inside one frame. It retained three field images and displayed the third
+section at 1,360 and 480 pixels. Separate cases stopped at a scripted POST,
+a submit button labelled **Continue section**, and an unfilled required
+answer. The scripted request was blocked. All jobs stayed discovered. The
+four-case invocation took 194.957 seconds and sampled at least
+31,204,171,776 available physical bytes. Evidence is in
+`target/recorded-sections-native-vhg6e4z8/qualification.private.json` with
+SHA-256 `bb04ab3ba538d7fedfb09e384b6e9973401e2fcd9d0e173aba253cc364d5bcf8`.
+The final compiled retest passed the three refusal cases and rendered the
+saved section history at 480 and 320 pixels. Its
+`final-sections.private.json` SHA-256 is
+`fae18f98ed8f0f7dac3ce25d29e0d9c3177e609adec8f56379c1fa6bef71b73e`.
+
 ### Connected local vision
 
 The native Windows qualification ran the saved-copy renderer against an owned
@@ -142,6 +172,8 @@ two eligible text fields in its recorded frame. The `mixed_controls` fixture
 flag additionally expects a **Country** dropdown and **City** radio group.
 The separate `upload_controls` flag expects **First name**, **Country**,
 **Resume** and **Cover letter**.
+The `section_controls` flag expects **First name**, **Email** and **Country**
+in three successive recorded sections.
 The suite verifies the supplied source, config and current model.
 
 The final mixed run used the same model and context. It matched all four
@@ -161,6 +193,14 @@ removed. `target/owned-answer-qualification-jseusjvn/result.private.json`
 has SHA-256 `ba846d95dc2c6807929f0b8f3b3b38e30948b6cacfe013258c5900bde5fb70a9`.
 This visual result corroborates the filenames. The isolated DOM checks
 establish the attachment bytes within the recorded form.
+
+The owned section run matched all three fields across the three successive
+sections. It reproduced the three compiled fixture image digests and served
+six saved responses with zero blocked requests in that fixture. The run
+took 90.375 seconds and sampled at least 23,083,806,720 available physical
+bytes. The private model copy and profile were removed.
+`target/owned-answer-qualification-ifxkfof5/result.private.json` has
+SHA-256 `e03c4b36088e36f473d3591be25ab184423db2161a6336b2c28a6724e9d72ed7`.
 
 ## Compiled Windows evidence, 2026-11-11
 

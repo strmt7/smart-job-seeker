@@ -47,6 +47,78 @@ pub enum RecordedFieldKind {
     File,
 }
 
+#[cfg(windows)]
+pub enum RecordedSectionOutcome {
+    Advanced { label: String, form: LiveForm },
+    Stopped(RecordedSectionStop),
+}
+
+#[cfg(windows)]
+#[derive(serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecordedSectionStop {
+    NoForwardControl,
+    IncompleteControls,
+    AmbiguousControl,
+    UnsupportedControl,
+    RequiredFieldsUnverified,
+    LimitReached,
+    ControlChanged,
+    DocumentChanged,
+    PageNeedsReview,
+    FieldChanged,
+    ReplayGap,
+    NoNewSection,
+}
+
+#[cfg(any(windows, test))]
+fn recorded_forward_label(label: &str) -> bool {
+    let label = label
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
+    matches!(
+        label.trim_end_matches(['→', '»', '>']).trim_end(),
+        "next"
+            | "continue"
+            | "next step"
+            | "next section"
+            | "continue section"
+            | "continue to next step"
+            | "continue to next section"
+            | "weiter"
+            | "nächster schritt"
+            | "suivant"
+            | "étape suivante"
+            | "siguiente"
+            | "paso siguiente"
+    )
+}
+
+#[cfg(windows)]
+fn section_fields(form: &LiveForm) -> std::collections::BTreeSet<Vec<String>> {
+    form.schema
+        .fields
+        .iter()
+        .map(|field| {
+            field
+                .context
+                .sections
+                .iter()
+                .map(|section| section.label.as_str())
+                .chain(std::iter::once(field.label.as_str()))
+                .map(|text| {
+                    text.split_whitespace()
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                        .to_lowercase()
+                })
+                .collect()
+        })
+        .collect()
+}
+
 /// Pixels with independently verified field state in a recorded form.
 /// Only the recorded driver can construct this evidence.
 pub struct RecordedFieldCapture {
@@ -142,6 +214,150 @@ fn scope_key(frame: &CapturedFrame) -> Result<String, DriverError> {
     ))
 }
 impl CdpDriver {
+    /// Try one same-document section change in the owned replay browser.
+    /// Only newly observed controls count as progress.
+    #[cfg(windows)]
+    pub fn advance_recorded_section(
+        &mut self,
+        before: &LiveForm,
+        visited: &[LiveForm],
+        verified_fields: &[&RecordedFieldCapture],
+        budget_available: bool,
+    ) -> Result<RecordedSectionOutcome, DriverError> {
+        use RecordedSectionOutcome::{Advanced, Stopped};
+        use RecordedSectionStop::*;
+        self.require_recorded_frames()?;
+        if !before.walls.is_empty() || before.schema.fields.is_empty() {
+            return Ok(Stopped(PageNeedsReview));
+        }
+        let document = self.recorded_document()?;
+        let controls = self.page_controls()?;
+        if controls.incomplete {
+            return Ok(Stopped(IncompleteControls));
+        }
+        let candidates: Vec<_> = controls
+            .controls
+            .iter()
+            .filter(|control| {
+                possible_next_label(&control.label) || recorded_forward_label(&control.label)
+            })
+            .collect();
+        let target = match candidates.as_slice() {
+            [] => return Ok(Stopped(NoForwardControl)),
+            [target] => *target,
+            _ => return Ok(Stopped(AmbiguousControl)),
+        };
+        if target.disabled || !recorded_forward_label(&target.label) {
+            return Ok(Stopped(UnsupportedControl));
+        }
+        if before
+            .schema
+            .fields
+            .iter()
+            .filter(|field| field.required)
+            .any(|field| {
+                !verified_fields
+                    .iter()
+                    .any(|capture| match &capture.command {
+                        BrowserCommand::Fill { selector, .. }
+                        | BrowserCommand::SelectOption { selector, .. }
+                        | BrowserCommand::SelectRadio { selector, .. }
+                        | BrowserCommand::UploadFile { selector, .. } => {
+                            *selector == field.selector
+                        }
+                        _ => false,
+                    })
+            })
+        {
+            return Ok(Stopped(RequiredFieldsUnverified));
+        }
+        if !budget_available {
+            return Ok(Stopped(LimitReached));
+        }
+        let network_before = self.observed_non_read_requests()?;
+        let replay_before = self.rehearsal_replay_report()?;
+        let replay_intact = |driver: &mut Self| -> Result<bool, DriverError> {
+            let replay = driver.rehearsal_replay_report()?;
+            Ok(driver.observed_non_read_requests()? == network_before
+                && [
+                    "blocked",
+                    "cached_non_read_replies",
+                    "unreplayed_transports",
+                    "unmanaged_child_sessions",
+                    "unsupported_targets",
+                ]
+                .iter()
+                .all(|key| replay[*key] == replay_before[*key]))
+        };
+        self.scroll_field_into_view(&target.selector)?;
+        if self.recorded_document()? != document || self.inspect_current()? != *before {
+            return Ok(Stopped(DocumentChanged));
+        }
+        if verified_fields
+            .iter()
+            .any(|capture| self.verify_recorded_field(capture).is_err())
+        {
+            return Ok(Stopped(FieldChanged));
+        }
+        if self.page_controls()? != controls {
+            return Ok(Stopped(ControlChanged));
+        }
+        if !replay_intact(self)? {
+            return Ok(Stopped(ReplayGap));
+        }
+        let node = self.node_id(&target.selector)?.ok_or_else(review)?;
+        if self
+            .click_node_guarded(
+                node,
+                &target.selector,
+                ClickGuard::RecordedSection {
+                    label: &target.label,
+                    non_read_before: network_before,
+                },
+            )
+            .is_err()
+        {
+            return Ok(Stopped(
+                if self.observed_non_read_requests()? > network_before {
+                    ReplayGap
+                } else {
+                    UnsupportedControl
+                },
+            ));
+        }
+        let before_fields = section_fields(before);
+        let seen: Vec<_> = visited.iter().map(section_fields).collect();
+        for _ in 0..3 {
+            self.cdp
+                .pump_checked(Duration::from_millis(300))
+                .map_err(derr)?;
+            if !replay_intact(self)? {
+                return Ok(Stopped(ReplayGap));
+            }
+            if self.recorded_document()? != document {
+                return Ok(Stopped(DocumentChanged));
+            }
+            let after = self.inspect_current()?;
+            if after.origin != before.origin || self.recorded_document()? != document {
+                return Ok(Stopped(DocumentChanged));
+            }
+            if !after.walls.is_empty() {
+                return Ok(Stopped(PageNeedsReview));
+            }
+            let fields = section_fields(&after);
+            if !fields.is_subset(&before_fields) && !seen.contains(&fields) {
+                if !replay_intact(self)? {
+                    return Ok(Stopped(ReplayGap));
+                }
+                return Ok(Advanced {
+                    label: target.label.clone(),
+                    form: after,
+                });
+            }
+        }
+        Ok(Stopped(NoNewSection))
+    }
+
     /// Exercise an unambiguous text or native choice control. Bind pixels to
     /// readback on both sides of capture and reject a changed scope.
     pub fn rehearse_recorded_field(
@@ -994,6 +1210,26 @@ fn recorded_field_crop(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recorded_forward_labels_leave_submit_and_ambiguous_phrases_for_review() {
+        for label in [
+            "Next",
+            " Continue section ",
+            "Next step →",
+            "Étape suivante",
+        ] {
+            assert!(recorded_forward_label(label), "{label}");
+        }
+        for label in [
+            "Continue to submit",
+            "Continue with Google",
+            "Next employer",
+            "Save and send",
+        ] {
+            assert!(!recorded_forward_label(label), "{label}");
+        }
+    }
 
     fn point() -> CapturedPointerPoint {
         CapturedPointerPoint {
