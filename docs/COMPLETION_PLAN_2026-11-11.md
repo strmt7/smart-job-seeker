@@ -90,6 +90,11 @@ passes bounded slow-client, framing, fairness and teardown regressions and a
 compiled settings journey. The socket stall is repaired; R01 remains in progress
 for blocking-handler, expensive-work and status/stop qualification.
 
+The [inventory continuation](g1/DEFERRED_INVENTORY_2026-11-11.md) now moves its
+HTTP/parsing work into one owned, deadline-guarded read and qualifies control
+requests alongside four waiting readers. Synchronous model preflights in task
+startup and native observations still need review; R01 is not marked complete.
+
 Separate bounded HTTP framing/socket I/O from serialized workspace state changes.
 Use an absolute header/body deadline, byte limits, write deadlines, fixed worker
 and queue limits, backpressure and deterministic shutdown. Keep authentication,

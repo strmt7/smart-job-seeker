@@ -1,3 +1,12 @@
+## Deferred local model inventory - 2026-11-11
+
+The inventory fetch uses one owned, cancellable worker with four bounded
+in-flight waiters. The isolated owner-loop test keeps settings responsive during
+a held inventory request and saturation; shutdown joins the reader. The compiled
+settings journey also passed. Existing API shape and memory-advice behavior are
+preserved. Other blocking preflights remain open.
+[Evidence](docs/g1/DEFERRED_INVENTORY_2026-11-11.md).
+
 ## Nonblocking local request I/O - 2026-11-11
 
 Bounded request framing and response delivery no longer block workspace updates

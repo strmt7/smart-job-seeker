@@ -107,6 +107,14 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
       - name: Tests
         run: cargo test --workspace
+      - name: Check deferred inventory controls in isolation
+        timeout-minutes: 2
+        shell: pwsh
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP 'deferred-inventory-control.log'
+          cargo test -p waypoint_web --bin waypoint_web inventory_read::tests::deferred_inventory_keeps_real_control_requests_responsive -- --exact --ignored --test-threads=1 2>&1 | Tee-Object -FilePath $log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -B -c "import sys; from pathlib import Path; sys.path.insert(0, 'tools'); from qualify_rehearsal import test_denominator; print(test_denominator(Path(sys.argv[1]).read_text(encoding='utf-8-sig'), 'rust', 1))" $log
       - name: Release build
         run: ./apps/web_app/scripts/build-windows.ps1 -Release
       - name: Check headless resizing, browser zoom and pane dragging

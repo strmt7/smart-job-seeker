@@ -362,7 +362,7 @@ impl Server {
                 }
                 State::Ready(_) => connection.accepted.elapsed() >= REQUEST_TIME,
                 State::Writing { since, .. } => since.elapsed() >= WRITE_TIME,
-                State::Handling => false,
+                State::Handling => connection.accepted.elapsed() >= REQUEST_TIME,
             };
             if expired {
                 self.close(id);
@@ -513,6 +513,12 @@ impl Server {
             }
         }
         None
+    }
+
+    pub fn is_handling(&self, id: usize) -> bool {
+        self.connections
+            .get(&id)
+            .is_some_and(|connection| matches!(connection.state, State::Handling))
     }
 
     pub fn respond(&mut self, id: usize, response: Response) -> io::Result<()> {
@@ -887,6 +893,24 @@ mod tests {
         let bytes = response.finish();
         assert!(bytes.starts_with(b"HTTP/1.1 500"));
         assert!(!bytes.windows(6).any(|s| s == b"prefix"));
+    }
+
+    #[test]
+    fn deferred_handling_expires_and_late_completion_cannot_send() {
+        let (mut server, port) = server();
+        let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        client.write_all(&request(port)).unwrap();
+        server.poll().unwrap();
+        let (id, _) = server.next_request().unwrap();
+        assert!(server.is_handling(id));
+        server.connections.get_mut(&id).unwrap().accepted =
+            Instant::now() - REQUEST_TIME - Duration::from_secs(1);
+        server.poll().unwrap();
+        assert!(!server.is_handling(id));
+        assert!(server.connections.is_empty());
+        assert!(server
+            .respond(id, Response::error("200 OK", "late"))
+            .is_err());
     }
 
     #[test]

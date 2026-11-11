@@ -63,6 +63,7 @@ mod history_record_choice;
 #[cfg(all(test, windows))]
 mod history_ui_qualification;
 mod http_server;
+mod inventory_read;
 mod job_capture;
 mod letter_export;
 mod link_rank;
@@ -97,6 +98,9 @@ mod storage_settings;
 mod suggestions;
 mod template_plan;
 mod template_suggest;
+#[cfg(test)]
+#[path = "../../../crates/waypoint_browser/tests/support/loopback.rs"]
+pub mod test_http;
 #[cfg(windows)]
 mod tray;
 mod visual_review;
@@ -2300,6 +2304,26 @@ fn model_inventory_memory_snapshot(
     }
 }
 
+fn finish_model_inventory(snapshot: inventory_read::Snapshot) -> Value {
+    #[allow(unused_mut)]
+    let mut inventory = snapshot.inventory;
+    #[cfg(windows)]
+    if let Ok(mut system) = sysinfo::System::new() {
+        system.refresh_memory();
+        let gpu = std::panic::catch_unwind(gpu_resources::sample)
+            .unwrap_or_else(|_| json!({"state":"unavailable"}));
+        model_inventory_memory_snapshot(
+            &mut inventory,
+            &snapshot.tags,
+            system.available_memory(),
+            &gpu,
+        );
+    }
+    #[cfg(not(windows))]
+    let _ = snapshot.tags;
+    inventory
+}
+
 fn model_diagnostics(data: &Value) -> Result<Value, String> {
     let eligible = eligible_resident_model(data)?;
     let models = data["models"]
@@ -2569,7 +2593,15 @@ fn serve(
         http_server::Access::new(port, token.to_owned(), |path| public_asset(path).is_some());
     let request = http_server::read_test_request(stream, &access)?;
     let mut response = http_server::Response::default();
-    serve_request(&mut response, request, ws, session)?;
+    if inventory_read::handles(&request.method, &request.path) {
+        let snapshot = inventory_read::read(
+            std::net::SocketAddr::from(([127, 0, 0, 1], 11434)),
+            &std::sync::atomic::AtomicBool::new(false),
+        )?;
+        json_reply(&mut response, "200 OK", finish_model_inventory(snapshot));
+    } else {
+        serve_request(&mut response, request, ws, session)?;
+    }
     http_server::write_test_response(stream, response)
 }
 
@@ -2699,27 +2731,6 @@ fn serve_request(
         let result = std::panic::catch_unwind(gpu_resources::sample)
             .unwrap_or_else(|_| json!({"state":"unavailable","reported_adapters":0,"adapters":[]}));
         json_reply(stream, "200 OK", result);
-        return Ok(());
-    }
-    if method == "GET" && path == "/api/model-inventory" {
-        let addr = "127.0.0.1:11434"
-            .parse()
-            .map_err(|_| "invalid runtime address")?;
-        let (status, bytes) = http_request(addr, "GET", "/api/tags", None, 3000)?;
-        if status != 200 {
-            return Err(format!("Ollama returned HTTP {status}"));
-        }
-        let data: Value = serde_json::from_slice(&bytes).map_err(|_| "invalid Ollama response")?;
-        #[allow(unused_mut)]
-        let mut inventory = installed_model_inventory(&data)?;
-        #[cfg(windows)]
-        if let Ok(mut system) = sysinfo::System::new() {
-            system.refresh_memory();
-            let gpu = std::panic::catch_unwind(gpu_resources::sample)
-                .unwrap_or_else(|_| json!({"state":"unavailable"}));
-            model_inventory_memory_snapshot(&mut inventory, &data, system.available_memory(), &gpu);
-        }
-        json_reply(stream, "200 OK", inventory);
         return Ok(());
     }
     if method == "GET" && path == "/api/tool-status" {
@@ -9590,17 +9601,43 @@ fn duplicate_index_delay(compared: bool, more_pending: bool) -> Duration {
 }
 
 fn serve_loop(
+    ws: Workspace,
+    listener: TcpListener,
+    token: String,
+    port: u16,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) {
+    serve_loop_with_runtime(
+        ws,
+        listener,
+        token,
+        port,
+        stop,
+        std::net::SocketAddr::from(([127, 0, 0, 1], 11434)),
+    );
+}
+
+fn serve_loop_with_runtime(
     mut ws: Workspace,
     listener: TcpListener,
     token: String,
     port: u16,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    runtime: std::net::SocketAddr,
 ) {
     let access = http_server::Access::new(port, token, |path| public_asset(path).is_some());
     let mut transport = match http_server::Server::new(listener, access) {
         Ok(server) => server,
         Err(error) => {
             eprintln!("Local server unavailable: {error}");
+            return;
+        }
+    };
+    let mut inventory_reads = match inventory_read::Pending::new(runtime) {
+        Ok(reads) => reads,
+        Err(error) => {
+            eprintln!("Local inventory unavailable: {error}");
+            stop.store(true, std::sync::atomic::Ordering::Release);
             return;
         }
     };
@@ -9739,14 +9776,50 @@ fn serve_loop(
             stop.store(true, std::sync::atomic::Ordering::Release);
             break;
         }
-        if let Some((id, request)) = transport.next_request() {
-            let mut response = http_server::Response::default();
-            if let Err(error) = serve_request(&mut response, request, &mut ws, &mut session) {
-                response = http_server::Response::default();
-                json_reply(&mut response, "400 Bad Request", json!({"error":error}));
+        inventory_reads.retain(|id| transport.is_handling(id));
+        if let Some((waiters, result)) = inventory_reads
+            .collect()
+            .filter(|(waiters, _)| !waiters.is_empty())
+        {
+            let inventory = result.map(finish_model_inventory);
+            for id in waiters {
+                if !transport.is_handling(id) {
+                    continue;
+                }
+                let mut response = http_server::Response::default();
+                match &inventory {
+                    Ok(value) => json_reply(&mut response, "200 OK", value.clone()),
+                    Err(error) => {
+                        json_reply(&mut response, "400 Bad Request", json!({"error":error}))
+                    }
+                }
+                if let Err(error) = transport.respond(id, response) {
+                    eprintln!("Local inventory response failed: {error}");
+                }
             }
-            if let Err(error) = transport.respond(id, response) {
-                eprintln!("Local response transport failed: {error}");
+        }
+        if let Some((id, request)) = transport.next_request() {
+            if inventory_read::handles(&request.method, &request.path) {
+                if let Err(error) = inventory_reads.request(id) {
+                    let mut response = http_server::Response::default();
+                    json_reply(
+                        &mut response,
+                        "503 Service Unavailable",
+                        json!({"error":error}),
+                    );
+                    if let Err(error) = transport.respond(id, response) {
+                        eprintln!("Local inventory response failed: {error}");
+                    }
+                }
+            } else {
+                let mut response = http_server::Response::default();
+                if let Err(error) = serve_request(&mut response, request, &mut ws, &mut session) {
+                    response = http_server::Response::default();
+                    json_reply(&mut response, "400 Bad Request", json!({"error":error}));
+                }
+                if let Err(error) = transport.respond(id, response) {
+                    eprintln!("Local response transport failed: {error}");
+                }
             }
         }
         if index_worker.is_none() && Instant::now() >= next_duplicate_index {
@@ -9765,6 +9838,7 @@ fn serve_loop(
         }
     }
     drop(transport);
+    drop(inventory_reads);
     if let Err(error) = web_search_batch::collect_background()
         .and_then(|_| web_search_batch::persist_progress(&ws).map(|_| ()))
         .and_then(|_| web_search_batch::persist_completed(&ws).map(|_| ()))

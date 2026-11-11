@@ -32,9 +32,10 @@
       ],
       "evidence": [
         "docs/REPO_STATE_REVIEW_2026-11-11.md",
-        "docs/g1/CONTROL_PLANE_IO_2026-11-11.md"
+        "docs/g1/CONTROL_PLANE_IO_2026-11-11.md",
+        "docs/g1/DEFERRED_INVENTORY_2026-11-11.md"
       ],
-      "next_action": "Audit synchronous blocking handlers, beginning with model-inventory HTTP I/O; qualify status/stop alongside admitted expensive work and shutdown."
+      "next_action": "Move synchronous model-status preflight in fit/task startup into the owned task lifecycle with current input/model binding; continue status/stop and native-observation qualification."
     },
     {
       "id": "R02",
