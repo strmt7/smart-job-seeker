@@ -132,6 +132,8 @@ pub(crate) struct Probe {
     #[serde(default)]
     pub asset_request_origins: std::collections::BTreeMap<String, String>,
     #[serde(default)]
+    pub asset_origin_absent_stylesheets: std::collections::BTreeSet<String>,
+    #[serde(default)]
     pub preload_projection_failures: usize,
     pub omitted_requests: u64,
     pub ineligible_requests: u64,
@@ -170,6 +172,13 @@ impl Probe {
             && self.asset_request_origins.iter().all(|(url, origin)| {
                 self.assets.contains_key(url)
                     && waypoint_net::PublicRequestOrigin::parse(origin).is_ok()
+            })
+            && self.asset_origin_absent_stylesheets.len() <= self.assets.len()
+            && self.asset_origin_absent_stylesheets.iter().all(|url| {
+                !self.asset_request_origins.contains_key(url)
+                    && self.assets.get(url).is_some_and(|kinds| {
+                        kinds.len() == 1 && kinds.contains(&AssetKind::Stylesheet)
+                    })
             })
             && self.preload_projection_failures <= 512
             && self.pending_commands <= 128
@@ -283,6 +292,33 @@ mod tests {
         candidate["assets"]["https://cdn.fixture.invalid/a.js"] = json!(["document"]);
         assert!(serde_json::from_value::<Probe>(candidate).is_err());
     }
+    #[test]
+    fn absent_origin_style_proof_cannot_bind_an_unobserved_or_conflicting_kind() {
+        let url = "https://cdn.fixture.invalid/style.css";
+        let base = json!({"schema":1,"mode":"resource_discovery","urls":[url],
+            "assets":{url:["stylesheet"]},"asset_origin_absent_stylesheets":[url],
+            "omitted_requests":0,"ineligible_requests":0,"pending_commands":0,
+            "unsupported_targets":{},"unreplayed_transports":0,"unmanaged_child_sessions":0});
+        assert!(serde_json::from_value::<Probe>(base.clone())
+            .unwrap()
+            .valid());
+        for kinds in [
+            json!([]),
+            json!(["script"]),
+            json!(["stylesheet", "script"]),
+        ] {
+            let mut value = base.clone();
+            value["assets"][url] = kinds;
+            assert!(!serde_json::from_value::<Probe>(value).unwrap().valid());
+        }
+        let mut value = base.clone();
+        value["asset_request_origins"] = json!({url:"https://fixture.invalid"});
+        assert!(!serde_json::from_value::<Probe>(value).unwrap().valid());
+        let mut value = base;
+        value["asset_origin_absent_stylesheets"] = json!(["https://unobserved.invalid/style.css"]);
+        assert!(!serde_json::from_value::<Probe>(value).unwrap().valid());
+    }
+
     fn fixture() -> serde_json::Value {
         json!({"schema":1,"scope":"root_frame_accessibility_tree","status":"observed","reason":null,"nodes":2,"controls":[{"number":1,"role":"textbox","label":"Name","description":null,"context":[],"context_incomplete":false,"required":null,"disabled":null}],"omitted_controls":0,"unlabelled_controls":0,"omitted_texts":0})
     }

@@ -56,9 +56,22 @@ fn canonical(raw: &str, entry: bool) -> Result<String, String> {
 pub(super) struct SnapshotRequestBinding {
     origin: bool,
     preflight: bool,
+    stylesheet: bool,
+}
+#[derive(Clone, Copy, Default)]
+pub(super) enum SnapshotScope {
+    #[default]
+    Ordinary,
+    OriginAbsentStylesheet,
 }
 pub(super) fn snapshot_origin_binding(
     response: &CapturedResponse,
+) -> Result<SnapshotRequestBinding, String> {
+    snapshot_binding_scoped(response, SnapshotScope::Ordinary)
+}
+pub(super) fn snapshot_binding_scoped(
+    response: &CapturedResponse,
+    scope: SnapshotScope,
 ) -> Result<SnapshotRequestBinding, String> {
     let names = response.request_header_names.as_ref().and_then(|names| {
         let mut unique = BTreeSet::new();
@@ -89,6 +102,36 @@ pub(super) fn snapshot_origin_binding(
             !names.contains("access-control-request-headers")
                 && !names.contains("access-control-request-method")
         });
+    let stylesheet = matches!(scope, SnapshotScope::OriginAbsentStylesheet);
+    if stylesheet {
+        let mime: Vec<_> = response
+            .headers
+            .iter()
+            .filter(|h| h.name.eq_ignore_ascii_case("content-type"))
+            .collect();
+        let css = mime.len() == 1
+            && std::str::from_utf8(&mime[0].value).is_ok_and(|v| {
+                v.split(';')
+                    .next()
+                    .is_some_and(|v| v.trim().eq_ignore_ascii_case("text/css"))
+            });
+        let anonymous = names.as_ref().is_some_and(|names| {
+            !names.iter().any(|name| {
+                matches!(
+                    name.as_str(),
+                    "cookie" | "authorization" | "proxy-authorization"
+                )
+            })
+        });
+        if response.request_method != "GET"
+            || !origin_absent
+            || !preflight_absent
+            || !anonymous
+            || !(css || matches!(response.status, 301 | 302 | 303 | 307 | 308))
+        {
+            return Err("Absent-Origin stylesheet requires observed style scope and native anonymous GET evidence".into());
+        }
+    }
     if response.headers.iter().any(|h| {
         h.name.eq_ignore_ascii_case("connection")
             && std::str::from_utf8(&h.value).is_ok_and(|value| {
@@ -97,9 +140,17 @@ pub(super) fn snapshot_origin_binding(
                     .any(|v| v.trim().eq_ignore_ascii_case("vary"))
             })
     }) {
-        return Ok(SnapshotRequestBinding::default());
+        return Ok(SnapshotRequestBinding {
+            origin: stylesheet,
+            stylesheet,
+            ..Default::default()
+        });
     }
-    let mut binding = SnapshotRequestBinding::default();
+    let mut binding = SnapshotRequestBinding {
+        origin: stylesheet,
+        stylesheet,
+        ..Default::default()
+    };
     for header in response
         .headers
         .iter()
@@ -123,7 +174,7 @@ pub(super) fn snapshot_origin_binding(
             }
         }
     }
-    if binding.origin && !origin_present {
+    if binding.origin && !origin_present && !stylesheet {
         let headers: Vec<_> = response
             .headers
             .iter()
@@ -231,10 +282,18 @@ impl SnapshotBuilder {
     /// Callers must separately establish source permissions and keep capture
     /// completely separate from candidate entry and authenticated sessions.
     pub fn add(&mut self, resource_url: &str, response: CapturedResponse) -> Result<(), String> {
+        self.add_scoped(resource_url, response, SnapshotScope::Ordinary)
+    }
+    pub(super) fn add_scoped(
+        &mut self,
+        resource_url: &str,
+        response: CapturedResponse,
+        scope: SnapshotScope,
+    ) -> Result<(), String> {
         if self.failed {
             return Err("Snapshot has failed; start a new capture".into());
         }
-        let result = self.add_response(resource_url, response);
+        let result = self.add_response(resource_url, response, scope);
         if let Err(error) = &result {
             self.failed = true;
             let _ = write_new(
@@ -252,6 +311,7 @@ impl SnapshotBuilder {
         &mut self,
         resource_url: &str,
         response: CapturedResponse,
+        scope: SnapshotScope,
     ) -> Result<(), String> {
         if response.request_method != "GET" {
             return Err("Only GET representations can enter this snapshot".into());
@@ -282,7 +342,10 @@ impl SnapshotBuilder {
         let mut headers = Vec::new();
         let mut connection_names = BTreeSet::new();
         let mut ignored_cookie = false;
-        let binding = snapshot_origin_binding(&response)?;
+        let binding = match scope {
+            SnapshotScope::Ordinary => snapshot_origin_binding(&response)?,
+            _ => snapshot_binding_scoped(&response, scope)?,
+        };
         for h in &response.headers {
             if h.name.eq_ignore_ascii_case("connection") {
                 let value = std::str::from_utf8(&h.value)
@@ -381,6 +444,9 @@ impl SnapshotBuilder {
             resource["request_origin"] = json!(origin);
         } else if binding.origin {
             resource["request_origin_absent"] = json!(true);
+        }
+        if binding.stylesheet {
+            resource["request_origin_absent_stylesheet"] = json!(true);
         }
         if binding.preflight {
             resource["request_preflight_absent"] = json!(true);
@@ -535,6 +601,93 @@ mod tests {
             assert!(capture.add("https://fixture.invalid/form", value).is_err());
         }
     }
+    #[test]
+    fn observed_stylesheet_scope_persists_absence_even_without_vary() {
+        for vary in ["", "Vary: Accept-Encoding, Origin\r\n"] {
+            let temp = tempfile::tempdir().unwrap();
+            let mut capture = builder(temp.path());
+            capture
+                .add(
+                    "https://fixture.invalid/form",
+                    response("<h1>Fixture</h1>", "text/html", ""),
+                )
+                .unwrap();
+            let mut css = response("body{color:navy}", "text/css; charset=utf-8", vary);
+            css.request_header_names = Some(vec!["host".into(), "accept".into()]);
+            if !vary.is_empty() {
+                assert!(snapshot_origin_binding(&css).is_err());
+            }
+            capture
+                .add_scoped(
+                    "https://fixture.invalid/style.css",
+                    css,
+                    SnapshotScope::OriginAbsentStylesheet,
+                )
+                .unwrap();
+            let snapshot = capture.finish().unwrap();
+            let manifest: serde_json::Value =
+                serde_json::from_slice(&fs::read(snapshot.root.join("replay.json")).unwrap())
+                    .unwrap();
+            let style = &manifest["resources"][1];
+            assert_eq!(style["request_origin_absent"], true);
+            assert_eq!(style["request_origin_absent_stylesheet"], true);
+            assert!(style.get("request_origin").is_none());
+            assert!(manifest["resources"][0]
+                .get("request_origin_absent_stylesheet")
+                .is_none());
+        }
+    }
+
+    #[test]
+    fn stylesheet_scope_never_infers_anonymous_get_proof_from_css_mime() {
+        let scope = SnapshotScope::OriginAbsentStylesheet;
+        for names in [
+            None,
+            Some(vec![]),
+            Some(vec!["accept"]),
+            Some(vec!["host", "Origin"]),
+            Some(vec!["host", "Accept", "accept"]),
+            Some(vec!["host", "bad name"]),
+            Some(vec!["host", "cookie"]),
+            Some(vec!["host", "authorization"]),
+            Some(vec!["host", "proxy-authorization"]),
+            Some(vec!["host", "access-control-request-method"]),
+            Some(vec!["host", "access-control-request-headers"]),
+        ] {
+            let mut css = response("body{}", "text/css", "Vary: Origin\r\n");
+            css.request_header_names =
+                names.map(|names| names.into_iter().map(str::to_owned).collect());
+            assert!(snapshot_binding_scoped(&css, scope).is_err());
+        }
+        for (mime, vary, method, origin) in [
+            ("application/json", "Origin", "GET", false),
+            ("text/css", "*", "GET", false),
+            ("text/css", "Origin, Accept-Language", "GET", false),
+            ("text/css", "Origin", "POST", false),
+            ("text/css", "Origin", "GET", true),
+        ] {
+            let mut css = response("body{}", mime, &format!("Vary: {vary}\r\n"));
+            css.request_header_names = Some(vec!["host".into()]);
+            css.request_method = method.into();
+            if origin {
+                css.request_origin = Some(
+                    waypoint_net::PublicRequestOrigin::parse("https://fixture.invalid").unwrap(),
+                );
+                css.request_header_names
+                    .as_mut()
+                    .unwrap()
+                    .push("origin".into());
+            }
+            assert!(snapshot_binding_scoped(&css, scope).is_err());
+        }
+        let mut redirect = response("", "text/plain", "Vary: Origin\r\n");
+        redirect.status = 302;
+        redirect.request_header_names = Some(vec!["host".into()]);
+        let binding = snapshot_binding_scoped(&redirect, scope).unwrap();
+        assert!(binding.origin && binding.stylesheet);
+        assert!(snapshot_origin_binding(&redirect).is_err());
+    }
+
     #[test]
     fn snapshot_stream_bytes_create_bound_manifest_without_cookies_or_hop_headers() {
         let temp = tempfile::tempdir().unwrap();

@@ -23,7 +23,13 @@ impl Transport for RecordedHttp {
         assert!(origin.is_none(), "Fixture has no CORS context");
         self.requests.lock().unwrap().push(url.into());
         let bytes = self.responses.remove(url).ok_or(())?;
-        waypoint_net::read_asset_response(&mut Cursor::new(bytes), "GET", max).map_err(|_| ())
+        let mut response = waypoint_net::read_asset_response(&mut Cursor::new(bytes), "GET", max)
+            .map_err(|_| ())?;
+        // This fictional HTTP transport models a complete anonymous GET. The
+        // style resource type/Origin absence is separately observed by Chromium.
+        response.request_header_names =
+            Some(vec!["host".into(), "accept".into(), "user-agent".into()]);
+        Ok(response)
     }
 }
 impl Drop for RecordedHttp {
@@ -227,6 +233,11 @@ fn run_coordinator(discovery: bool, privacy: bool, custom_controls: bool) {
         ),
     ] {
         let status = if url.ends_with("/form") { 302 } else { 200 };
+        let extra = if discovery && mime == "text/css" {
+            format!("{extra}Vary: Accept-Encoding, Origin\r\n")
+        } else {
+            extra.to_owned()
+        };
         let raw=format!("HTTP/1.1 {status} Fixture\r\nContent-Type: {mime}\r\nContent-Length: {}\r\n{extra}\r\n{body}",body.len());
         responses.insert(url.to_owned(), raw.into_bytes());
     }
@@ -320,6 +331,27 @@ fn run_coordinator(discovery: bool, privacy: bool, custom_controls: bool) {
     }
     let frozen = capture.freeze().unwrap();
     assert!(dropped.load(Ordering::Acquire));
+    if discovery {
+        let manifest: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(frozen.snapshot.root.join("replay.json")).unwrap(),
+        )
+        .unwrap();
+        for suffix in ["/style.css", "/nested.css"] {
+            let style = manifest["resources"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|item| {
+                    item["url"]
+                        .as_str()
+                        .is_some_and(|url| url.ends_with(suffix))
+                })
+                .unwrap();
+            assert_eq!(style["request_origin_absent"], true);
+            assert_eq!(style["request_origin_absent_stylesheet"], true);
+            assert!(style.get("request_origin").is_none());
+        }
+    }
     let expected_requests = if privacy {
         8
     } else if discovery {
@@ -363,6 +395,15 @@ fn run_coordinator(discovery: bool, privacy: bool, custom_controls: bool) {
     let (mut driver, ready) = CdpDriver::launch_rehearsal(&python, config).unwrap();
     assert_eq!(ready.entry_url, "https://fixture.invalid/flow#application");
     driver.open(&ready.entry_url).unwrap();
+    if discovery {
+        let style = driver.cdp.call("Runtime.evaluate", serde_json::json!({
+            "expression":"({font:getComputedStyle(document.body).fontSize,label:getComputedStyle(document.querySelector('label')).display,input:getComputedStyle(document.querySelector('input')).marginLeft})",
+            "returnByValue":true})).unwrap();
+        assert_eq!(
+            style["result"]["value"],
+            serde_json::json!({"font":"18px","label":"block","input":"16px"})
+        );
+    }
     if custom_controls {
         use crate::captured_frame::{RecordedSectionOutcome, RecordedSectionStop};
         driver.cdp.call("Runtime.evaluate", serde_json::json!({"expression":"(()=>{const s=document.createElement('script');s.id='captcha-support-fixture';document.head.append(s);const h=document.createElement('input');h.required=true;h.setAttribute('aria-hidden','true');h.style.opacity='0';document.body.append(h);})()"})).unwrap();

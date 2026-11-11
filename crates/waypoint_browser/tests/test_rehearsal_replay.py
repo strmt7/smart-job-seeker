@@ -72,6 +72,57 @@ class ReplayTests(unittest.TestCase):
         self.fixture.resources[-1]['request_origin_absent']=True
         with self.assertRaisesRegex(replay.ReplayError,'unbound_replay_variant'):self.fixture.archive()
 
+    def test_absent_origin_stylesheet_replays_only_observed_anonymous_style_gets(self):
+        url='https://cdn.fixture.invalid/style.css'
+        self.fixture.add(url,'style.css',b'body{color:navy}',content_type='text/css')
+        item=self.fixture.resources[-1]
+        item.update(request_origin_absent=True,request_origin_absent_stylesheet=True)
+        request={'url':url,'method':'GET','headers':{'Accept':'text/css,*/*;q=0.1'}}
+        for vary in [None,'Accept-Encoding, Origin']:
+            item['headers']=[{'name':'Content-Type','value':'text/css'}]
+            if vary:item['headers'].append({'name':'Vary','value':vary})
+            archive=self.fixture.archive()
+            self.assertEqual(archive.response(request,'Stylesheet')[1],'recorded_response')
+            for kind in [None,'Document','Fetch','XHR','Script','Image','Other']:
+                with self.subTest(kind=kind,vary=vary):
+                    self.assertIsNone(archive.response(request,kind)[0])
+            # Even empty credentials or Origin are explicit, incompatible evidence.
+            variants=[{},None,[],{'Accept':'text/css','accept':'text/css'},{'bad name':'x'},
+                      {'Accept':7},{'Accept':'text/css\r\nOrigin: forged'}]
+            variants += [{**request['headers'],name:''} for name in ['Origin','Cookie','Authorization',
+                         'Proxy-Authorization','Access-Control-Request-Headers','Access-Control-Request-Method']]
+            for headers in variants:
+                with self.subTest(headers=headers,vary=vary):
+                    self.assertIsNone(archive.response({**request,'headers':headers},'Stylesheet')[0])
+            missing={k:v for k,v in request.items() if k!='headers'}
+            self.assertIsNone(archive.response(missing,'Stylesheet')[0])
+            for changes in [{'method':'POST'},{'method':'HEAD'},{'hasPostData':True},
+                            {'postData':''},{'postDataEntries':[]}]:
+                with self.subTest(changes=changes):
+                    self.assertIsNone(archive.response({**request,**changes},'Stylesheet')[0])
+
+    def test_absent_origin_stylesheet_manifest_cannot_broaden_scope(self):
+        url='https://cdn.fixture.invalid/style.css'
+        self.fixture.add(url,'style.css',b'body{}',content_type='text/css')
+        item=self.fixture.resources[-1]
+        original={**item,'request_origin_absent':True,'request_origin_absent_stylesheet':True}
+        invalid=[{'request_origin_absent_stylesheet':False},{'request_origin_absent_stylesheet':1},
+                 {'request_origin_absent':False},{'request_origin_absent':None},
+                 {'request_origin':'https://fixture.invalid'},{'method':'POST'},
+                 {'headers':[{'name':'Content-Type','value':'application/json'}]},
+                 {'headers':[{'name':'Content-Type','value':'text/css'},{'name':'Vary','value':'*'}]}]
+        for changes in invalid:
+            item.clear();item.update({**original,**changes})
+            with self.subTest(changes=changes),self.assertRaises(replay.ReplayError):self.fixture.archive()
+        item.clear();item.update(original);item.pop('request_origin_absent')
+        with self.assertRaises(replay.ReplayError):self.fixture.archive()
+        item.clear();item.update(original);item['status']=302
+        item['headers']=[{'name':'Location','value':'/next.css'},{'name':'Vary','value':'Origin'}]
+        archive=self.fixture.archive()
+        request={'url':url,'method':'GET','headers':{'Accept':'text/css'}}
+        self.assertEqual(archive.response(request,'Stylesheet')[1],'recorded_response')
+        self.assertIsNone(archive.response(request,'Document')[0])
+
     def test_preflight_absence_requires_manifest_proof_and_matching_bodyless_get(self):
         url='https://cdn.fixture.invalid/bootstrap'
         self.fixture.add(url,'bootstrap.bin',b'{}',content_type='application/json')
@@ -561,6 +612,28 @@ class DiscoveryTests(unittest.TestCase):
         self.frame(url=url,method='GET',resource_type='Script',headers={'Origin':'https://fixture.invalid'})
         self.assertEqual(self.report()['urls'],[])
         self.assertEqual(len(self.broker.conflicting_proposals),1)
+
+    def test_stylesheet_absence_requires_native_headers_and_conflicts_are_tombstoned(self):
+        self.broker.host({'id':1,'method':'Page.navigate','sessionId':'page','params':{'url':self.fixture.archive().entry_url}})
+        url='https://cdn.fixture.invalid/style.css'
+        self.frame(url=url,method='GET',resource_type='Stylesheet',headers={'Accept':'text/css'})
+        self.assertEqual(self.report()['asset_origin_absent_stylesheets'],[url])
+        self.assertNotIn('asset_origin_absent_stylesheets',self.broker.report())
+        for i,headers in enumerate([{}, {'Accept':'text/css','accept':'text/css'}, {'Accept':'text/css\n'}]):
+            other=url+str(i)
+            self.frame(url=other,method='GET',resource_type='Stylesheet',headers=headers)
+            self.assertNotIn(other,self.report()['asset_origin_absent_stylesheets'])
+        self.frame(url=url,method='GET',resource_type='Stylesheet',headers={'Origin':'https://fixture.invalid'})
+        report=self.report()
+        self.assertNotIn(url,report['urls'])
+        self.assertNotIn(url,report['assets'])
+        self.assertNotIn(url,report['asset_origin_absent_stylesheets'])
+        self.frame(url=url,method='GET',resource_type='Stylesheet',headers={'Accept':'text/css'})
+        self.assertNotIn(url,self.report()['urls'])
+        other='https://cdn.fixture.invalid/reused.css'
+        self.frame(url=other,method='GET',resource_type='Stylesheet',headers={'Accept':'text/css'})
+        self.frame(url=other,method='GET',resource_type='Script',headers={'Accept':'*/*'})
+        self.assertNotIn(other,self.report()['urls'])
 
     def test_origin_conflict_tombstones_share_the_fixed_proposal_budget(self):
         self.broker.host({'id':1,'method':'Page.navigate','sessionId':'page','params':{'url':self.fixture.archive().entry_url}})

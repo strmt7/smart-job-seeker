@@ -1,3 +1,12 @@
+## Observed stylesheet replay and retained Phone failure - 2026-11-11
+
+Native-observed absent-Origin stylesheets now retain their scoped request binding.
+A new real archive renders styling, and local12B vision recognizes Phone; its
+entry fails exact-value verification and remains unverified. Three fields pass;
+no section advances. Workspace1,312 passed/594 ignored, Clippy/build and focused
+native/rendered checks pass. This is scoped evidence, not general completion.
+[Evidence and next work](docs/g1/ABSENT_ORIGIN_STYLESHEETS_2026-11-11.md).
+
 ## Frozen form inputs and embedded snapshot repair - 2026-11-11
 
 [Corpus/scope evidence](docs/g1/FORM_CORPUS_SCOPE_2026-11-11.md) adds declared-input

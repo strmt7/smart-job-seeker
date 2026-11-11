@@ -204,6 +204,25 @@ class FetchPreloads(HTMLParser):
         if tag == 'head': self.in_head = False
 
 
+def origin_absent_stylesheet(request, resource_type):
+    """Require an explicit native GET/style observation and valid header map."""
+    headers = request.get('headers')
+    if (resource_type != 'Stylesheet' or request.get('method') != 'GET'
+            or request.get('hasPostData') or 'postData' in request or 'postDataEntries' in request
+            or not isinstance(headers, dict) or not 1 <= len(headers) <= 128):
+        return False
+    names = []
+    for key, value in headers.items():
+        if (not isinstance(key, str) or not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]{1,256}", key)
+                or not isinstance(value, str) or len(value) > 8192
+                or any(ord(c) < 32 or ord(c) == 127 for c in value)):
+            return False
+        names.append(key.lower())
+    return (len(names) == len(set(names)) and not set(names) & {
+        'origin', 'cookie', 'authorization', 'proxy-authorization',
+        'access-control-request-headers', 'access-control-request-method'})
+
+
 class Archive:
     def __init__(self, root, name, files, entry):
         self.root = Path(root)
@@ -240,7 +259,7 @@ class Archive:
         required = {'url', 'method', 'request_body_sha256', 'status', 'headers', 'body_file', 'body_sha256'}
         for item in value['resources']:
             if (not isinstance(item, dict) or not required.issubset(item)
-                    or set(item) - required - {'request_origin_absent', 'request_origin', 'request_preflight_absent'} or not isinstance(item['method'], str)
+                    or set(item) - required - {'request_origin_absent', 'request_origin', 'request_preflight_absent', 'request_origin_absent_stylesheet'} or not isinstance(item['method'], str)
                     or not re.fullmatch('[A-Z]{1,32}', item['method'])
                     or item['method'] in ('CONNECT', 'TRACE') or not sha(item['request_body_sha256'])
                     or type(item['status']) is not int or not 200 <= item['status'] <= 599 or item['status'] in (206,304)):
@@ -284,6 +303,14 @@ class Archive:
             vary = next((h['value'] for h in normalized if h['name'].lower() == 'vary'), None)
             fields = {v.strip().lower() for v in vary.split(',')} if vary is not None else set()
             bound_origin = item.get('request_origin_absent') is True
+            absent_style = item.get('request_origin_absent_stylesheet') is True
+            if 'request_origin_absent_stylesheet' in item and not absent_style:
+                raise ReplayError('unbound_replay_variant')
+            if absent_style and (not bound_origin or item['method'] != 'GET' or not (
+                    item['status'] in (301, 302, 303, 307, 308) or any(
+                        h['name'].lower() == 'content-type' and h['value'].split(';')[0].strip().lower() == 'text/css'
+                        for h in normalized))):
+                raise ReplayError('unbound_replay_variant')
             explicit_origin = item.get('request_origin')
             if 'request_origin' in item:
                 public_origin(explicit_origin)
@@ -296,9 +323,9 @@ class Archive:
                     or preflight_bound and item['method'] != 'GET'):
                 raise ReplayError('unbound_replay_variant')
             if (fields - {'accept-encoding', 'origin'} - preflight_fields or ('origin' in fields and not (bound_origin or explicit_origin))
-                    or bound_origin and 'origin' not in fields
+                    or bound_origin and 'origin' not in fields and not absent_style
                     or 'request_origin_absent' in item and not bound_origin
-                    or bound_origin and (item['method'] != 'GET' or not any(
+                    or bound_origin and (item['method'] != 'GET' or not absent_style and not any(
                         h['name'].lower() == 'content-type' and h['value'].split(';')[0].strip().lower() in ('text/html', 'application/xhtml+xml')
                         for h in normalized))):
                 raise ReplayError('unbound_replay_variant')
@@ -410,7 +437,9 @@ class Archive:
                 return None, 'origin_variant_not_recorded'
             if item.get('request_origin') and [value for key, value in headers.items() if key.lower() == 'origin'] != [item['request_origin']]:
                 return None, 'origin_variant_not_recorded'
-            if item.get('request_origin_absent') and (resource_type != 'Document' or 'origin' in names):
+            if item.get('request_origin_absent_stylesheet') and not origin_absent_stylesheet(request, resource_type):
+                return None, 'origin_variant_not_recorded'
+            if item.get('request_origin_absent') and not item.get('request_origin_absent_stylesheet') and (resource_type != 'Document' or 'origin' in names):
                 return None, 'origin_variant_not_recorded'
             # Fetch adds these forbidden headers to OPTIONS preflights, not GET.
             # Explicit or malformed evidence still refuses the recorded variant.
@@ -431,6 +460,7 @@ class Broker:
         self.discovery_session, self.discovery_frames = None, set()
         self.proposals, self.proposal_bytes, self.omitted_proposals, self.ineligible_requests = {}, 0, 0, 0
         self.asset_proposals, self.asset_request_origins, self.conflicting_proposals = {}, {}, set()
+        self.asset_origin_absent_stylesheets = set()
         self.next_id, self.pending, self.attaching, self.sessions, self.targets = INTERNAL_ID, {}, {}, {}, {}
         self.session_targets, self.session_parents = {}, {}
         self.retired_sessions, self.retired_replies = set(), set()
@@ -487,6 +517,7 @@ class Broker:
                 'child_documents':sorted(url for url, child in self.proposals.items() if child),
                 'assets':{url:sorted(kinds) for url,kinds in sorted(self.asset_proposals.items())},
                 'asset_request_origins':dict(sorted(self.asset_request_origins.items())),
+                'asset_origin_absent_stylesheets':sorted(self.asset_origin_absent_stylesheets),
                 'preload_projection_failures':self.archive.preload_projection_failures,
                 'omitted_requests':self.omitted_proposals,
                 'ineligible_requests':self.ineligible_requests, 'pending_commands':len(self.pending),
@@ -583,7 +614,7 @@ class Broker:
             return
         raise ReplayError('discovery_command_refused')
 
-    def propose(self, request, reason, child_document, asset_kind=None):
+    def propose(self, request, reason, child_document, asset_kind=None, resource_type=None):
         if reason!='response_not_recorded' or request.get('method')!='GET':
             self.ineligible_requests += 1
             return
@@ -609,13 +640,16 @@ class Broker:
             except ReplayError:
                 self.ineligible_requests += 1
                 return
-        if url in self.proposals and self.asset_request_origins.get(url) != origin:
+        absent_style = asset_kind == 'stylesheet' and origin_absent_stylesheet(request, resource_type)
+        if url in self.proposals and (self.asset_request_origins.get(url) != origin
+                or (url in self.asset_origin_absent_stylesheets) != absent_style):
             self.ineligible_requests += 1
             self.conflicting_proposals.add(url)
             self.proposal_bytes -= len(url.encode('utf-8'))
             del self.proposals[url]
             self.asset_proposals.pop(url, None)
             self.asset_request_origins.pop(url, None)
+            self.asset_origin_absent_stylesheets.discard(url)
             return
         if url in self.proposals:
             self.proposals[url] |= child_document
@@ -628,6 +662,7 @@ class Broker:
         self.proposal_bytes+=len(url.encode('utf-8'))
         if asset_kind is not None:self.asset_proposals[url]={asset_kind}
         if origin is not None:self.asset_request_origins[url]=origin
+        if absent_style:self.asset_origin_absent_stylesheets.add(url)
 
     def bind(self, session, kind, original, paused, target, parent=None):
         if not isinstance(session, str) or not session or len(session) > 512 or any(ord(c)<32 for c in session) or session in self.sessions or session in self.retired_sessions:
@@ -790,7 +825,7 @@ class Broker:
                                   'Fetch':'json','XHR':'json','Manifest':'manifest'}.get(params.get('resourceType')) if owned_scope else None
                     if owned_scope and params.get('resourceType') == 'Other' and request.get('url') in self.archive.fetch_preloads:
                         asset_kind = 'json'
-                    self.propose(request, reason, child_document, asset_kind)
+                    self.propose(request, reason, child_document, asset_kind, params.get('resourceType'))
                 self.call('Fetch.failRequest', {'requestId': paused_id, 'errorReason': 'BlockedByClient'}, session, ('reply', session, 'blocked', reason, False))
             else:
                 self.call('Fetch.fulfillRequest', {'requestId': paused_id, **result}, session, ('reply', session, 'served', request.get('method') not in ('GET', 'HEAD'), False))

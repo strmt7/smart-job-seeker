@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "reviewed_on": "2026-11-11",
-  "reviewed_source": "1b3f7a10e0f533b39dc2df6f3c1765afe6c11f6a",
+  "reviewed_source": "fc5a4a436d2a8c89e64261449d7b677d296f0bec",
   "goal": "Continue the existing active Smart Jobseeker product-development goal",
   "plan": "docs/COMPLETION_PLAN_2026-11-11.md",
   "assessment": "docs/REPO_STATE_REVIEW_2026-11-11.md",
@@ -76,7 +76,8 @@
       "acceptance": [
         "Private source/model/configuration-bound corpus manifest",
         "Explicit correctness, abstention, completion and resource denominators",
-        "Held-out partition fixed before tuning; repeats for model promotion"
+        "Held-out partition fixed before tuning; repeats for model promotion",
+        "Independent expected-value, repeated-control/section and whole-workflow truth; answer keys never enter model prompts"
       ],
       "evidence": [
         "docs/FORM_EVALUATION.md",
@@ -84,22 +85,25 @@
       ],
       "execution_batch": "B",
       "steps": [
-        "Extend existing qualification manifests with input/source/model/prompt/runtime identity and expected answerability/outcomes.",
+        "Extend existing case binding with independent expected answer values, stable repeated-control/section identities and final-review truth; retain model/input/runtime/permission identity and keep the answer key outside inference. Version the schema/annotations; preserve prior manifests and reports unchanged.",
         "Collect the initial varied fictional and permitted saved-real cases with private provenance; keep failures/exclusions.",
         "Freeze employer/layout-family held-out partition before tuning.",
         "Report field, workflow, abstention, error, elapsed and resource denominators; repeat model-sensitive promotion candidates."
       ],
-      "next_action": "Collect independently annotated held-out employer/layout families and permission receipts with this existing protocol; resolve the known CSS/no-CORS rendering gap as needed for usable saved-real cases. Do not claim the two-case development seed is representative.",
+      "next_action": "Implement independently annotated expected-value/control/section/workflow truth in a versioned extension of the existing evaluator, then freeze a small varied held-out tranche. Keep two current development cases / zero held-out and the new unclassified Phone failure distinct.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "completed_scopes": [
         "Bounded corpus identity/partition/input protocol and explicit field gate; two development cases, no held-out coverage.",
         "Actual compiled local12B-model before/after evidence, deterministic final accounting and verified owned cleanup."
+      ],
+      "start_requirements": [
+        "Existing versioned input-binding/evaluation protocol is implemented; reviewed in tools/form_corpus.py and docs/FORM_EVALUATION.md."
       ]
     },
     {
       "id": "R03",
       "priority": "P0",
-      "status": "planned",
+      "status": "in_progress",
       "depends_on": [
         "R02"
       ],
@@ -115,19 +119,27 @@
         "Earlier and held-out saved cases retain honest review outcomes"
       ],
       "evidence": [
-        "docs/g1/FORM_CORPUS_SCOPE_2026-11-11.md"
+        "docs/g1/FORM_CORPUS_SCOPE_2026-11-11.md",
+        "docs/REPO_STATE_REVIEW_2026-11-11.md",
+        "docs/g1/ABSENT_ORIGIN_STYLESHEETS_2026-11-11.md"
       ],
       "execution_batch": "B",
       "steps": [
-        "Reproduce missing Phone-label crop and incomplete saved-page rendering with native network/DOM/image evidence.",
-        "Repair generic contextual capture and only permission-eligible resource variants; preserve document/node identity.",
-        "Exercise distant/repeated/obscured labels, frames and resource failures on prior and held-out cases.",
-        "Inspect actual screenshots; retain manual-review status for unrenderable or server-dependent steps."
+        "Preserve current source and native evidence; test absent-Origin Stylesheet request/header proof, conflicts, credentials/body, wrong types/MIME/Vary and redirect scope.",
+        "Qualify new binding using the existing native fictional capture/replay harness; retain offline isolation and incompatible-request refusals.",
+        "Collect a new permitted read-only source copy and inspect actual rendering/native labels without modifying historical manifests.",
+        "Only if necessary, repair generic bounded label/control context; qualify earlier and untouched cases, then coherent integration and ownership checks."
       ],
-      "next_action": "Repair permitted CSS/no-CORS request-context proof and faithful saved rendering; keep Greenhouse Phone/crop and unavailable saved sources explicit, and qualify untouched held-out cases.",
+      "next_action": "Qualify untouched eligible rendering/label cases using R02 truth; keep missing images, unsupported/server-dependent paths and the failed Phone entry explicit. Do not repeat the known model case without a relevant change.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "completed_scopes": [
-        "Embedded selector/section namespace binding preserves only current native inspection evidence; real-model three-step development case passed its field gate."
+        "Observed absent-Origin GET Stylesheet binding and strict capture/replay proof; malformed/conflicting/cross-type cases refused.",
+        "Replay54, browser-unit98/12 ignored, native discovery1; workspace1312/594 ignored, Clippy/fmt/build passed.",
+        "Fresh compiled public capture16 resources/two CSS files; inspected styled offline rendering. Local12B vision now recognizes Phone; entry fails native exact-value validation, three fields verify, zero advances."
+      ],
+      "start_requirements": [
+        "R02 input-binding protocol exists; full representative/held-out collection is not required to begin this rendering repair.",
+        "Retained native request evidence distinguishes absent-Origin Stylesheet GET from CORS Origin; source permission and robots checks still gate every external read."
       ]
     },
     {
@@ -152,13 +164,18 @@
       "evidence": [],
       "execution_batch": "C",
       "steps": [
+        "Preserve a generic bounded post-entry failure observation and screenshot with provenance; qualify input mutation/formatting and prerequisite-control behavior on contained varied fixtures before using that evidence for planner repair.",
         "Connect candidate-supported facts and native/visual observations to a small typed action planner.",
         "Implement bounded choose/enter/attach/section/repeated-history decisions with independent current-state validation.",
         "After every action, read back native state and perform local-model visual review; detect stale state and no progress.",
         "Measure the local model on the frozen corpus; provide actionable review records rather than invented answers."
       ],
-      "next_action": "Connect candidate-supported facts and native/visual observations to a small typed action planner.",
-      "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package."
+      "next_action": "Retain failed post-entry value/image evidence generically before diagnosing masked/dependent controls; then connect candidate-supported facts and typed model planning with independent validation. Do not assume Phone normalization or override exact-value checks.",
+      "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
+      "start_requirements": [
+        "At least a usable frozen tranche with independent answer/control/workflow truth.",
+        "Native/visual observations and proposed typed actions are available in contained fictional/offline execution; no live employer writes."
+      ]
     },
     {
       "id": "R05",
@@ -188,7 +205,10 @@
         "Keep live candidate interaction disabled; no finite test result becomes a zero-risk universal claim."
       ],
       "next_action": "Retain zero-capability offline/fictional candidate execution and live read-only boundary.",
-      "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package."
+      "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
+      "start_requirements": [
+        "Applies before each new action channel; do not wait for R04 to complete before enforcing containment."
+      ]
     },
     {
       "id": "R06",
@@ -334,7 +354,7 @@
         "Qualify inbox correlation and prepared email packages without application sending.",
         "Exercise final dispatch/confirmation/idempotency mechanisms only on fictional loopback forms/local mail server; retain explicit user-grant design."
       ],
-      "next_action": "Complete per-attempt manifest for original ad, final PDFs, answers, screenshots, hashes and honest outcomes.",
+      "next_action": "Complete immutable per-attempt evidence including failed-entry screenshots/readback and explicit unavailable observations; preserve original ads, exact attachments, answers and uncertain outcomes.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package."
     },
     {
@@ -397,12 +417,15 @@
         "Inspect screenshots under drag bounds, narrow/wide sizes, real zoom, long text and available DPI/accessibility conditions."
       ],
       "next_action": "Build complete screen/state/setting behavior matrix including setup, license/about, errors, recovery and manual review.",
-      "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package."
+      "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
+      "start_requirements": [
+        "Apply shared style and interaction checks during every changed user flow; full interface acceptance remains a separate completion gate."
+      ]
     },
     {
       "id": "R13",
       "priority": "P1",
-      "status": "planned",
+      "status": "in_progress",
       "depends_on": [
         "R01",
         "R02"
@@ -426,8 +449,11 @@
         "Inventory disposable owned artifacts with dry-run retention; preserve referenced failures and unrelated resources.",
         "Select checks by actual changes; verify exit, host headroom and absence of unexpected persistent development registrations."
       ],
-      "next_action": "Extract changed protocol/ownership mechanisms from large modules while retaining compatibility and relevant regressions.",
-      "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package."
+      "next_action": "Maintain short current pointers, preserve historical evidence separately, reuse verified immutable inputs and inspect dry-run artifact retention before deleting anything. Extract production mechanisms only along changed code paths.",
+      "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
+      "start_requirements": [
+        "Continuous ownership, bounded context and change-directed validation obligations are already applicable."
+      ]
     },
     {
       "id": "R14",
@@ -472,10 +498,10 @@
   ],
   "original_reviewed_source": "4acb9a955bcb961ad7a27cb9538e77bb0e03a547",
   "goal_harness": {
-    "binding": "Existing active Smart Jobseeker goal; verified active on 2026-11-11",
+    "binding": "Existing active Smart Jobseeker goal; reverified active on 2026-11-11; objective unchanged.",
     "entry_point": "AGENTS.md",
     "queue": "docs/ACTIVE_DEVELOPMENT_PLAN.json",
-    "selection": "Read next_task and verify its prerequisites. R02/R03 is now the independent product priority after scoped control-plane repair; preserve R01 residual native/cleanup work and all other unmet gates. Resume live owned handles rather than restarting.",
+    "selection": "Continue R02 independent expected-value/control/workflow truth and frozen held-out collection using existing evaluation tools. Retain the locally qualified R03 stylesheet slice and its failed Phone entry; next R04 work needs generic failed-entry evidence and masked/dependent-control qualification. Do not repeat unchanged model/settings checks or treat controller completion as workflow success.",
     "completion": "A package completion does not complete the product goal. Keep the overall goal active until all required product work is achieved.",
     "scheduling": "No new agents, automation, service or background scheduler created by this plan."
   },
@@ -484,7 +510,9 @@
     "development_host_ram_reserve_bytes": 3221225472,
     "validation": "Focused changed-mechanism regressions, then one coherent workspace/build pass; reuse only applicable identity-bound evidence.",
     "checkpoint": "Record source, model/config/input identities, result denominator, next failure and owned-resource teardown; do not overwrite historical reports.",
-    "publication": "Coherent tested main checkpoints, infrequent pushes; user alone decides release."
+    "publication": "Coherent tested main checkpoints, infrequent pushes; user alone decides release.",
+    "progress": "Choose one concrete acceptance slice, implement it, retain failures and validate changed behavior. Update current evidence and next action once per meaningful checkpoint; do not regenerate the roadmap each turn.",
+    "dependency_start": "Use start_requirements for starting work and depends_on for completing a package; document unmet evidence rather than silently weakening it."
   },
   "prior_planning_checkpoint": {
     "remote_tracking_head": "68b3e8910ad82c5dc76c6c53a6439b9fbbe59dd6",
@@ -496,9 +524,50 @@
     "build_state": "Last focused test compile failed; three stale start callers remain in current source. No current full-workspace pass claimed."
   },
   "working_tree_checkpoint": {
+    "baseline_head": "fc5a4a436d2a8c89e64261449d7b677d296f0bec",
+    "validated_changes": "Absent-Origin stylesheet binding with native/compiled/read-only/offline model evidence; remaining Phone entry fails and is unverified.",
+    "validated_source_sha256": {
+      "crates/waypoint_browser/src/capture_discovery.rs": "65d9c2820864510ecb91833bfec22670eaab32b665bab6842b62dfcd1a6e7d7e",
+      "crates/waypoint_browser/src/capture_session.rs": "385d3104724925220a60cdaa1af65a84120a39e40b68374942008dfb6fa5d834",
+      "crates/waypoint_browser/src/rehearsal_capture.rs": "52103fab8b10d0a8fda030d592fa05ee1dbb8de230e7e1635b8bcae623d37d39",
+      "crates/waypoint_browser/src/rehearsal_replay.py": "53c913e7e980ba2c1e8be35829977f54c123e703229a61aedad62b8093270a93",
+      "crates/waypoint_browser/src/capture_session_qualification.rs": "e39a585bb312c59121bfa95260df629a9b8c3f78f456bec625c4000edb4879de",
+      "crates/waypoint_browser/tests/test_rehearsal_replay.py": "340196b78c67d36b273839c4dc1c0bbbab336b3ed9618a23ff84d8716059286c"
+    },
+    "app_sha256": "f24e10758f0badc63a6c6453706df8ef3db44fa8d5042576359d08526fe91488",
+    "build_state": "Managed workspace1312 passed/594 ignored, Clippy/fmt/build pass; replay54, native1, source-copy16 resources, model3 verified fields + unverified Phone. No full-workflow or held-out claim.",
+    "evidence": "docs/g1/ABSENT_ORIGIN_STYLESHEETS_2026-11-11.md"
+  },
+  "dependency_semantics": "depends_on are completion prerequisites; start_requirements admit bounded implementation before the whole prerequisite package completes. Containment, UI consistency and resource ownership apply continuously.",
+  "last_validated_checkpoint": {
     "baseline_head": "1b3f7a10e0f533b39dc2df6f3c1765afe6c11f6a",
     "validated_changes": "Case-bound corpus accounting and embedded selector/section namespace freshness repair.",
     "build_state": "Local workspace1308 passed/594 ignored, agent tools78 passed, Clippy/fmt/build passed. Model development run3/3 fields and2 section advances; final metadata/test-only refinements have separate scope.",
     "evidence": "docs/g1/FORM_CORPUS_SCOPE_2026-11-11.md"
-  }
+  },
+  "current_hosted_checks": {
+    "head": "fc5a4a436d2a8c89e64261449d7b677d296f0bec",
+    "all_completed_successfully": true,
+    "run_ids": {
+      "ci": 43031531235,
+      "coverage": 43031531157,
+      "codeql": 43031529824
+    },
+    "private_receipts": "target/repo-overview/"
+  },
+  "immediate_slices": [
+    {
+      "task": "R02",
+      "contract": "docs/COMPLETION_PLAN_2026-11-11.md#immediate-execution-slices",
+      "deliverable": "Independent value/control/workflow oracle and a small frozen varied held-out tranche; preserve current development observations."
+    },
+    {
+      "task": "R04",
+      "deliverable": "Generic failed-entry evidence and typed candidate-aware planning under R05 containment; qualify masked/dependent controls without weakening verification."
+    },
+    {
+      "task": "R03",
+      "deliverable": "Continue unseen eligible rendering and label-context qualification as corpus grows; stylesheet implementation has scoped local evidence."
+    }
+  ]
 }

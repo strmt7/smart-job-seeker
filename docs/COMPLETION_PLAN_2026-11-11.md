@@ -6,9 +6,15 @@ model mechanisms, but broad real-world application coverage and clean-host
 installation are not established. Older measured checkpoints retain their
 original source and fixture scopes.
 
-Current baseline: `aaf02d03b7e80c18cce600ff2d0ceca2f9d332c0`, followed by the
-[local owned form-inspection continuation](g1/DEFERRED_FORM_INSPECTION_2026-11-11.md). The original audit snapshot remains
-`4acb9a955bcb961ad7a27cb9538e77bb0e03a547`.
+Current committed baseline: `fc5a4a436d2a8c89e64261449d7b677d296f0bec`, with
+successful hosted CI, coverage and CodeQL. A subsequent locally validated
+[stylesheet continuation](g1/ABSENT_ORIGIN_STYLESHEETS_2026-11-11.md) restores
+eligible absent-Origin CSS capture/replay. Workspace1,312 passed/594 ignored,
+Clippy/build/format, focused/native and compiled read-only/offline model checks
+passed within their recorded scopes. Phone target review now matches; its entry
+fails native exact-value validation and remains unverified. No section advanced.
+This continuation has no newer hosted result yet. The original audit snapshot
+remains `4acb9a955bcb961ad7a27cb9538e77bb0e03a547`.
 Read the [repository assessment](REPO_STATE_REVIEW_2026-11-11.md) alongside this
 plan. The [active queue](ACTIVE_DEVELOPMENT_PLAN.json) identifies work packages,
 dependencies and existing harnesses for continuation of the **same active goal**.
@@ -22,9 +28,11 @@ historical statuses or authorize another goal, delegation, release or submission
    have passing local evidence. Native-observation/cleanup latency and uncollected-
    session expiry remain open. Continue those qualifications alongside R02/R03;
    do not describe the bounded fixtures as universal handler responsiveness.
-2. **R02/R03: representative evaluation and faithful saved rendering.** Preserve
-   current failures, establish held-out cases, and resolve permitted rendering
-   and label-context gaps. Do not bypass disallowed sources or weaken matching.
+2. **R02, then R04 in useful tranches:** retain the scoped R03 stylesheet
+   repair, establish independent answer/control/workflow truth and a small usable
+   varied held-out tranche, then extend generic planning. Capture failed-entry
+   evidence and investigate dependent/masked controls without weakening validation.
+   Preserve failures; do not bypass disallowed sources or weaken matching.
 3. **R04/R05: generic model-driven completion and data-isolation evidence.**
    Connect existing native capabilities to a bounded planner and verify it with
    the local model. Keep live employer interactions read-only and all application
@@ -43,7 +51,7 @@ work package complete when all its stated acceptance criteria are demonstrated.
 
 | Batch | Work packages | Concrete deliverable | Exit decision |
 | --- | --- | --- | --- |
-| A - stabilize current source | R01 | Compiling, cancellable fit task; Stop UI; bounded runtime reads and shutdown; owner-loop latency/overload evidence | Green focused tests, Clippy and coherent workspace/build checks; no stale worker/socket; model/input fences preserved |
+| A - retain control-plane repairs | R01 | Keep the completed socket/inventory/fit/form-opening slices; qualify remaining native observation and abandoned-session lifecycle | Responsive controls and actual worker/browser exit for the documented admitted workload; no all-handler claim |
 | B - establish useful evidence | R02, R03 | Versioned private development/held-out corpus; faithful permitted saved pages; label/context regression repaired | Every case has an expected result and source/model identity; no excluded/inaccessible case counted as completion |
 | C - complete difficult forms | R04, R05 | Bounded generic observe/plan/validate/act/reobserve loop, custom controls, repeated histories, sections, uploads and review fallback | Local model itself meets declared supported-corpus gates; independent visual/native agreement and containment checks |
 | D - complete the candidate journey | R06, R07, R08 | Verified PDF attachments; broad free discovery and reachable routes; calibrated fit and near-duplicate exclusion | Diverse held-out documents/query/job pairs; no fabricated facts, unknown constraints or duplicate applications |
@@ -56,67 +64,104 @@ batch F. UI work accompanies each changed workflow; batch F closes the complete
 screen/state matrix. R02 is a minimal usable corpus first, expanded alongside
 actual failures; do not spend multiple cycles building a new test framework.
 
-### Fit lifecycle slice (implemented, scoped evidence)
+### Immediate execution slices
 
-The six steps below describe the completed fit-specific slice and its retained
-checks; they do not mark R01 complete. Form-opening admission also has a subsequent owned-worker checkpoint.
-Native-observation responsiveness, cleanup/idle expiry and the broader handler
-inventory remain open. Continue R02/R03 as the next independent priority; retain
-these R01 residuals rather than rerunning completed fit transport/model fixtures.
+These slices are the immediate instructions for the active goal, not another
+roadmap to regenerate. R01/R13 resource and responsiveness obligations apply
+during every slice. All acceptance targets below are prospective.
 
-1. Adapt the three old `start(FitModel, ...)` test callers to the asynchronous
-   runtime-selection contract. Preserve stale-digest/context refusal through a
-   controlled runtime-change test rather than deleting the old assertion.
-2. Make resident-context observation honor cancellation and a total deadline;
-   retain the exact model/digest/context fence before and after inference.
-   Explicitly handle nested worker results during shutdown without holding the
-   global task mutex while joining.
-3. Add Stop to manual fit assessment using shared button/progress behavior.
-   Display checking-model, assessing, stopping and stopped truthfully; stopped
-   work must not become a score or overwrite a saved assessment. Preserve
-   result collection and input-digest revalidation after restart/polling.
-4. Use a fictional local runtime holding/trickling `/api/ps` and `/api/tags`.
-   Show start returns without blocking settings/status/stop; measure admitted
-   control latency against the below target. Cover cancellation before/during
-   model checks/generation, changed identities, saturation, completed-result
-   collection and server shutdown. Isolate control storage; load no real model
-   for this transport fixture. Client cancellation is not proof of cancellation
-   or unloading inside an unrelated shared Ollama service.
-5. Run relevant fit/inference/transport/client regressions, then the canonical
-   managed workspace tests, warning-denied Clippy, format and build checks once
-   for the coherent change. Inspect the changed client states headlessly at
-   relevant widths. Save exact identity/results and verify worker/browser exit.
-6. Audit the remaining owner-thread native observations with a bounded measured
-   inventory. R01 closes only for its documented admitted workload; explicitly
-   queue any newly observed blocking path rather than claiming universal latency.
-   Proceed to R02/R03 promptly after this coherent repair checkpoint.
+**Slice 1 - R03 stylesheet repair (locally qualified, scoped).**
+
+The linked stylesheet checkpoint records this slice's passing results and new
+Phone failure. Retain these steps as its acceptance contract; do not repeat the
+unchanged known case while independent truth and generic control work are pending.
+
+1. Preserve the four current source edits and their before-state hashes. Existing
+   51 Python replay and 41 Rust capture-session passes are baseline regressions,
+   not targeted proof of the new behavior.
+2. Test the two separate proofs: observed native bodyless GET Stylesheet request
+   with absent Origin, and complete anonymous HTTP request-header evidence.
+   Reject missing/malformed/duplicate headers, auth/cookies, POST/body, conflicting
+   Origin variants, wrong resource types, non-CSS responses, unsupported Vary and
+   unproven redirect context. The observed paused request has no Sec-Fetch-Mode
+   header; never claim it supplied that proof. Do not extend this slice to scripts,
+   images, arbitrary APIs or positive-Origin privilege.
+3. Use the existing capture/replay qualifier for a fictional stylesheet fixture,
+   then a new permission/robots-eligible read-only source capture. Retain denied
+   sources; do not alter old manifests or fabricate request metadata. Verify replay
+   stays offline and incompatible requests still fail closed.
+4. Inspect before/after rendered screenshots and native labels on the saved page.
+   If faithful CSS does not resolve context, qualify bounded native label/control
+   capture across several layouts; do not guess Phone or hardcode an employer.
+5. Run focused regressions, then the canonical workspace tests, Clippy, format and
+   build once for the coherent source change. Record exact identities, complete
+   process exit and available RAM. R03 remains open for unseen/held-out coverage.
+
+**Slice 2 - make R02 a useful evaluation oracle.**
+
+1. Extend the existing versioned corpus/evaluator with independent expected-value,
+   stable repeated-control/section identity and final-review truth. Current
+   label/kind/visually-matched accounting does not supply this. Keep expected
+   answers outside model inputs; label an initial snapshot as partial truth.
+   Version the schema/annotations and retain old manifests and reports unchanged;
+   an existing outcome must not acquire stronger meaning after an evaluator edit.
+2. First target a usable tranche of six fictional cases across at least three
+   interaction families and three permitted usable saved cases from at least
+   three families. This is an uncollected target, not a new count of current cases.
+   Freeze at least one third as held out by employer/layout family before tuning.
+   If sources are unavailable, retain the shortfall and continue eligible work;
+   never replace real-source breadth with more copies of one fixture.
+3. Include wrong/unknown answers, repeated histories, conditional sections,
+   choices, files, validation, changed DOM and no-progress/review outcomes. Keep
+   field correctness, abstention, reachability and whole-workflow success separate.
+4. Expand toward the larger R02 coverage target alongside actual planner work.
+   Do not postpone implementation until every planned case has been collected.
+
+**Slice 3 - connect R04 generic planning with R05 containment.**
+
+1. Keep the exact fictional smoke fixture. Connect existing candidate facts,
+   source-backed answers, model mapping and native/visual observations through a
+   typed bounded action loop, rather than adding employer-specific field tables.
+2. Exercise the local model itself on varied profiles and untouched forms. Observe,
+   propose, independently validate, act, reobserve, and either advance or produce
+   a precise manual-review record. Repeated labels and sensitive unknowns must not
+   be filled by order or inference. Verify attachment hashes and all final PDFs.
+3. Cover custom choices, repeating work/education, conditional controls, nested
+   frames, validation recovery and section changes. Bound steps/tokens/images,
+   repairs and no-progress retries. Reject stale evidence and arbitrary model code.
+4. Before adding any action channel, qualify its local fictional canary/transport
+   and OS-containment boundary. Live employer forms remain read-only. Keep final
+   dispatch tests in loopback/local-mail fixtures with one-use explicit approvals.
+5. Promote only against the frozen supported-scope gates, with at least three
+   repeats for a model-sensitive promotion candidate and regression checks on
+   earlier successes. Development repairs never become held-out evidence.
+
+### Dependency and scheduling semantics
+
+Queue `depends_on` lists completion dependencies, not a ban on useful independent
+preparation. `start_requirements` records narrower evidence needed to begin the
+next slice. For example, the implemented R02 input-binding protocol admits R03
+rendering work while R02's held-out corpus is still incomplete; R03's completion
+still requires representative evaluation. R05 containment applies before every
+action, R12 UI quality accompanies changed flows, and R13 ownership/efficiency
+applies continuously. No coarse dependency may justify leaving these unattended.
 
 ## Current milestone
 
-The [corpus/scope checkpoint](g1/FORM_CORPUS_SCOPE_2026-11-11.md) starts R02 input
-binding/denominators and repairs a native embedded-frame freshness defect. One
-local-model development case now verifies three fields and advances two sections.
-The corpus remains two development cases / zero held-out cases. Continue new
-held-out annotation and permitted CSS/request-context repair; do not reconstruct
-this roadmap or treat this scoped improvement as general application completion.
+The [stylesheet checkpoint](g1/ABSENT_ORIGIN_STYLESHEETS_2026-11-11.md) restores
+two CSS files in a new real archive and confirms native replay/computed styling.
+Actual local12B vision now recognizes the Phone target, but exact-value entry
+fails and the run stops after three verified fields with zero section advances.
+The failed post-entry value/image is not retained by this error path yet; fix
+that generic observation gap before diagnosing normalization or dependencies.
 
-Three real public page copies save, with incomplete rendering explicitly retained.
-Validated public Origin/GET-variant binding now lets one copy render its styled
-application screen. Its remaining API path is robots-disallowed; keep that case
-under review rather than sending an alternate read protocol. A different saved
-real form now passes three fictional fields through native readback and local
-12B-model vision, then stops before a field whose label is missing from the crop.
-Qualify unproven no-CORS asset context and improve generic rendering/label
-context without widening application-write access or accepting missing visual
-evidence. Repeat on unseen forms before claiming broader completion.
-[Current evidence](g1/INDEPENDENT_FIELD_REVIEW_2026-11-11.md).
-
-Connect saved, encrypted model preferences to automatic admission of a bounded
-private runtime for saved-copy rehearsal. Verify the compiled route, visual field
-evidence, cancellation, model/cache identity and teardown. Preserve pre-existing
-model services and report ambiguous cleanup. The associated evidence note records
-the final measured outcome separately. This milestone passed its bounded
-fictional qualification; it is not evidence of general employer-site completion.
+The [corpus/scope checkpoint](g1/FORM_CORPUS_SCOPE_2026-11-11.md) remains two
+development cases / zero held-out cases, with no independent value-level or
+whole-workflow oracle. Continue R02 truth/partition work and useful R04 planner
+implementation. Keep missing images, unsupported/server-dependent sources,
+R01 residual lifecycle work and all remaining product gates explicit. Existing
+private-runtime admission and fictional section successes retain their original
+scopes; they do not establish general application completion.
 
 ## Coverage domains
 
@@ -180,9 +225,11 @@ measurement. No request may monopolize the workspace owner for its socket timeou
 ### R02 - Make evaluation representative and source-bound
 
 Build on the existing qualification tools rather than another competing runner.
-Create a private corpus manifest recording source/fixture identity, permissions,
-expected outcomes, answerability, model/prompt/runtime digests, hardware and
-resource limits. Initial planning target: 48 fictional scenarios across at least
+Extend the existing private corpus manifest with source/fixture permission
+receipts, independent expected answer values, stable repeated-control/section
+identities and final-review truth, alongside its input/model/runtime/resource
+bindings. Keep expected values out of inference prompts. Larger planning target:
+48 fictional scenarios across at least
 eight interaction/layout families, plus 12 permitted saved real pages across at
 least four ATS families and six employers. These are **uncollected targets**;
 inaccessible pages remain documented exclusions, not usable-form successes.
@@ -202,6 +249,10 @@ fields completed and at least 80% of eligible workflows reaching final review.
 Unknown answers and unsupported sites need accurate manual-review outcomes and
 separate denominators. These targets may motivate reducing a declared support
 claim; they must not be lowered silently or turned into universal guarantees.
+The current strict per-case field gate still requires every declared answerable
+field to verify. Aggregate promotion targets do not relax that gate or turn a
+partial case into a completed workflow. Independent value-level truth must be
+added before claiming semantic answer accuracy from the aggregate.
 
 ### R03 - Repair generic captured-page rendering and context
 
@@ -382,7 +433,9 @@ release, and leave publication and real application authorization to the user.
 
 ## Continuation protocol for the active goal
 
-The queue is a continuation input read through `AGENTS.md`, not a new background
+The existing product goal was verified active during this refresh. Its objective
+and status are unchanged. The queue is a continuation input read through
+`AGENTS.md`, not a new background
 service or an assertion that every package is running. The existing goal harness
 selects one concrete criterion and invokes the relevant existing qualification
 tool. This plan does not authorize additional agents.
@@ -403,7 +456,7 @@ resume running handles. For plan-only changes, validate JSON, dependency
 order, referenced paths and links; do not repeat unchanged model/browser suites.
 
 At each goal turn: verify source/worktree and owned resources, read the queue,
-follow the queue's `next_task` when its prerequisites are ready, and inspect
+follow the queue's `next_task` when its start requirements are ready, and inspect
 only the evidence needed for
 its next concrete acceptance criterion. Update its status and evidence after a
 meaningful checkpoint. Record the next failing case, relevant identities and

@@ -7,7 +7,7 @@
 //! consumes the coordinator and its transport; the archive has no live fallback.
 //! OS DNS cancellation still requires the caller's outer process lifetime.
 use crate::capture_discovery::AssetKind;
-use crate::rehearsal_capture::{write_new, Snapshot, SnapshotBuilder};
+use crate::rehearsal_capture::{write_new, Snapshot, SnapshotBuilder, SnapshotScope};
 use serde::Serialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -140,6 +140,8 @@ pub struct AssetOrigin {
     kinds: BTreeSet<AssetKind>,
     #[serde(skip)]
     request_origin: Option<waypoint_net::PublicRequestOrigin>,
+    #[serde(skip)]
+    origin_absent_stylesheet: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -157,6 +159,7 @@ struct ResourceScope<'a> {
     origin: &'a str,
     assets: Option<&'a BTreeSet<AssetKind>>,
     request_origin: Option<&'a waypoint_net::PublicRequestOrigin>,
+    request_scope: SnapshotScope,
 }
 #[derive(Clone, Serialize)]
 pub struct RobotsRecord {
@@ -304,6 +307,7 @@ impl CaptureSession {
             summary.stopped = DiscoveryStop::ReviewRequired;
         } else {
             let mut attempted = BTreeMap::new();
+            let mut attempted_absent_stylesheets = BTreeSet::new();
             let mut attempted_kinds: BTreeMap<String, BTreeSet<AssetKind>> = BTreeMap::new();
             let mut review_seen = false;
             for round in 0..rounds {
@@ -399,6 +403,7 @@ impl CaptureSession {
                             kinds,
                             round + 1,
                             probe.asset_request_origins.get(url).map(String::as_str),
+                            probe.asset_origin_absent_stylesheets.contains(url),
                         )
                     });
                     if let Some(previous) = attempted.get(url) {
@@ -422,16 +427,30 @@ impl CaptureSession {
                                     .get(url)
                                     .is_none_or(|previous| !kinds.is_subset(previous))
                             });
-                        if !new_binding && !new_kind {
+                        let new_absence = *previous
+                            == CaptureOutcome::NeedsReview {
+                                reason: CaptureGap::RepresentationUnsupported,
+                            }
+                            && probe.asset_origin_absent_stylesheets.contains(url)
+                            && !attempted_absent_stylesheets.contains(url);
+                        if !new_binding && !new_kind && !new_absence {
                             continue;
                         }
                     }
                     let before = self.recorded.len();
+                    if asset
+                        .as_ref()
+                        .is_some_and(|scope| scope.origin_absent_stylesheet)
+                    {
+                        attempted_absent_stylesheets.insert(url.clone());
+                    }
                     let outcome = if let Some(scope) = embedded {
                         self.capture_embedded(url, scope)
                     } else if let Some(scope) = asset {
                         self.capture_asset(url, scope)
-                    } else if probe.asset_request_origins.contains_key(url) {
+                    } else if probe.asset_request_origins.contains_key(url)
+                        || probe.asset_origin_absent_stylesheets.contains(url)
+                    {
                         CaptureOutcome::NeedsReview {
                             reason: CaptureGap::OriginNotDeclared,
                         }
@@ -519,6 +538,7 @@ impl CaptureSession {
                 origin: &scope.origin,
                 assets: None,
                 request_origin: None,
+                request_scope: SnapshotScope::Ordinary,
             }),
         );
         if matches!(outcome, CaptureOutcome::Recorded { .. }) {
@@ -536,7 +556,15 @@ impl CaptureSession {
         kinds: &BTreeSet<AssetKind>,
         round: u8,
         request_origin: Option<&str>,
+        origin_absent_stylesheet: bool,
     ) -> Option<AssetOrigin> {
+        if origin_absent_stylesheet
+            && (request_origin.is_some()
+                || kinds.len() != 1
+                || !kinds.contains(&AssetKind::Stylesheet))
+        {
+            return None;
+        }
         let url = resource_url(raw).ok()?;
         let origin = url.origin().ascii_serialization();
         let request_origin = match request_origin {
@@ -576,6 +604,7 @@ impl CaptureSession {
             discovery_round: round,
             kinds: kinds.clone(),
             request_origin,
+            origin_absent_stylesheet,
         })
     }
 
@@ -594,6 +623,11 @@ impl CaptureSession {
                 origin: &scope.origin,
                 assets: Some(&scope.kinds),
                 request_origin: scope.request_origin.as_ref(),
+                request_scope: if scope.origin_absent_stylesheet {
+                    SnapshotScope::OriginAbsentStylesheet
+                } else {
+                    SnapshotScope::Ordinary
+                },
             }),
         );
         if temporary {
@@ -885,7 +919,11 @@ impl CaptureSession {
                         self.omitted_asset_observations.saturating_add(1);
                 }
             }
-            if crate::rehearsal_capture::snapshot_origin_binding(&response).is_err() {
+            let request_scope = scope
+                .as_ref()
+                .map_or(SnapshotScope::Ordinary, |scope| scope.request_scope);
+            if crate::rehearsal_capture::snapshot_binding_scoped(&response, request_scope).is_err()
+            {
                 return Err(CaptureGap::RepresentationUnsupported);
             }
             let target = if is_redirect(status) {
@@ -894,7 +932,7 @@ impl CaptureSession {
                 if let Some(scope) = scope.as_ref() {
                     let accepted = (200..=299).contains(&status)
                         && match scope.assets {
-                            Some(kinds) => asset_response(&response, kinds),
+                            Some(kinds) => asset_response(&response, kinds, request_scope),
                             None => response_has_type(
                                 &response,
                                 &["text/html", "application/xhtml+xml"],
@@ -940,7 +978,10 @@ impl CaptureSession {
             if self.recorded.contains(&url) {
                 continue;
             }
-            if builder.add(&url, response).is_err() {
+            let request_scope = scope
+                .as_ref()
+                .map_or(SnapshotScope::Ordinary, |scope| scope.request_scope);
+            if builder.add_scoped(&url, response, request_scope).is_err() {
                 self.failed = true;
                 return Err(CaptureGap::ArchiveRejected);
             }
@@ -1138,10 +1179,14 @@ fn asset_observation(url: &str, response: &CapturedResponse) -> AssetObservation
         },
     }
 }
-fn asset_response(response: &CapturedResponse, kinds: &BTreeSet<AssetKind>) -> bool {
+fn asset_response(
+    response: &CapturedResponse,
+    kinds: &BTreeSet<AssetKind>,
+    scope: SnapshotScope,
+) -> bool {
     // Use the archive's native request proof and variant contract. An absent
-    // Origin is still insufficient for an Origin-varying non-document asset.
-    if crate::rehearsal_capture::snapshot_origin_binding(response).is_err() {
+    // Asset context is never inferred from a response MIME alone.
+    if crate::rehearsal_capture::snapshot_binding_scoped(response, scope).is_err() {
         return false;
     }
     let Some(mime) = response_mime(response) else {
@@ -1355,7 +1400,7 @@ mod tests {
         for (url, kind) in [(JS, AssetKind::Script), (CSS, AssetKind::Stylesheet)] {
             let scope = h
                 .session
-                .asset_origin(url, &BTreeSet::from([kind]), 1, None)
+                .asset_origin(url, &BTreeSet::from([kind]), 1, None, false)
                 .unwrap();
             assert!(matches!(
                 h.session.capture_asset(url, scope),
@@ -1551,7 +1596,13 @@ mod tests {
             h.session.capture_entry();
             let scope = h
                 .session
-                .asset_origin(CSS, &BTreeSet::from([AssetKind::Stylesheet]), 1, None)
+                .asset_origin(
+                    CSS,
+                    &BTreeSet::from([AssetKind::Stylesheet]),
+                    1,
+                    None,
+                    false,
+                )
                 .unwrap();
             gap(
                 h.session.capture_asset(CSS, scope),
@@ -1626,20 +1677,23 @@ mod tests {
         h.session.capture_entry();
         let kinds = BTreeSet::from([AssetKind::Script]);
         for url in [BAD, MOVED] {
-            let scope = h.session.asset_origin(url, &kinds, 1, None).unwrap();
+            let scope = h.session.asset_origin(url, &kinds, 1, None, false).unwrap();
             gap(
                 h.session.capture_asset(url, scope),
                 CaptureGap::AssetUnavailable,
             );
         }
-        let scope = h.session.asset_origin(DENIED, &kinds, 1, None).unwrap();
+        let scope = h
+            .session
+            .asset_origin(DENIED, &kinds, 1, None, false)
+            .unwrap();
         gap(
             h.session.capture_asset(DENIED, scope),
             CaptureGap::RobotsDenied,
         );
         assert!(h
             .session
-            .asset_origin("https://WWW.LINKEDIN.COM./app.js", &kinds, 1, None)
+            .asset_origin("https://WWW.LINKEDIN.COM./app.js", &kinds, 1, None, false)
             .is_none());
         assert!(!h
             .calls
@@ -1657,7 +1711,13 @@ mod tests {
         let kinds = BTreeSet::from([AssetKind::Script]);
         assert!(h
             .session
-            .asset_origin("https://unobserved.fixture.invalid/app.js", &kinds, 1, None)
+            .asset_origin(
+                "https://unobserved.fixture.invalid/app.js",
+                &kinds,
+                1,
+                None,
+                false
+            )
             .is_none());
         h.session.capture_entry();
         for index in 0..MAX_ASSET_ORIGINS {
@@ -1667,17 +1727,30 @@ mod tests {
                     &format!("https://cdn{index}.fixture.invalid/app.js"),
                     &kinds,
                     1,
-                    None
+                    None,
+                    false
                 )
                 .is_some());
         }
         assert!(h
             .session
-            .asset_origin("https://extra.fixture.invalid/app.js", &kinds, 1, None)
+            .asset_origin(
+                "https://extra.fixture.invalid/app.js",
+                &kinds,
+                1,
+                None,
+                false
+            )
             .is_none());
         assert!(h
             .session
-            .asset_origin("https://cdn0.fixture.invalid/other.js", &kinds, 2, None)
+            .asset_origin(
+                "https://cdn0.fixture.invalid/other.js",
+                &kinds,
+                2,
+                None,
+                false
+            )
             .is_some());
         assert_eq!(h.session.report().asset_origin_attempts, MAX_ASSET_ORIGINS);
         assert_eq!(h.calls.lock().unwrap().len(), 2);
@@ -1698,7 +1771,11 @@ mod tests {
             ("image/*", AssetKind::Image, false),
         ] {
             assert_eq!(
-                asset_response(&response(200, "fictional", mime), &BTreeSet::from([kind])),
+                asset_response(
+                    &response(200, "fictional", mime),
+                    &BTreeSet::from([kind]),
+                    SnapshotScope::Ordinary
+                ),
                 accepted,
                 "{mime}"
             );
@@ -1710,7 +1787,8 @@ mod tests {
         });
         assert!(!asset_response(
             &changed,
-            &BTreeSet::from([AssetKind::Stylesheet])
+            &BTreeSet::from([AssetKind::Stylesheet]),
+            SnapshotScope::Ordinary
         ));
         changed.headers.pop();
         changed.headers.push(waypoint_net::Header {
@@ -1719,7 +1797,8 @@ mod tests {
         });
         assert!(!asset_response(
             &changed,
-            &BTreeSet::from([AssetKind::Stylesheet])
+            &BTreeSet::from([AssetKind::Stylesheet]),
+            SnapshotScope::Ordinary
         ));
     }
 
@@ -2267,7 +2346,7 @@ mod tests {
             ));
             let scope = h
                 .session
-                .asset_origin(ASSET, &BTreeSet::from([AssetKind::Script]), 1, None)
+                .asset_origin(ASSET, &BTreeSet::from([AssetKind::Script]), 1, None, false)
                 .unwrap();
             let outcome = h.session.capture_asset(ASSET, scope);
             if accepted {
@@ -2310,11 +2389,11 @@ mod tests {
         let kinds = BTreeSet::from([AssetKind::Json]);
         assert!(h
             .session
-            .asset_origin(ASSET, &kinds, 1, Some("https://unadmitted.invalid"))
+            .asset_origin(ASSET, &kinds, 1, Some("https://unadmitted.invalid"), false)
             .is_none());
         let scope = h
             .session
-            .asset_origin(ASSET, &kinds, 1, Some(ORIGIN))
+            .asset_origin(ASSET, &kinds, 1, Some(ORIGIN), false)
             .unwrap();
         let outcome = h.session.capture_asset(ASSET, scope);
         assert!(
@@ -2335,6 +2414,81 @@ mod tests {
         assert_eq!(row["request_origin"], ORIGIN);
         assert_eq!(row["request_preflight_absent"], true);
         assert!(row.get("request_origin_absent").is_none());
+    }
+
+    #[test]
+    fn newly_observed_style_absence_can_repair_an_unsupported_variant_once() {
+        const CSS: &str = "https://fixture.invalid/style.css";
+        const JS: &str = "https://fixture.invalid/app.js";
+        for native_proof in [true, false] {
+            let css = || {
+                let mut value = response(200, "body{}", "text/css");
+                value.headers.push(waypoint_net::Header {
+                    name: "Vary".into(),
+                    value: b"Origin".to_vec(),
+                });
+                if native_proof {
+                    value.request_header_names = Some(vec!["host".into(), "accept".into()]);
+                }
+                value
+            };
+            let mut h = harness(
+                vec![
+                    ("https://fixture.invalid/robots.txt", robots("")),
+                    (ENTRY, html()),
+                    (CSS, css()),
+                    (CSS, css()),
+                    (JS, response(200, "void 0", "text/javascript")),
+                ],
+                "user_supplied_url",
+                CaptureBudget::default(),
+            );
+            let mut round = 0;
+            let summary = h
+                .session
+                .discover_with_probe(4, |_, _| {
+                    round += 1;
+                    let mut p = probe(if round == 1 { vec![CSS, JS] } else { vec![CSS] });
+                    p.assets
+                        .insert(CSS.into(), BTreeSet::from([AssetKind::Stylesheet]));
+                    if round == 1 {
+                        p.assets
+                            .insert(JS.into(), BTreeSet::from([AssetKind::Script]));
+                    } else {
+                        p.asset_origin_absent_stylesheets.insert(CSS.into());
+                    }
+                    Ok(p)
+                })
+                .unwrap();
+            assert_eq!(
+                summary.stopped,
+                crate::capture_discovery::DiscoveryStop::ReviewRequired
+            );
+            assert_eq!(
+                h.calls
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter(|url| *url == CSS)
+                    .count(),
+                2
+            );
+            let frozen = h.session.freeze().unwrap();
+            let manifest: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(frozen.snapshot.root.join("replay.json")).unwrap(),
+            )
+            .unwrap();
+            let style = manifest["resources"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["url"] == CSS);
+            if native_proof {
+                assert_eq!(style.unwrap()["request_origin_absent_stylesheet"], true);
+            } else {
+                assert!(style.is_none());
+            }
+        }
     }
 
     #[test]

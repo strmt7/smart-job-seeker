@@ -10,7 +10,16 @@ frame/shadow traversal, candidate-file import, structured history and semantic
 fit assessment also exist. Their broad qualification and recovery limits remain
 open; the earlier statements that those mechanisms are absent are superseded.
 
-Partial saved-form entry, 2026-11-11: one real archived page passed three
+Current stylesheet continuation: two native-bound CSS resources now render on a
+new saved real page, and local12B vision recognizes Phone before entry. Phone
+then fails native exact-value/validity verification and remains unverified; the
+post-failure value/image is not retained by that error path yet. Its root cause
+(formatting, dependency or another mutation) is not established. Three fields
+pass, no section advances, images/custom controls and held-out coverage remain
+open. [Current evidence](docs/g1/ABSENT_ORIGIN_STYLESHEETS_2026-11-11.md).
+The entries below preserve earlier checkpoints and do not override this scope.
+
+Historical partial saved-form entry, 2026-11-11: one real archived page passed three
 fictional fields through native readback and local-model visual review. Phone
 stopped before entry because the saved layout left its label outside the crop.
 Custom choices, attachments and later steps were not completed. A required-label

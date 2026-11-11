@@ -23,6 +23,8 @@ known scopes. The application index excludes `third_party/` to avoid embedding
 large upstream amalgamations. Verify vendored dependency bytes separately with
 `python tools/verify_sqlite_vendor.py` and use exact paths for their inspection;
 the semantic index does not claim coverage of those files.
+Wildcard `--path` filters are not supported by this adapter. Route with a normal
+semantic search, then verify exact live paths/symbols with bounded `rg` reads.
 Never overwrite another repository's registration or cache.
 Diagnose and disclose failures; continue only independent work until restored.
 The installer pins the direct CocoIndex version; its transitive dependencies are

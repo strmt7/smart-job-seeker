@@ -353,8 +353,10 @@ used by development tools and tests. Do not add WSL or Docker as product require
 For continuation of the active product-development goal, read
 `docs/REPO_STATE_REVIEW_2026-11-11.md`, the detailed
 `docs/COMPLETION_PLAN_2026-11-11.md` and `docs/ACTIVE_DEVELOPMENT_PLAN.json`.
-Use that queue's prioritized `next_task` once its prerequisites are ready; keep
-all other unfinished criteria visible. Do not repeatedly
+Use that queue's prioritized `next_task` once its `start_requirements` are ready;
+`depends_on` records completion prerequisites, not a ban on independent preparation.
+Containment, ownership and interface obligations apply throughout. Keep all
+unfinished criteria visible. Do not repeatedly
 reconstruct a broad roadmap or treat the original T001-T050 `PLANNED` statuses
 as a live progress ledger. The original handoff's contracts and all current
 user/agent safety instructions remain binding. Update queue evidence/status
