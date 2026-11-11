@@ -572,6 +572,7 @@ struct Rehearsal {
     halted: bool,
     sections: Vec<Value>,
     advances: usize,
+    profile: Result<Value, String>,
 }
 
 #[cfg(windows)]
@@ -582,7 +583,9 @@ impl Rehearsal {
         guard: Option<crate::visual_review::RequestGuard>,
     ) -> Self {
         let vision = RehearsalVision::new(addr, choice, guard);
-        let halted = vision.model.is_none();
+        let profile = serde_json::from_str(include_str!("../data/rehearsal-profile.json"))
+            .map_err(|_| "The bundled fictional rehearsal profile is invalid".to_owned());
+        let halted = vision.model.is_none() || profile.is_err();
         Self {
             vision,
             fields: Vec::new(),
@@ -590,6 +593,7 @@ impl Rehearsal {
             halted,
             sections: Vec::new(),
             advances: 0,
+            profile,
         }
     }
 
@@ -608,12 +612,10 @@ impl Rehearsal {
         {
             return;
         }
-        let profile = json!({
-            "full_name":"Avery Example", "first_name":"Avery", "last_name":"Example",
-            "email":"avery@example.invalid", "phone":"+12025550123",
-            "city":"Example City", "country":"Canada",
-        });
-        let Ok(mappings) = crate::suggestions::suggest_exact(&form.schema, &profile) else {
+        let Ok(profile) = self.profile.as_ref() else {
+            return;
+        };
+        let Ok(mappings) = crate::suggestions::suggest_exact(&form.schema, profile) else {
             return;
         };
         let mut captures = Vec::new();
@@ -734,7 +736,7 @@ impl Rehearsal {
     }
 
     fn finish(self) -> Value {
-        json!({"scope":"fictional_saved_form","field_limit":REHEARSAL_LIMIT,"section_advance_limit":SECTION_ADVANCE_LIMIT,"halted":self.halted,"fields":self.fields,"sections":self.sections,"vision_model":self.vision.identity,
+        json!({"scope":"fictional_saved_form","profile_sha256":waypoint_domain::sha256_hex(include_bytes!("../data/rehearsal-profile.json")),"profile_error":self.profile.as_ref().err(),"field_limit":REHEARSAL_LIMIT,"section_advance_limit":SECTION_ADVANCE_LIMIT,"halted":self.halted,"fields":self.fields,"sections":self.sections,"vision_model":self.vision.identity,
             "visual_gate":{"required":true,"available":self.vision.model.is_some(),"targets":self.vision.targets}})
     }
 }

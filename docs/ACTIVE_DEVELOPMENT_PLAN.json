@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "reviewed_on": "2026-11-11",
-  "reviewed_source": "aaf02d03b7e80c18cce600ff2d0ceca2f9d332c0",
+  "reviewed_source": "1b3f7a10e0f533b39dc2df6f3c1765afe6c11f6a",
   "goal": "Continue the existing active Smart Jobseeker product-development goal",
   "plan": "docs/COMPLETION_PLAN_2026-11-11.md",
   "assessment": "docs/REPO_STATE_REVIEW_2026-11-11.md",
@@ -62,21 +62,26 @@
     {
       "id": "R02",
       "priority": "P0",
-      "status": "planned",
+      "status": "in_progress",
       "depends_on": [],
       "title": "Versioned representative and held-out evaluation",
       "paths": [
         "tools/qualify_rehearsal.py",
         "tools/qualify_capture_replay.py",
         "tools/qualify_history_ui.py",
-        "tools/qualify_model_preferences.py"
+        "tools/qualify_model_preferences.py",
+        "tools/form_corpus.py",
+        "apps/web_app/data/rehearsal-profile.json"
       ],
       "acceptance": [
         "Private source/model/configuration-bound corpus manifest",
         "Explicit correctness, abstention, completion and resource denominators",
         "Held-out partition fixed before tuning; repeats for model promotion"
       ],
-      "evidence": [],
+      "evidence": [
+        "docs/FORM_EVALUATION.md",
+        "docs/g1/FORM_CORPUS_SCOPE_2026-11-11.md"
+      ],
       "execution_batch": "B",
       "steps": [
         "Extend existing qualification manifests with input/source/model/prompt/runtime identity and expected answerability/outcomes.",
@@ -84,8 +89,12 @@
         "Freeze employer/layout-family held-out partition before tuning.",
         "Report field, workflow, abstention, error, elapsed and resource denominators; repeat model-sensitive promotion candidates."
       ],
-      "next_action": "Extend existing qualification manifests with input/source/model/prompt/runtime identity and expected answerability/outcomes.",
-      "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package."
+      "next_action": "Collect independently annotated held-out employer/layout families and permission receipts with this existing protocol; resolve the known CSS/no-CORS rendering gap as needed for usable saved-real cases. Do not claim the two-case development seed is representative.",
+      "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
+      "completed_scopes": [
+        "Bounded corpus identity/partition/input protocol and explicit field gate; two development cases, no held-out coverage.",
+        "Actual compiled local12B-model before/after evidence, deterministic final accounting and verified owned cleanup."
+      ]
     },
     {
       "id": "R03",
@@ -105,7 +114,9 @@
         "Required labels and controls independently visible and bound",
         "Earlier and held-out saved cases retain honest review outcomes"
       ],
-      "evidence": [],
+      "evidence": [
+        "docs/g1/FORM_CORPUS_SCOPE_2026-11-11.md"
+      ],
       "execution_batch": "B",
       "steps": [
         "Reproduce missing Phone-label crop and incomplete saved-page rendering with native network/DOM/image evidence.",
@@ -113,8 +124,11 @@
         "Exercise distant/repeated/obscured labels, frames and resource failures on prior and held-out cases.",
         "Inspect actual screenshots; retain manual-review status for unrenderable or server-dependent steps."
       ],
-      "next_action": "Reproduce missing Phone-label crop and incomplete saved-page rendering with native network/DOM/image evidence.",
-      "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package."
+      "next_action": "Repair permitted CSS/no-CORS request-context proof and faithful saved rendering; keep Greenhouse Phone/crop and unavailable saved sources explicit, and qualify untouched held-out cases.",
+      "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
+      "completed_scopes": [
+        "Embedded selector/section namespace binding preserves only current native inspection evidence; real-model three-step development case passed its field gate."
+      ]
     },
     {
       "id": "R04",
@@ -482,9 +496,9 @@
     "build_state": "Last focused test compile failed; three stale start callers remain in current source. No current full-workspace pass claimed."
   },
   "working_tree_checkpoint": {
-    "baseline_head": "aaf02d03b7e80c18cce600ff2d0ceca2f9d332c0",
-    "validated_changes": "Owned form inspection, deferred local-model admission, progress/Stop client and two explicitly selected owner-loop cases.",
-    "build_state": "Local workspace 1306 passed/594 ignored; Clippy, format, build and scoped native/browser/client checks passed. No hosted evidence for this local continuation.",
-    "evidence": "docs/g1/DEFERRED_FORM_INSPECTION_2026-11-11.md"
+    "baseline_head": "1b3f7a10e0f533b39dc2df6f3c1765afe6c11f6a",
+    "validated_changes": "Case-bound corpus accounting and embedded selector/section namespace freshness repair.",
+    "build_state": "Local workspace1308 passed/594 ignored, agent tools78 passed, Clippy/fmt/build passed. Model development run3/3 fields and2 section advances; final metadata/test-only refinements have separate scope.",
+    "evidence": "docs/g1/FORM_CORPUS_SCOPE_2026-11-11.md"
   }
 }

@@ -1038,16 +1038,12 @@ impl CdpDriver {
         }
         Ok(())
     }
-    pub(super) fn bind_captured_form(&mut self, mut form: LiveForm) -> LiveForm {
+    pub(super) fn bind_captured_form(&mut self, form: LiveForm) -> LiveForm {
         if let Some(scope) = &self.captured_scope {
-            for field in &mut form.schema.fields {
-                field.selector = format!("{PREFIX}{}:{}", scope.key, field.selector);
-                for section in &mut field.context.sections {
-                    section.id = format!("{PREFIX}{}:{}", scope.key, section.id);
-                }
-            }
+            form.with_control_scope(&format!("{PREFIX}{}:", scope.key))
+        } else {
+            form
         }
-        form
     }
     pub(super) fn captured_selector(&self, raw: &str) -> String {
         match &self.captured_scope {

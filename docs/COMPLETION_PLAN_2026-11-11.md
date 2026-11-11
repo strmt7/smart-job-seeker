@@ -93,6 +93,13 @@ these R01 residuals rather than rerunning completed fit transport/model fixtures
 
 ## Current milestone
 
+The [corpus/scope checkpoint](g1/FORM_CORPUS_SCOPE_2026-11-11.md) starts R02 input
+binding/denominators and repairs a native embedded-frame freshness defect. One
+local-model development case now verifies three fields and advances two sections.
+The corpus remains two development cases / zero held-out cases. Continue new
+held-out annotation and permitted CSS/request-context repair; do not reconstruct
+this roadmap or treat this scoped improvement as general application completion.
+
 Three real public page copies save, with incomplete rendering explicitly retained.
 Validated public Origin/GET-variant binding now lets one copy render its styled
 application screen. Its remaining API path is robots-disallowed; keep that case

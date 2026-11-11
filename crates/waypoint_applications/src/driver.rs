@@ -67,7 +67,7 @@ impl CompletionReview {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IndependentFieldAccess {
-    schema_identity: String,
+    schema_identity: Option<String>,
     inspected_walls: Vec<String>,
     page_barriers: Vec<String>,
 }
@@ -85,7 +85,7 @@ impl LiveForm {
         walls.sort();
         walls.dedup();
         let evidence = IndependentFieldAccess {
-            schema_identity: schema.schema_hash_input(),
+            schema_identity: Some(schema.schema_hash_input()),
             inspected_walls: walls.clone(),
             page_barriers,
         };
@@ -97,6 +97,30 @@ impl LiveForm {
         }
     }
 
+    /// Namespace native control identities without inventing a new inspection.
+    /// Only an unchanged inspection can retain its evidence through this exact
+    /// selector/section-ID transformation. Existing barriers remain barriers.
+    pub fn with_control_scope(mut self, prefix: &str) -> Self {
+        let current = self.independent_fields.as_ref().is_some_and(|evidence| {
+            evidence.inspected_walls == self.walls
+                && evidence.schema_identity.as_ref() == Some(&self.schema.schema_hash_input())
+                && self.origin == self.schema.origin
+        });
+        for field in &mut self.schema.fields {
+            field.selector = format!("{prefix}{}", field.selector);
+            for section in &mut field.context.sections {
+                section.id = format!("{prefix}{}", section.id);
+            }
+        }
+        let identity = current.then(|| self.schema.schema_hash_input());
+        if let Some(evidence) = self.independent_fields.as_mut() {
+            // None is a persistent invalidation: a later prefix cannot repair
+            // previously stale evidence by coincidentally restoring old bytes.
+            evidence.schema_identity = identity;
+        }
+        self
+    }
+
     /// Unknown/legacy walls still block. Any later change to the schema, origin
     /// or review observations invalidates the inspection's entry eligibility.
     pub fn independent_field_entry_blocked(&self) -> bool {
@@ -104,7 +128,7 @@ impl LiveForm {
             Some(evidence) => {
                 !evidence.page_barriers.is_empty()
                     || evidence.inspected_walls != self.walls
-                    || evidence.schema_identity != self.schema.schema_hash_input()
+                    || evidence.schema_identity.as_ref() != Some(&self.schema.schema_hash_input())
                     || self.origin != self.schema.origin
             }
             None => !self.walls.is_empty(),
@@ -116,7 +140,8 @@ impl LiveForm {
         match &self.independent_fields {
             Some(evidence)
                 if evidence.inspected_walls == self.walls
-                    && evidence.schema_identity == self.schema.schema_hash_input()
+                    && evidence.schema_identity.as_ref()
+                        == Some(&self.schema.schema_hash_input())
                     && self.origin == self.schema.origin =>
             {
                 evidence.page_barriers.clone()
@@ -192,6 +217,70 @@ mod independent_field_tests {
         let mut origin = original;
         origin.origin = "https://other.example.org".into();
         assert!(origin.independent_field_entry_blocked());
+    }
+
+    fn field_schema(selector: &str) -> FormSchema {
+        let mut schema = schema();
+        schema.fields.push(serde_json::from_value(serde_json::json!({
+            "selector":selector,"label":"Name","field_type":"text","required":true,"sensitive":false,
+            "context":{"sections":[{"id":"history","label":"History","inferred":false}]}
+        })).unwrap());
+        schema
+    }
+
+    #[test]
+    fn native_scope_preserves_current_evidence_and_completion_reviews() {
+        let form =
+            LiveForm::from_inspection(field_schema("#name"), vec![], vec![custom("Country")]);
+        let walls = form.walls.clone();
+        let scoped = form.with_control_scope("captured:123:");
+        assert_eq!(scoped.schema.fields[0].selector, "captured:123:#name");
+        assert_eq!(
+            scoped.schema.fields[0].context.sections[0].id,
+            "captured:123:history"
+        );
+        assert_eq!(scoped.walls, walls);
+        assert!(!scoped.independent_field_entry_blocked());
+        assert!(scoped.independent_field_barriers().is_empty());
+        let mut changed = scoped;
+        changed.schema.fields[0].required = false;
+        assert!(changed.independent_field_entry_blocked());
+    }
+
+    #[test]
+    fn scoping_never_refreshes_barriers_stale_snapshots_or_legacy_evidence() {
+        let blocked = LiveForm::from_inspection(
+            field_schema("#name"),
+            vec!["captcha present".into()],
+            vec![],
+        )
+        .with_control_scope("captured:123:");
+        assert!(blocked.independent_field_entry_blocked());
+        assert_eq!(blocked.independent_field_barriers(), ["captcha present"]);
+        let mut original_schema = field_schema("captured:#name");
+        original_schema.fields[0].context.sections[0].id = "captured:history".into();
+        let original = LiveForm::from_inspection(original_schema, vec![], vec![]);
+        let mut stale = original.clone();
+        stale.schema.fields[0].selector = "#name".into();
+        stale.schema.fields[0].context.sections[0].id = "history".into();
+        let stale = stale.with_control_scope("captured:");
+        assert!(stale.independent_field_entry_blocked());
+        assert!(stale
+            .with_control_scope("")
+            .independent_field_entry_blocked());
+        let mut walls = original.clone();
+        walls.walls.push("unverified".into());
+        assert!(walls
+            .with_control_scope("x:")
+            .independent_field_entry_blocked());
+        let mut origin = original.clone();
+        origin.origin = "https://other.example.org".into();
+        assert!(origin
+            .with_control_scope("x:")
+            .independent_field_entry_blocked());
+        let mut legacy = original;
+        legacy.independent_fields = None;
+        assert!(legacy.with_control_scope("x:").independent_fields.is_none());
     }
 
     #[test]

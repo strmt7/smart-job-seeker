@@ -1,3 +1,11 @@
+## Frozen form inputs and embedded snapshot repair - 2026-11-11
+
+[Corpus/scope evidence](docs/g1/FORM_CORPUS_SCOPE_2026-11-11.md) adds declared-input
+accounting and fixes unchanged embedded forms being rejected after native selector
+namespacing. A local 12B-model development case improved from 0/3 to 3/3 verified
+fields and two section advances. The seed has two development cases and no held-out
+cases; Greenhouse CSS/Phone context and broad generic completion remain open.
+
 ## Owned form inspection - 2026-11-11
 
 [Deferred form admission](docs/g1/DEFERRED_FORM_INSPECTION_2026-11-11.md) moves the

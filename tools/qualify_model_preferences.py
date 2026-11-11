@@ -33,8 +33,12 @@ def main():
     parser.add_argument('--control', type=Path, required=True)
     parser.add_argument('--model', required=True)
     parser.add_argument('--model-store', type=Path, required=True)
+    parser.add_argument('--corpus', type=Path, help='Private frozen form-corpus metadata')
+    parser.add_argument('--case-id', help='Case ID in --corpus')
     parser.add_argument('--ui-only', action='store_true', help='Repeat only settings interactions after a UI change')
     args = parser.parse_args()
+    if bool(args.corpus) != bool(args.case_id): parser.error('--corpus and --case-id are required together')
+    if args.ui_only and args.corpus: parser.error('Settings-only checks cannot score form cases')
     if os.name != 'nt': parser.error('Windows native qualification only')
     fixture = args.fixture.resolve(strict=True)
     control = args.control.resolve(strict=True)
@@ -71,10 +75,17 @@ def main():
     assert request('http://127.0.0.1:11434/api/ps')['models'] == []
     report = {'complete': False, 'scope': 'Compiled app, fictional saved form, installed local vision model; no live employer interaction',
               'app_sha256': hashlib.sha256(app.read_bytes()).hexdigest()}
-    sources = [Path(__file__).resolve(), REPO / 'Cargo.lock', *sorted((REPO / 'apps/web_app/src').glob('*.*')),
+    sources = [Path(__file__).resolve(), REPO / 'Cargo.lock', REPO / 'tools/form_corpus.py', REPO / 'apps/web_app/data/rehearsal-profile.json', REPO / 'crates/waypoint_policy/data/source_permissions.json',
+               *sorted((REPO / 'crates/waypoint_browser/src').glob('*.*')),
+               *sorted((REPO / 'crates/waypoint_applications/src').glob('*.rs')), REPO / 'crates/waypoint_inference/src/ollama.rs', *sorted((REPO / 'apps/web_app/src').glob('*.*')),
                *sorted((REPO / 'apps/web_app/web').glob('*.*'))]
     source_hashes = lambda: {str(path.relative_to(REPO)): hashlib.sha256(path.read_bytes()).hexdigest() for path in sources}
     report['sources'] = source_hashes()
+    from form_corpus import bind_case, evaluate_case
+    profile = REPO / 'apps/web_app/data/rehearsal-profile.json'
+    manifest = source / 'source-page/archive/replay.json'
+    binding = bind_case(args.corpus, args.case_id, manifest, profile) if args.corpus else None
+    report['evaluation'] = {'status': 'unclassified', 'scored': False} if binding is None else {'status': 'pending', 'binding': binding}
     process = owner = browser = None
     memory = RamSamples()
     memory.thread.start()
@@ -187,8 +198,13 @@ def main():
             assert outcome['status'] == 'complete' and outcome['record_saved'], outcome.get('error', outcome['status'])
             preview = outcome['result']['preview']
             assert preview['model_admission']['session_closed'] is True
-            assert len(preview['rehearsal']['fields']) == 3
-            assert all(item['status'] == 'visually_matched' for item in preview['rehearsal']['fields'])
+            if binding is not None:
+                if bind_case(args.corpus, args.case_id, manifest, profile) != binding:
+                    raise RuntimeError('Frozen corpus inputs changed during qualification')
+                report['evaluation'] = evaluate_case(binding, preview['rehearsal'], preview['model_admission'])
+            else:
+                assert len(preview['rehearsal']['fields']) == 3
+                assert all(item['status'] == 'visually_matched' for item in preview['rehearsal']['fields'])
             history = api('/api/attempts/list', {'id': job})
             assert any(item['attempt_id'] == normal for item in history['attempts'])
 
@@ -220,9 +236,14 @@ def main():
             assert next(item['job']['state'] for item in state['jobs'] if item['job']['id'] == job) == 'discovered'
             cleared = api('/api/model-preferences', {'revision': saved['revision'], 'model': None, 'directory': None})
             assert cleared['choice'] is None and cleared['revision'] == saved['revision'] + 1
+            if binding is not None and bind_case(args.corpus, args.case_id, manifest, profile) != binding:
+                raise RuntimeError('Frozen corpus inputs changed during qualification')
             assert report['sources'] == source_hashes(), 'Qualification source changed during execution'
-            report.update(complete=True, job_id=job, rehearsal_task=normal, cancel_task=cancel,
+            report.update(job_id=job, rehearsal_task=normal, cancel_task=cancel,
                           cancellation_exit=exited, cancellation_endpoint=endpoint, shared_models_unchanged=True)
+            if binding is not None and not report['evaluation']['field_gate_passed']:
+                raise AssertionError('Form field gate was not met; inspect the recorded denominators')
+            report['complete'] = True
     finally:
         try:
             if browser is not None: browser.close()

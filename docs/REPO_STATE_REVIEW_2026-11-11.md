@@ -2,6 +2,14 @@
 
 ## Latest implementation checkpoints
 
+The [form corpus/scope continuation](g1/FORM_CORPUS_SCOPE_2026-11-11.md) fixes
+unchanged embedded forms rejected after native selector namespacing and introduces
+frozen-input field accounting. A local-model development case improved from 0/3 to
+3/3 verified fields with two section advances; it does not establish broad accuracy.
+Final local workspace1,308 passed/594 ignored and agent tools78 passed; Clippy/build
+passed. The corpus has no held-out cases, and saved Greenhouse CSS/Phone context
+still needs repair. R02/R03 remain open.
+
 The [owned form-inspection continuation](g1/DEFERRED_FORM_INSPECTION_2026-11-11.md)
 now defers form-opening model admission, owns/joins its worker and adds functional
 progress/Stop controls. Local workspace tests passed 1,306 / 594 ignored, with

@@ -258,6 +258,13 @@ used by development tools and tests. Do not add WSL or Docker as product require
 
 ## Real pitfalls already hit (don't rediscover these)
 
+- Native inspection snapshots include selector and section identities. Adding an
+  embedded-document namespace must use `LiveForm::with_control_scope`; mutating
+  those identities afterward makes unchanged forms stale. Only a current native
+  snapshot may survive that exact transformation. Preserve all original barriers,
+  keep previously stale evidence invalid, and qualify both main-page and embedded
+  fixtures after changes to this mechanism.
+
 - Windows process creation metadata can remain inspectable after exit while a
   handle retains the process object. Creation time binds identity; it does not
   establish liveness. Verify owned job membership or a native process wait
