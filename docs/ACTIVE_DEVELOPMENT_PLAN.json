@@ -31,8 +31,10 @@
         "Status/stop responsiveness, saturation and shutdown regression evidence"
       ],
       "evidence": [
-        "docs/REPO_STATE_REVIEW_2026-11-11.md"
-      ]
+        "docs/REPO_STATE_REVIEW_2026-11-11.md",
+        "docs/g1/CONTROL_PLANE_IO_2026-11-11.md"
+      ],
+      "next_action": "Audit synchronous blocking handlers, beginning with model-inventory HTTP I/O; qualify status/stop alongside admitted expensive work and shutdown."
     },
     {
       "id": "R02",

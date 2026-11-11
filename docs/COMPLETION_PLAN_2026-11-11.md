@@ -85,6 +85,11 @@ sent during this development work.
 
 ### R01 - Make the local control plane responsive under slow clients
 
+Progress: [nonblocking transport checkpoint](g1/CONTROL_PLANE_IO_2026-11-11.md)
+passes bounded slow-client, framing, fairness and teardown regressions and a
+compiled settings journey. The socket stall is repaired; R01 remains in progress
+for blocking-handler, expensive-work and status/stop qualification.
+
 Separate bounded HTTP framing/socket I/O from serialized workspace state changes.
 Use an absolute header/body deadline, byte limits, write deadlines, fixed worker
 and queue limits, backpressure and deterministic shutdown. Keep authentication,

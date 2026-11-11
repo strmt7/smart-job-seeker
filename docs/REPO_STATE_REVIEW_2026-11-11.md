@@ -6,6 +6,10 @@ release approval. The existing Smart Jobseeker development goal remains active.
 The [execution plan](COMPLETION_PLAN_2026-11-11.md) and its
 [machine-readable queue](ACTIVE_DEVELOPMENT_PLAN.json) carry the next work.
 
+Subsequent implementation: the [R01 I/O checkpoint](g1/CONTROL_PLANE_IO_2026-11-11.md)
+repairs the reproduced socket stall. Blocking-handler and broader readiness
+work remain open. The review below retains its original source snapshot.
+
 ## Overall assessment
 
 The repository is a substantial Windows/local-first prototype with connected

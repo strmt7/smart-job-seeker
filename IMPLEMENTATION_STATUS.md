@@ -1,3 +1,12 @@
+## Nonblocking local request I/O - 2026-11-11
+
+Bounded request framing and response delivery no longer block workspace updates
+on slow sockets. Compiled settings-read samples had observed p95 values of
+16-18 ms, including incomplete headers/bodies held open; a trickling header
+expired. Eleven focused transport regressions and the rendered settings workflow
+passed. R01 remains open for blocking-handler and broader status/stop qualification.
+[Evidence and limits](docs/g1/CONTROL_PLANE_IO_2026-11-11.md).
+
 ## Partial real saved-form entry - 2026-11-11
 
 The compiled route and local 12B model entered, read back and visually matched

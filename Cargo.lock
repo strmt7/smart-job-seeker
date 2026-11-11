@@ -1294,6 +1294,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1788edb87fdc09c7e26304471e2f5be8cdefb1b6930d6e3985fc02ff53bf86ee"
 dependencies = [
  "libc",
+ "log",
  "wasi",
  "windows-sys 0.61.2",
 ]
@@ -3044,9 +3045,11 @@ dependencies = [
  "base64",
  "getrandom 0.4.3",
  "gpuviewer-core",
+ "httparse",
  "icu_calendar",
  "icu_datetime",
  "icu_locale_core",
+ "mio",
  "native-tls",
  "percent-encoding",
  "processkit",

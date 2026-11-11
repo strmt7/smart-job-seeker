@@ -1164,47 +1164,16 @@ fn verification_rejects_hidden_choices() {
 #[test]
 #[ignore = "launches one local browser and a fictional local HTTP server"]
 fn http_error_page_is_not_treated_as_an_application_form() {
-    use std::io::{Read, Write};
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-    listener.set_nonblocking(true).unwrap();
-    let server = std::thread::spawn(move || {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        while std::time::Instant::now() < deadline {
-            match listener.accept() {
-                Ok((mut stream, _)) => {
-                    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(1)));
-                    let mut request = [0u8; 2048];
-                    let mut length = 0;
-                    while length < request.len() {
-                        match stream.read(&mut request[length..]) {
-                            Ok(0) | Err(_) => break,
-                            Ok(read) => length += read,
-                        }
-                        if request[..length].contains(&b'\n') {
-                            break;
-                        }
-                    }
-                    // Chromium may open a speculative connection before the
-                    // navigation request. Do not consume the fixture on it.
-                    if !request[..length].starts_with(b"GET /fictional ") {
-                        continue;
-                    }
-                    let body = "<html><body><h1>Not found</h1><input name='email'></body></html>";
-                    let response = format!("HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
-                    let _ = stream.write_all(response.as_bytes());
-                    return;
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                    std::thread::sleep(std::time::Duration::from_millis(25))
-                }
-                Err(_) => return,
-            }
-        }
-    });
+    let server = loopback::HttpFixture::start_routes(vec![(
+        "/fictional",
+        loopback::Response {
+            status: 404,
+            location: None,
+            body: "<html><body><h1>Not found</h1><input name='email'></body></html>".into(),
+        },
+    )]);
     let mut driver = CdpDriver::launch(vec![]).unwrap();
-    let result = driver.open(&format!("http://127.0.0.1:{port}/fictional"));
-    server.join().unwrap();
+    let result = driver.open(&format!("{}/fictional", server.origin));
     assert!(
         result
             .as_ref()

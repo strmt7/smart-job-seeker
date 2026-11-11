@@ -62,6 +62,7 @@ mod history_pipeline_tests;
 mod history_record_choice;
 #[cfg(all(test, windows))]
 mod history_ui_qualification;
+mod http_server;
 mod job_capture;
 mod letter_export;
 mod link_rank;
@@ -101,8 +102,12 @@ mod tray;
 mod visual_review;
 mod web_search;
 mod web_search_batch;
-use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+#[cfg(test)]
+use std::io::Read;
+use std::io::Write;
+use std::net::TcpListener;
+#[cfg(test)]
+use std::net::TcpStream;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
@@ -2388,13 +2393,13 @@ fn eligible_resident_model(data: &Value) -> Result<Option<String>, String> {
         .map(str::to_owned))
 }
 
-fn reply(stream: &mut TcpStream, status: &str, content_type: &str, body: &str) {
+fn reply(stream: &mut impl Write, status: &str, content_type: &str, body: &str) {
     let header = format!("HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nContent-Security-Policy: default-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'\r\nConnection: close\r\n\r\n", body.len());
     let _ = stream.write_all(header.as_bytes());
     let _ = stream.write_all(body.as_bytes());
 }
 
-fn json_reply(stream: &mut TcpStream, status: &str, value: Value) {
+fn json_reply(stream: &mut impl Write, status: &str, value: Value) {
     reply(
         stream,
         status,
@@ -2403,13 +2408,13 @@ fn json_reply(stream: &mut TcpStream, status: &str, value: Value) {
     );
 }
 
-fn document_reply(stream: &mut TcpStream, body: &[u8]) {
+fn document_reply(stream: &mut impl Write, body: &[u8]) {
     let header = format!("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n", body.len());
     let _ = stream.write_all(header.as_bytes());
     let _ = stream.write_all(body);
 }
 
-fn email_document_reply(stream: &mut TcpStream, body: &[u8], evidence_status: &'static str) {
+fn email_document_reply(stream: &mut impl Write, body: &[u8], evidence_status: &'static str) {
     let header = format!("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nX-Waypoint-Document-Evidence: {evidence_status}\r\nConnection: close\r\n\r\n", body.len());
     let _ = stream.write_all(header.as_bytes());
     let _ = stream.write_all(body);
@@ -2505,6 +2510,54 @@ fn classify_fill_network_observation(
     }
 }
 
+fn public_asset(path: &str) -> Option<(&'static str, &'static str)> {
+    match path {
+        "/" => Some((
+            "text/html; charset=utf-8",
+            include_str!("../web/index.html"),
+        )),
+        "/app.js" => Some((
+            "text/javascript; charset=utf-8",
+            include_str!("../web/app.js"),
+        )),
+        "/candidate-history.js" => Some((
+            "text/javascript; charset=utf-8",
+            include_str!("../web/candidate-history.js"),
+        )),
+        "/model-preferences.js" => Some((
+            "text/javascript; charset=utf-8",
+            include_str!("../web/model-preferences.js"),
+        )),
+        "/source-copy.js" => Some((
+            "text/javascript; charset=utf-8",
+            include_str!("../web/source-copy.js"),
+        )),
+        "/image-viewer.js" => Some((
+            "text/javascript; charset=utf-8",
+            include_str!("../web/image-viewer.js"),
+        )),
+        "/runtime-setup.js" => Some((
+            "text/javascript; charset=utf-8",
+            include_str!("../web/runtime-setup.js"),
+        )),
+        "/history-mapping.js" => Some((
+            "text/javascript; charset=utf-8",
+            include_str!("../web/history-mapping.js"),
+        )),
+        "/style.css" => Some(("text/css; charset=utf-8", include_str!("../web/style.css"))),
+        "/layout.js" => Some((
+            "text/javascript; charset=utf-8",
+            include_str!("../web/layout.js"),
+        )),
+        "/workspace-theme.css" => Some((
+            "text/css; charset=utf-8",
+            include_str!("../web/workspace-theme.css"),
+        )),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
 fn serve(
     stream: &mut TcpStream,
     ws: &mut Workspace,
@@ -2512,176 +2565,32 @@ fn serve(
     token: &str,
     port: u16,
 ) -> Result<(), String> {
-    // Accepted sockets can inherit the listener's nonblocking mode on some
-    // platforms; requests use a bounded blocking read instead.
-    stream.set_nonblocking(false).map_err(|e| e.to_string())?;
-    stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .map_err(|e| e.to_string())?;
-    let mut buf = Vec::new();
-    let header_end = loop {
-        let mut chunk = [0; 4096];
-        let n = stream.read(&mut chunk).map_err(|e| e.to_string())?;
-        if n == 0 {
-            return Err("incomplete request".into());
+    let access =
+        http_server::Access::new(port, token.to_owned(), |path| public_asset(path).is_some());
+    let request = http_server::read_test_request(stream, &access)?;
+    let mut response = http_server::Response::default();
+    serve_request(&mut response, request, ws, session)?;
+    http_server::write_test_response(stream, response)
+}
+
+fn serve_request(
+    stream: &mut impl Write,
+    request: http_server::Request,
+    ws: &mut Workspace,
+    session: &mut Option<ReviewSession>,
+) -> Result<(), String> {
+    let http_server::Request {
+        method,
+        path,
+        filename,
+        body: body_bytes,
+    } = request;
+    let length = body_bytes.len();
+    if method == "GET" {
+        if let Some((content_type, body)) = public_asset(&path) {
+            reply(stream, "200 OK", content_type, body);
+            return Ok(());
         }
-        buf.extend_from_slice(&chunk[..n]);
-        if buf.len() > MAX_REQUEST {
-            return Err("request too large".into());
-        }
-        if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
-            break pos + 4;
-        }
-    };
-    let head = std::str::from_utf8(&buf[..header_end]).map_err(|_| "invalid headers")?;
-    let mut lines = head.split("\r\n");
-    let mut request = lines.next().ok_or("missing request")?.split_whitespace();
-    let method = request.next().ok_or("missing method")?.to_owned();
-    let path = request.next().ok_or("missing path")?.to_owned();
-    let mut host = String::new();
-    let mut supplied_token = String::new();
-    let mut origin = String::new();
-    let mut filename = String::new();
-    let mut length = 0usize;
-    for line in lines {
-        if let Some((key, value)) = line.split_once(':') {
-            match key.to_ascii_lowercase().as_str() {
-                "host" => host = value.trim().to_owned(),
-                "origin" => origin = value.trim().to_owned(),
-                "x-document-name" => filename = value.trim().to_owned(),
-                "x-workspace-token" => supplied_token = value.trim().to_owned(),
-                "content-length" => length = value.trim().parse().map_err(|_| "invalid length")?,
-                _ => (),
-            }
-        }
-    }
-    if host != format!("127.0.0.1:{port}") {
-        return Err("invalid host".into());
-    }
-    if path == "/" && method == "GET" {
-        reply(
-            stream,
-            "200 OK",
-            "text/html; charset=utf-8",
-            include_str!("../web/index.html"),
-        );
-        return Ok(());
-    }
-    if path == "/app.js" && method == "GET" {
-        reply(
-            stream,
-            "200 OK",
-            "text/javascript; charset=utf-8",
-            include_str!("../web/app.js"),
-        );
-        return Ok(());
-    }
-    if path == "/candidate-history.js" && method == "GET" {
-        reply(
-            stream,
-            "200 OK",
-            "text/javascript; charset=utf-8",
-            include_str!("../web/candidate-history.js"),
-        );
-        return Ok(());
-    }
-    if path == "/model-preferences.js" && method == "GET" {
-        reply(
-            stream,
-            "200 OK",
-            "text/javascript; charset=utf-8",
-            include_str!("../web/model-preferences.js"),
-        );
-        return Ok(());
-    }
-    if path == "/source-copy.js" && method == "GET" {
-        reply(
-            stream,
-            "200 OK",
-            "text/javascript; charset=utf-8",
-            include_str!("../web/source-copy.js"),
-        );
-        return Ok(());
-    }
-    if path == "/image-viewer.js" && method == "GET" {
-        reply(
-            stream,
-            "200 OK",
-            "text/javascript; charset=utf-8",
-            include_str!("../web/image-viewer.js"),
-        );
-        return Ok(());
-    }
-    if path == "/runtime-setup.js" && method == "GET" {
-        reply(
-            stream,
-            "200 OK",
-            "text/javascript; charset=utf-8",
-            include_str!("../web/runtime-setup.js"),
-        );
-        return Ok(());
-    }
-    if path == "/history-mapping.js" && method == "GET" {
-        reply(
-            stream,
-            "200 OK",
-            "text/javascript; charset=utf-8",
-            include_str!("../web/history-mapping.js"),
-        );
-        return Ok(());
-    }
-    if path == "/style.css" && method == "GET" {
-        reply(
-            stream,
-            "200 OK",
-            "text/css; charset=utf-8",
-            include_str!("../web/style.css"),
-        );
-        return Ok(());
-    }
-    if path == "/layout.js" && method == "GET" {
-        reply(
-            stream,
-            "200 OK",
-            "text/javascript; charset=utf-8",
-            include_str!("../web/layout.js"),
-        );
-        return Ok(());
-    }
-    if path == "/workspace-theme.css" && method == "GET" {
-        reply(
-            stream,
-            "200 OK",
-            "text/css; charset=utf-8",
-            include_str!("../web/workspace-theme.css"),
-        );
-        return Ok(());
-    }
-    if supplied_token != token
-        || (!origin.is_empty() && origin != format!("http://127.0.0.1:{port}"))
-    {
-        return Err("unauthorized".into());
-    }
-    let body_limit = if method == "POST" && path == "/api/documents/upload" {
-        MAX_DOCUMENT
-    } else if method == "POST" && path == "/api/form/fill" {
-        MAX_FORM_FILL_REQUEST
-    } else {
-        MAX_REQUEST - header_end
-    };
-    if length > body_limit {
-        return Err("request too large".into());
-    }
-    while buf.len() < header_end + length {
-        let mut chunk = [0; 4096];
-        let remaining = header_end + length - buf.len();
-        let n = stream
-            .read(&mut chunk[..remaining.min(4096)])
-            .map_err(|e| e.to_string())?;
-        if n == 0 {
-            return Err("incomplete body".into());
-        }
-        buf.extend_from_slice(&chunk[..n]);
     }
     if method == "GET" && path == "/api/state" {
         let facts = ws.facts().map_err(|e| e.to_string())?;
@@ -2845,13 +2754,12 @@ fn serve(
         let mut random = [0u8; 16];
         getrandom::fill(&mut random).map_err(|e| format!("document id generation failed: {e}"))?;
         let id: String = random.iter().map(|b| format!("{b:02x}")).collect();
-        ws.add_document(&id, &name, &buf[header_end..header_end + length], now())
+        ws.add_document(&id, &name, &body_bytes, now())
             .map_err(|e| e.to_string())?;
         json_reply(stream, "200 OK", json!({"id":id}));
         return Ok(());
     }
-    let body: Value = serde_json::from_slice(&buf[header_end..header_end + length])
-        .map_err(|_| "invalid JSON")?;
+    let body: Value = serde_json::from_slice(&body_bytes).map_err(|_| "invalid JSON")?;
     match path.as_str() {
         "/api/office-path" => {
             let value = body["path"].as_str().ok_or("Missing LibreOffice path")?;
@@ -9688,6 +9596,14 @@ fn serve_loop(
     port: u16,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) {
+    let access = http_server::Access::new(port, token, |path| public_asset(path).is_some());
+    let mut transport = match http_server::Server::new(listener, access) {
+        Ok(server) => server,
+        Err(error) => {
+            eprintln!("Local server unavailable: {error}");
+            return;
+        }
+    };
     let mut index_worker = match ws.duplicate_indexer() {
         Ok(indexer) => {
             let index_stop = stop.clone();
@@ -9818,35 +9734,37 @@ fn serve_loop(
         {
             eprintln!("Could not release expired control visual review: {error}");
         }
-        match listener.accept() {
-            Ok((mut stream, _)) => {
-                if let Err(error) = serve(&mut stream, &mut ws, &mut session, &token, port) {
-                    json_reply(&mut stream, "400 Bad Request", json!({"error":error}));
-                }
+        if let Err(error) = transport.poll() {
+            eprintln!("Local transport failed: {error}");
+            stop.store(true, std::sync::atomic::Ordering::Release);
+            break;
+        }
+        if let Some((id, request)) = transport.next_request() {
+            let mut response = http_server::Response::default();
+            if let Err(error) = serve_request(&mut response, request, &mut ws, &mut session) {
+                response = http_server::Response::default();
+                json_reply(&mut response, "400 Bad Request", json!({"error":error}));
             }
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                if index_worker.is_none() && Instant::now() >= next_duplicate_index {
-                    match ws.index_next_duplicate_step(&duplicate_cursor) {
-                        Ok(step) => {
-                            duplicate_cursor = step.cursor.unwrap_or_default();
-                            let delay = duplicate_index_delay(step.compared, step.more_pending);
-                            next_duplicate_index = Instant::now() + delay;
-                        }
-                        Err(error) => {
-                            eprintln!("Duplicate indexing paused: {error}");
-                            duplicate_cursor.clear();
-                            next_duplicate_index = Instant::now() + Duration::from_secs(30);
-                        }
-                    }
-                }
-                std::thread::sleep(Duration::from_millis(200))
+            if let Err(error) = transport.respond(id, response) {
+                eprintln!("Local response transport failed: {error}");
             }
-            Err(error) => {
-                eprintln!("Connection failed: {error}");
-                std::thread::sleep(Duration::from_millis(200));
+        }
+        if index_worker.is_none() && Instant::now() >= next_duplicate_index {
+            match ws.index_next_duplicate_step(&duplicate_cursor) {
+                Ok(step) => {
+                    duplicate_cursor = step.cursor.unwrap_or_default();
+                    next_duplicate_index =
+                        Instant::now() + duplicate_index_delay(step.compared, step.more_pending);
+                }
+                Err(error) => {
+                    eprintln!("Duplicate indexing paused: {error}");
+                    duplicate_cursor.clear();
+                    next_duplicate_index = Instant::now() + Duration::from_secs(30);
+                }
             }
         }
     }
+    drop(transport);
     if let Err(error) = web_search_batch::collect_background()
         .and_then(|_| web_search_batch::persist_progress(&ws).map(|_| ()))
         .and_then(|_| web_search_batch::persist_completed(&ws).map(|_| ()))
