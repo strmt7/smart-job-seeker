@@ -8,9 +8,7 @@ struct Task {
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 static COMPLETED: Mutex<Option<(String, Value)>> = Mutex::new(None);
-#[cfg(any(windows, test))]
 const GIB: u64 = 1024 * 1024 * 1024;
-#[cfg(any(windows, test))]
 const MAX_MODEL_BYTES: u64 = 16 * GIB;
 #[cfg(any(windows, test))]
 pub(crate) const HOST_START_RESERVE_BYTES: u64 = 9 * GIB;
@@ -100,7 +98,6 @@ pub(crate) fn local_inventory_entry<'a>(tags: &'a Value, model: &str) -> Result<
     Ok(entry)
 }
 
-#[cfg(any(windows, test))]
 pub(crate) fn installed_size(tags: &Value, model: &str) -> Result<u64, String> {
     local_inventory_entry(tags, model)?["size"]
         .as_u64()
@@ -110,7 +107,6 @@ pub(crate) fn installed_size(tags: &Value, model: &str) -> Result<u64, String> {
         })
 }
 
-#[cfg(any(windows, test))]
 pub(crate) fn startup_binding(tags: &Value, model: &str) -> Result<(u64, String), String> {
     let size = installed_size(tags, model)?;
     let digest = local_inventory_entry(tags, model)?["digest"]

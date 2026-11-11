@@ -68,6 +68,7 @@ mod link_rank;
 mod local_advice;
 mod manual_job;
 mod model_install;
+mod model_preferences;
 mod model_start;
 mod native_month;
 #[cfg(windows)]
@@ -79,6 +80,7 @@ mod pdf_probe_task;
 mod pdf_runtime;
 mod pdf_setup;
 mod pdf_transcribe;
+mod private_inference;
 mod recorded_preview;
 mod resident_inference;
 mod runtime_setup;
@@ -2583,6 +2585,15 @@ fn serve(
         );
         return Ok(());
     }
+    if path == "/model-preferences.js" && method == "GET" {
+        reply(
+            stream,
+            "200 OK",
+            "text/javascript; charset=utf-8",
+            include_str!("../web/model-preferences.js"),
+        );
+        return Ok(());
+    }
     if path == "/source-copy.js" && method == "GET" {
         reply(
             stream,
@@ -2765,6 +2776,10 @@ fn serve(
             "200 OK",
             json!({"task_id":model_install::active()?}),
         );
+        return Ok(());
+    }
+    if method == "GET" && path == "/api/model-preferences" {
+        json_reply(stream, "200 OK", model_preferences::status(ws)?);
         return Ok(());
     }
     if method == "GET" && path == "/api/model-start/active" {
@@ -3009,6 +3024,9 @@ fn serve(
         "/api/model-install/status" => {
             let id = body["task_id"].as_str().ok_or("missing task id")?;
             json_reply(stream, "200 OK", model_install::poll(id)?);
+        }
+        "/api/model-preferences" => {
+            json_reply(stream, "200 OK", model_preferences::save(ws, &body)?);
         }
         "/api/model-start/start" => {
             let model = body["model"].as_str().ok_or("missing model")?.to_owned();

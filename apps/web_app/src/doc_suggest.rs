@@ -30,16 +30,47 @@ struct ReviewResult {
     rejected_excerpts: usize,
     stopped: Option<String>,
 }
-pub struct ModelLease;
+pub struct ModelLease {
+    #[cfg(windows)]
+    file: Option<std::fs::File>,
+}
 impl Drop for ModelLease {
     fn drop(&mut self) {
+        #[cfg(windows)]
+        drop(self.file.take());
         BUSY.store(false, Ordering::Release);
     }
 }
 pub fn lease() -> Result<ModelLease, String> {
     BUSY.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
         .map_err(|_| "A local model task is already running")?;
-    Ok(ModelLease)
+    #[cfg(windows)]
+    let file = (|| -> Result<std::fs::File, String> {
+        let directory = crate::storage_settings::control_dir()?;
+        std::fs::create_dir_all(&directory).map_err(|_| "Cannot prepare the local model lock")?;
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(directory.join("local-model-task.lock"))
+            .map_err(|_| "Cannot open the local model lock")?;
+        file.try_lock()
+            .map_err(|_| "Another Smart Jobseeker process is using the local model")?;
+        Ok(file)
+    })();
+    #[cfg(windows)]
+    let file = match file {
+        Ok(file) => file,
+        Err(error) => {
+            BUSY.store(false, Ordering::Release);
+            return Err(error);
+        }
+    };
+    Ok(ModelLease {
+        #[cfg(windows)]
+        file: Some(file),
+    })
 }
 pub fn start(id: String, model: String, name: String, bytes: Vec<u8>) -> Result<(), String> {
     let guard = {

@@ -1,6 +1,12 @@
 # Known limitations register (T050)
 
-Recorded cross-origin controls have a [narrow native engine qualification](docs/g1/CAPTURED_FRAME_CONTROLS_2026-11-10.md), including uploads and one section transition. They are not yet connected to the web interface or local-model agent. Ordinary/live frames, nested cross-origin targets, transformed layouts and full child-document review remain manual or unqualified. No broader no-send or release-readiness claim follows from this result.
+Current update, 2026-11-11: saved-copy rehearsal connects the web interface,
+focused local-model vision and [automatic private-model admission](docs/g1/PRIVATE_MODEL_ADMISSION_2026-11-11.md).
+This covers bounded fictional controls, attachments and section changes. Live
+candidate entry, authenticated/server-dependent flows, unseen ATS families and
+clean-host installation remain unqualified. The [completion plan](docs/COMPLETION_PLAN_2026-11-11.md)
+tracks the remaining gates. Older register entries below retain historical scope;
+their earlier integration gaps must not override newer measured checkpoints.
 
 Last updated: 2026-09-25. Honesty rules from AGENTS.md apply: absence from this list is not a claim of absence of problems.
 

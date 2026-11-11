@@ -67,7 +67,10 @@ fn classify_port(addr: std::net::SocketAddr) -> Result<bool, String> {
 }
 
 #[cfg(windows)]
-fn runtime_command(binary: &std::path::Path, addr: std::net::SocketAddr) -> processkit::Command {
+pub(crate) fn runtime_command(
+    binary: &std::path::Path,
+    addr: std::net::SocketAddr,
+) -> processkit::Command {
     use processkit::{Command, Stdin, StdioMode};
     Command::new(binary)
         .arg("serve")

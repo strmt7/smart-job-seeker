@@ -23,6 +23,8 @@ struct Request {
     destination: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     replay: Option<crate::recorded_preview::Source>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    model_choice: Option<crate::private_inference::Selection>,
 }
 struct Task {
     id: String,
@@ -136,6 +138,25 @@ fn start_task(
     if let Some(source) = &replay {
         source.validate(&url)?;
     }
+    let cache_root = workspace
+        .parent()
+        .ok_or("Workspace model cache folder is unavailable")?
+        .join("model-cache");
+    let model_choice = if replay.as_ref().is_some_and(|source| source.rehearse) {
+        crate::model_preferences::read(ws)?
+            .1
+            .map(|choice| crate::private_inference::Selection {
+                choice,
+                cache_root: cache_root.clone(),
+            })
+    } else {
+        None
+    };
+    let model_lease = replay
+        .as_ref()
+        .filter(|source| source.rehearse)
+        .map(|_| crate::doc_suggest::lease())
+        .transpose()?;
     let preview = replay.is_some();
     let include_materials = !replay.as_ref().is_some_and(|source| source.rehearse);
     let mut record = crate::attempt_record::AttemptRecord::start_with_materials(
@@ -156,12 +177,24 @@ fn start_task(
     record.event(
         json!({"type":"source_capture_started","time":crate::now(),"task_id":id,"scope":scope}),
     )?;
+    let model_namespace = model_choice.is_some();
+    let model_attempt = root
+        .parent()
+        .ok_or("Model record folder is unavailable")?
+        .to_owned();
+    if model_namespace {
+        crate::private_inference::create_namespace(&model_attempt, &id)?;
+    }
+    let model_task = id.clone();
+    let cleanup_attempt = model_attempt.clone();
+    let cleanup_task = model_task.clone();
     let request = Request {
         task_id: id.clone(),
         url: url.clone(),
         source,
         destination: root.clone(),
         replay,
+        model_choice,
     };
     let cancel = Arc::new(AtomicBool::new(false));
     let child_cancel = cancel.clone();
@@ -169,13 +202,36 @@ fn start_task(
     let spawned = std::thread::Builder::new()
         .name("job-page-copy".into())
         .spawn(move || {
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                run_request(request, child_cancel)
+            let _model_lease = model_lease;
+            let drained = AtomicBool::new(false);
+            let mut result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                run_request(request, child_cancel, &drained)
             }))
             .unwrap_or_else(|_| Err("Page capture stopped unexpectedly".into()));
+            if model_namespace {
+                let cleanup = if drained.load(Ordering::Acquire) {
+                    crate::private_inference::cleanup_namespace(&model_attempt, &model_task)
+                } else {
+                    Err("Model worker teardown is unverified; private files were retained".into())
+                };
+                if let Err(error) = cleanup {
+                    result = Err(match result {
+                        Ok(_) => error,
+                        Err(original) => format!("{original}; {error}"),
+                    });
+                }
+            }
             let _ = tx.send(result);
-        })
-        .map_err(|_| "Cannot start page capture")?;
+        });
+    let spawned = match spawned {
+        Ok(worker) => worker,
+        Err(_) => {
+            if model_namespace {
+                crate::private_inference::cleanup_namespace(&cleanup_attempt, &cleanup_task)?;
+            }
+            return Err("Cannot start page capture".into());
+        }
+    };
     drop(spawned);
     *active = Some(Task {
         id,
@@ -363,11 +419,20 @@ fn memory_limit(free: u64, total: u64) -> Result<u64, String> {
 }
 
 #[cfg(windows)]
-fn run_request(request: Request, cancel: Arc<AtomicBool>) -> Result<Value, String> {
+fn run_request(
+    request: Request,
+    cancel: Arc<AtomicBool>,
+    drained: &AtomicBool,
+) -> Result<Value, String> {
+    drained.store(true, Ordering::Release);
     use processkit::{Command, OutputBufferPolicy, ProcessGroup, ProcessGroupOptions, Stdin};
     let mut sys = sysinfo::System::new().map_err(|_| "Cannot sample memory for page capture")?;
     sys.refresh_memory();
-    let memory = memory_limit(sys.available_memory(), sys.total_memory())?;
+    let memory = if request.model_choice.is_some() {
+        crate::owned_runtime::memory_budget(sys.available_memory(), sys.total_memory())?
+    } else {
+        memory_limit(sys.available_memory(), sys.total_memory())?
+    };
     let input = serde_json::to_vec(&request).map_err(|_| "Cannot prepare page capture")?;
     let exe = std::env::current_exe().map_err(|_| "Cannot locate the application worker")?;
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -377,72 +442,109 @@ fn run_request(request: Request, cancel: Arc<AtomicBool>) -> Result<Value, Strin
     runtime.block_on(async {
         let group = ProcessGroup::with_options(ProcessGroupOptions::default().max_memory(memory))
             .map_err(|_| "Cannot contain page capture")?;
-        let command = Command::new(exe)
-            .args([WORKER_FLAG])
-            .create_no_window()
-            .stdin(Stdin::from_bytes(input))
-            .timeout(Duration::from_secs(1500))
-            .output_buffer(OutputBufferPolicy::fail_loud(usize::MAX).with_max_bytes(256 * 1024));
-        let process = group
-            .start(&command)
-            .await
-            .map_err(|_| "Cannot start page capture worker")?;
-        let future = process.output_bytes();
-        tokio::pin!(future);
-        let mut memory_checked = Instant::now();
-        let output = loop {
-            let reserve_error = if memory_checked.elapsed() >= Duration::from_millis(500) {
-                sys.refresh_memory();
-                memory_checked = Instant::now();
-                host_reserve(sys.available_memory(), sys.total_memory()).err()
-            } else {
-                None
+        drained.store(false, Ordering::Release);
+        let outcome = async {
+            let command = Command::new(exe)
+                .args([WORKER_FLAG])
+                .create_no_window()
+                .stdin(Stdin::from_bytes(input))
+                .timeout(Duration::from_secs(1500))
+                .output_buffer(
+                    OutputBufferPolicy::fail_loud(usize::MAX).with_max_bytes(256 * 1024),
+                );
+            let process = group
+                .start(&command)
+                .await
+                .map_err(|_| "Cannot start page capture worker")?;
+            let future = process.output_bytes();
+            tokio::pin!(future);
+            let mut memory_checked = Instant::now();
+            let output = loop {
+                let reserve_error = if memory_checked.elapsed() >= Duration::from_millis(500) {
+                    sys.refresh_memory();
+                    memory_checked = Instant::now();
+                    host_reserve(sys.available_memory(), sys.total_memory()).err()
+                } else {
+                    None
+                };
+                let stop_reason = if cancel.load(Ordering::Acquire) {
+                    Some(CANCELLED.to_owned())
+                } else {
+                    reserve_error
+                };
+                if let Some(reason) = stop_reason {
+                    group
+                        .kill_all()
+                        .map_err(|_| "Could not stop the owned capture process")?;
+                    let _stopped = tokio::time::timeout(Duration::from_secs(5), future.as_mut())
+                        .await
+                        .map_err(|_| {
+                            "Capture shutdown is unconfirmed; partial files were retained"
+                        })?
+                        .map_err(|_| "Capture shutdown failed")?;
+                    return Err(reason);
+                }
+                if let Ok(result) =
+                    tokio::time::timeout(Duration::from_millis(150), future.as_mut()).await
+                {
+                    break result.map_err(|_| "Page capture worker failed")?;
+                }
             };
-            let stop_reason = if cancel.load(Ordering::Acquire) {
-                Some(CANCELLED.to_owned())
-            } else {
-                reserve_error
-            };
-            if let Some(reason) = stop_reason {
-                group
-                    .kill_all()
-                    .map_err(|_| "Could not stop the owned capture process")?;
-                let _stopped = tokio::time::timeout(Duration::from_secs(5), future.as_mut())
-                    .await
-                    .map_err(|_| "Capture shutdown is unconfirmed; partial files were retained")?
-                    .map_err(|_| "Capture shutdown failed")?;
-                return Err(reason);
+            if output.timed_out() {
+                return Err("Page capture timed out; partial files were retained".into());
             }
-            if let Ok(result) =
-                tokio::time::timeout(Duration::from_millis(150), future.as_mut()).await
-            {
-                break result.map_err(|_| "Page capture worker failed")?;
+            if output.truncated() {
+                return Err(
+                    "Page capture worker could not finish; partial files were retained".into(),
+                );
+            }
+            let value: Value = serde_json::from_slice(output.stdout())
+                .map_err(|_| "Invalid page capture result")?;
+            if value["task_id"] != request.task_id {
+                return Err("Page capture result does not match the request".into());
+            }
+            if !output.is_success() {
+                return Err(value["error"]
+                    .as_str()
+                    .unwrap_or("Page capture worker failed")
+                    .chars()
+                    .take(1000)
+                    .collect());
+            }
+            Ok(value)
+        }
+        .await;
+        let stopped = group
+            .kill_all()
+            .map_err(|_| "Capture process tree could not be stopped".to_owned());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let empty = loop {
+            match group.members() {
+                Ok(members) if members.is_empty() => break Ok(()),
+                Ok(_) if Instant::now() < deadline => {
+                    tokio::time::sleep(Duration::from_millis(20)).await
+                }
+                Ok(_) => break Err("Capture process tree did not drain".to_owned()),
+                Err(_) => {
+                    break Err("Capture process tree teardown could not be verified".to_owned())
+                }
             }
         };
-        if output.timed_out() {
-            return Err("Page capture timed out; partial files were retained".into());
+        let cleanup = stopped.and(empty);
+        if cleanup.is_ok() {
+            drained.store(true, Ordering::Release);
         }
-        if output.truncated() {
-            return Err("Page capture worker could not finish; partial files were retained".into());
+        match (outcome, cleanup) {
+            (Err(error), Err(cleanup)) => Err(format!("{error}; {cleanup}")),
+            (Err(error), _) => Err(error),
+            (Ok(value), Ok(())) => Ok(value),
+            (Ok(_), Err(error)) => Err(error),
         }
-        let value: Value =
-            serde_json::from_slice(output.stdout()).map_err(|_| "Invalid page capture result")?;
-        if value["task_id"] != request.task_id {
-            return Err("Page capture result does not match the request".into());
-        }
-        if !output.is_success() {
-            return Err(value["error"]
-                .as_str()
-                .unwrap_or("Page capture worker failed")
-                .chars()
-                .take(1000)
-                .collect());
-        }
-        Ok(value)
     })
 }
 #[cfg(not(windows))]
-fn run_request(_: Request, _: Arc<AtomicBool>) -> Result<Value, String> {
+fn run_request(_: Request, _: Arc<AtomicBool>, drained: &AtomicBool) -> Result<Value, String> {
+    drained.store(true, Ordering::Release);
     Err("Background page capture requires Windows".into())
 }
 
@@ -527,6 +629,14 @@ fn worker(request: Request) -> Result<Value, String> {
     {
         return Err("Invalid capture worker request".into());
     }
+    if request.model_choice.is_some()
+        && !request
+            .replay
+            .as_ref()
+            .is_some_and(|source| source.rehearse)
+    {
+        return Err("Model selection is only valid for offline rehearsal".into());
+    }
     let (canonical, source) = public_url(&request.url, &json!({}))?;
     if canonical != request.url || source != request.source {
         return Err("Capture source does not match its public URL".into());
@@ -565,8 +675,14 @@ fn worker(request: Request) -> Result<Value, String> {
             replay_manifest: None,
             attachments: None,
         };
-        let preview =
-            crate::recorded_preview::render(source, &request.url, &python, config, &screenshots)?;
+        let preview = crate::recorded_preview::render(
+            source,
+            &request.url,
+            &python,
+            config,
+            &screenshots,
+            request.model_choice.as_ref(),
+        )?;
         phase(&request, "saved")?;
         return Ok(json!({"task_id":request.task_id,"preview":preview}));
     }

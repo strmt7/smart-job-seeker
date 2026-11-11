@@ -413,6 +413,9 @@ const MIGRATIONS: &[&str] = &[
        SELECT id FROM jobs WHERE lower(replace(replace(title,' ',''),char(9),'')) LIKE '%r&d%'
      );
      UPDATE meta SET value='48' WHERE key='schema_version';",
+    // v49 - model choice is sealed separately from candidate facts and approvals.
+    "CREATE TABLE model_preferences(id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL CHECK(revision>0), sealed_content BLOB);
+     UPDATE meta SET value='49' WHERE key='schema_version';",
 ];
 
 pub mod documents;
@@ -423,6 +426,7 @@ pub mod form_experiences;
 pub mod generated_drafts;
 pub mod job_capture;
 pub mod mail_credentials;
+pub mod model_preferences;
 pub mod prefill_grants;
 pub mod profile;
 pub mod review;

@@ -500,6 +500,18 @@ impl Workspace {
         Ok(self.store.candidate_profile()?)
     }
 
+    pub fn model_preferences(&self) -> Result<(u64, Option<Vec<u8>>), WorkspaceError> {
+        Ok(self.store.model_preferences()?)
+    }
+
+    pub fn save_model_preferences(
+        &self,
+        expected: u64,
+        content: Option<&[u8]>,
+    ) -> Result<Option<u64>, WorkspaceError> {
+        Ok(self.store.save_model_preferences(expected, content)?)
+    }
+
     pub fn save_candidate_profile(&self, content: &str) -> Result<(), WorkspaceError> {
         self.store.save_candidate_profile(content)?;
         Ok(())

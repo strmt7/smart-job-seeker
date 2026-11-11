@@ -1,3 +1,11 @@
+## Automatic rehearsal model admission - 2026-11-11
+
+The compiled app now connects saved, encrypted model selection to private local
+model startup, saved-copy visual rehearsal and verified cancellation. Settings
+persistence and narrow layouts also passed. [Evidence](g1/PRIVATE_MODEL_ADMISSION_2026-11-11.md)
+records the exact fictional scope and retained failures; the
+[completion plan](COMPLETION_PLAN_2026-11-11.md) keeps remaining acceptance gates open.
+
 ## App-owned local runtime cleanup - 2026-11-11
 
 App-started Ollama now has a retained Windows process-tree owner, memory bounds
@@ -5,7 +13,7 @@ and verified teardown; existing services remain borrowed. Native checks cover
 failed handoff, root exit, explicit stop and forced owner exit, including an
 unrelated process that uses the same executable. A real isolated Ollama probe
 also passed without loading a model. [Evidence and remaining integration](g1/RUNTIME_OWNERSHIP_2026-11-11.md).
-Automatic model admission for rehearsal remains unfinished.
+Automatic model admission was connected in the subsequent checkpoint above.
 
 ## Visual inspection before recorded-form actions - 2026-11-11
 

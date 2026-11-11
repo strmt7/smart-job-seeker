@@ -258,6 +258,15 @@ used by development tools and tests. Do not add WSL or Docker as product require
 
 ## Real pitfalls already hit (don't rediscover these)
 
+- Windows process creation metadata can remain inspectable after exit while a
+  handle retains the process object. Creation time binds identity; it does not
+  establish liveness. Verify owned job membership or a native process wait
+  signal, drain the owned job, and inspect listener ownership separately. A
+  short TCP probe timing out is not evidence of a remaining listener.
+- Application-record directory names contain a 16-hex job prefix followed by
+  the task identity. Bind temporary runtime ownership to the task portion.
+  Exercise the compiled route as well as direct renderer fixtures when
+  changing these contracts.
 - A fully GPU-loaded model can still retain substantial host-memory prompt
   checkpoints. The owned Ollama qualifier uses a 512 MiB saved-prompt cache and
   one checkpoint per slot; verify backend acceptance in its native log. Retain

@@ -95,6 +95,7 @@ pub(crate) fn render(
     python: &Path,
     config: waypoint_browser::rehearsal::RehearsalConfig,
     screenshots: &Path,
+    selection: Option<&crate::private_inference::Selection>,
 ) -> Result<Value, String> {
     render_at(
         source,
@@ -103,6 +104,7 @@ pub(crate) fn render(
         config,
         screenshots,
         std::net::SocketAddr::from(([127, 0, 0, 1], 11434)),
+        selection,
     )
 }
 
@@ -114,6 +116,7 @@ fn render_at(
     mut config: waypoint_browser::rehearsal::RehearsalConfig,
     screenshots: &Path,
     vision_addr: std::net::SocketAddr,
+    selection: Option<&crate::private_inference::Selection>,
 ) -> Result<Value, String> {
     use waypoint_applications::{driver::BrowserDriver, form_mapping::BrowserCommand};
     use waypoint_browser::CdpDriver;
@@ -156,9 +159,29 @@ fn render_at(
     if source.rehearse {
         config.attachments = Some(stage_sample_attachments(screenshots)?);
     }
+    let mut model_session = if source.rehearse {
+        selection
+            .map(|selected| crate::private_inference::Session::admit(selected, python, screenshots))
+            .transpose()?
+    } else {
+        None
+    };
+    let vision_addr = model_session
+        .as_ref()
+        .map(|session| session.addr)
+        .unwrap_or(vision_addr);
+    let runtime_guard = model_session
+        .as_ref()
+        .and_then(|session| session.guard.clone());
     let (mut driver, ready) =
         CdpDriver::launch_rehearsal(python, config).map_err(|error| error.to_string())?;
-    let mut rehearsal = source.rehearse.then(|| Rehearsal::new(vision_addr));
+    let mut rehearsal = source.rehearse.then(|| {
+        Rehearsal::new(
+            vision_addr,
+            selection.map(|value| &value.choice),
+            runtime_guard,
+        )
+    });
     let result: Result<Value, String> = (|| {
         if ready.entry_url != entry
             || ready
@@ -229,14 +252,42 @@ fn render_at(
             "replay":{"served":report["served"],"blocked":report["blocked"],"unsupported_targets":report["unsupported_targets"]}}),
         )
     })();
-    driver
+    let close = driver
         .execute(&BrowserCommand::Close)
-        .map_err(|error| error.to_string())?;
-    let mut result = result?;
+        .map_err(|error| error.to_string());
+    let mut result = result;
     if let Some(rehearsal) = rehearsal {
-        result["rehearsal"] = rehearsal.finish();
+        let record = rehearsal.finish();
+        if let Ok(result) = &mut result {
+            result["rehearsal"] = record;
+        }
     }
-    Ok(result)
+    let mut cleanup = Vec::new();
+    if let Err(error) = close {
+        cleanup.push(error);
+    }
+    if let Some(session) = model_session.as_mut() {
+        let stopped = session.stop();
+        if let Ok(result) = &mut result {
+            result["model_admission"] = session.metadata.clone();
+        }
+        match stopped {
+            Err(error) => cleanup.push(error),
+            Ok(()) => {
+                if let Ok(result) = &mut result {
+                    result["model_admission"]["session_closed"] = json!(true);
+                }
+            }
+        }
+    }
+    if !cleanup.is_empty() {
+        let cleanup = cleanup.join("; ");
+        return Err(match result {
+            Ok(_) => cleanup,
+            Err(error) => format!("{error}; cleanup: {cleanup}"),
+        });
+    }
+    result
 }
 
 #[cfg(windows)]
@@ -417,16 +468,24 @@ struct RehearsalVision {
 
 #[cfg(windows)]
 impl RehearsalVision {
-    fn new(addr: std::net::SocketAddr) -> Self {
+    fn new(
+        addr: std::net::SocketAddr,
+        choice: Option<&crate::model_preferences::Choice>,
+        guard: Option<crate::visual_review::RequestGuard>,
+    ) -> Self {
         let identity = crate::check_inference_memory()
             .ok()
-            .and_then(|()| crate::resident_model_identity_at(addr).ok().flatten());
+            .and_then(|()| crate::resident_model_identity_at(addr).ok().flatten())
+            .filter(|identity| choice.is_none_or(|choice| choice.matches(identity)));
         let metadata = identity
             .as_ref()
             .map(|value| json!({"name":value.name,"digest":value.digest}));
         Self {
             addr,
-            model: identity.map(crate::visual_review::VisionIdentityGuard::from_identity),
+            model: identity.map(|identity| {
+                crate::visual_review::VisionIdentityGuard::from_identity(identity)
+                    .with_request_guard(guard)
+            }),
             identity: metadata.unwrap_or(Value::Null),
             targets: Vec::new(),
         }
@@ -508,8 +567,12 @@ struct Rehearsal {
 
 #[cfg(windows)]
 impl Rehearsal {
-    fn new(addr: std::net::SocketAddr) -> Self {
-        let vision = RehearsalVision::new(addr);
+    fn new(
+        addr: std::net::SocketAddr,
+        choice: Option<&crate::model_preferences::Choice>,
+        guard: Option<crate::visual_review::RequestGuard>,
+    ) -> Self {
+        let vision = RehearsalVision::new(addr, choice, guard);
         let halted = vision.model.is_none();
         Self {
             vision,
@@ -907,6 +970,7 @@ mod tests {
             fixture.config,
             &screenshots,
             addr,
+            None,
         )
         .unwrap();
         fs::write(&output, serde_json::to_vec_pretty(&result).unwrap()).unwrap();
@@ -1002,12 +1066,107 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn rehearsal_without_a_qualified_visual_model_stops_before_entry() {
-        let result = Rehearsal::new("127.0.0.1:0".parse().unwrap()).finish();
+        let result = Rehearsal::new("127.0.0.1:0".parse().unwrap(), None, None).finish();
         assert_eq!(result["halted"], true);
         assert_eq!(result["visual_gate"]["required"], true);
         assert_eq!(result["visual_gate"]["available"], false);
         assert_eq!(result["visual_gate"]["targets"], json!([]));
         assert_eq!(result["fields"], json!([]));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "loads one selected local vision model into an owned private runtime; fictional archive only"]
+    fn automatic_private_model_rehearsal() {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Fixture {
+            source: Source,
+            python: PathBuf,
+            config: waypoint_browser::rehearsal::RehearsalConfig,
+            manifest_sha256: String,
+            url: String,
+            selection: crate::private_inference::Selection,
+        }
+        let path = PathBuf::from(
+            std::env::var_os("WAYPOINT_AUTO_MODEL_FIXTURE")
+                .expect("Hash-bound private fixture required"),
+        );
+        let target = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target")
+            .canonicalize()
+            .unwrap();
+        assert!(path.canonicalize().unwrap().starts_with(&target));
+        let bytes = read(&path, 128 * 1024).unwrap();
+        assert_eq!(
+            waypoint_domain::sha256_hex(&bytes),
+            std::env::var("WAYPOINT_AUTO_MODEL_FIXTURE_SHA256").unwrap()
+        );
+        let fixture: Fixture = serde_json::from_slice(&bytes).unwrap();
+        assert!(fixture.source.rehearse);
+        let folder = path.parent().unwrap();
+        let attempt = folder.join("automatic-rehearsal");
+        fs::create_dir(&attempt).unwrap();
+        let screenshots = attempt.join("screenshots");
+        fs::create_dir(&screenshots).unwrap();
+        let lease = crate::doc_suggest::lease().unwrap();
+        crate::private_inference::create_namespace(&attempt, "automatic-rehearsal").unwrap();
+        let existing = crate::resident_model_status().unwrap();
+        assert_eq!(existing["state"], "no_model");
+        let result = render(
+            &fixture.source,
+            &fixture.url,
+            &fixture.python,
+            fixture.config,
+            &screenshots,
+            Some(&fixture.selection),
+        );
+        let cleanup = crate::private_inference::cleanup_namespace(&attempt, "automatic-rehearsal");
+        if let Ok(value) = &result {
+            fs::write(
+                folder.join("automatic-rehearsal.private.json"),
+                serde_json::to_vec_pretty(value).unwrap(),
+            )
+            .unwrap();
+        }
+        cleanup.unwrap();
+        let result = result.unwrap();
+        let admission = &result["model_admission"];
+        assert_eq!(admission["mode"], "private");
+        assert_eq!(admission["session_closed"], true);
+        assert_eq!(admission["model"], fixture.selection.choice.name);
+        assert_eq!(admission["digest"], fixture.selection.choice.digest);
+        let pid = admission["pid"].as_u64().unwrap() as u32;
+        let legacy_presence =
+            processkit::process_is_alive(pid, admission["creation_token"].as_u64()).unwrap();
+        fs::write(folder.join("process-state.private.json"),serde_json::to_vec_pretty(&json!({"identity_metadata_visible":legacy_presence,"native_exit":admission["process_exit"]})).unwrap()).unwrap();
+        assert_eq!(admission["process_exit"]["exited"], true);
+        assert_eq!(admission["endpoint_after_stop"]["owners"], json!([]));
+        assert_eq!(admission["connect_after_stop"]["connected"], false);
+        assert_eq!(result["manifest_sha256"], fixture.manifest_sha256);
+        assert_eq!(result["rehearsal"]["halted"], false);
+        let fields = result["rehearsal"]["fields"].as_array().unwrap();
+        assert_eq!(
+            fields
+                .iter()
+                .map(|v| v["label"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            ["First name", "Email", "Country"]
+        );
+        assert!(fields.iter().all(|v| v["status"] == "visually_matched"));
+        let targets = result["rehearsal"]["visual_gate"]["targets"]
+            .as_array()
+            .unwrap();
+        assert_eq!(targets.len(), 5);
+        assert!(targets.iter().all(|v| v["status"] == "visually_matched"));
+        assert_eq!(crate::resident_model_status().unwrap(), existing);
+        assert!(!attempt.join("model-runtime").exists());
+        assert!(!fs::read_dir(&attempt).unwrap().any(|v| v
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with("local-model-runtime-")));
+        drop(lease);
     }
 
     #[test]
