@@ -130,6 +130,8 @@ pub(crate) struct Probe {
     #[serde(default)]
     pub assets: std::collections::BTreeMap<String, std::collections::BTreeSet<AssetKind>>,
     #[serde(default)]
+    pub asset_request_origins: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
     pub preload_projection_failures: usize,
     pub omitted_requests: u64,
     pub ineligible_requests: u64,
@@ -163,6 +165,11 @@ impl Probe {
             && self.assets.len() <= self.urls.len()
             && self.assets.iter().all(|(url, kinds)| {
                 self.urls.contains(url) && !kinds.is_empty() && kinds.len() <= 6
+            })
+            && self.asset_request_origins.len() <= self.assets.len()
+            && self.asset_request_origins.iter().all(|(url, origin)| {
+                self.assets.contains_key(url)
+                    && waypoint_net::PublicRequestOrigin::parse(origin).is_ok()
             })
             && self.preload_projection_failures <= 512
             && self.pending_commands <= 128

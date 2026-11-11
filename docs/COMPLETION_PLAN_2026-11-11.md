@@ -9,9 +9,11 @@ original source and fixture scopes.
 ## Current milestone
 
 Three real public page copies save, with incomplete rendering explicitly retained.
-Implement validated public request-context binding for supporting responses;
-verify Origin/variant matching and CORS before repeating offline form and model
-qualification. [Comparison](g1/PUBLIC_SOURCE_DIVERSITY_2026-11-11.md).
+Validated public Origin/GET-variant binding now lets one copy render its styled
+application screen. Classify the remaining refused data requests and qualify
+unproven no-CORS asset context without widening application-write access; then
+repeat usable offline forms and the local model's own qualification.
+[Current evidence](g1/PUBLIC_REQUEST_CONTEXT_2026-11-11.md).
 
 Connect saved, encrypted model preferences to automatic admission of a bounded
 private runtime for saved-copy rehearsal. Verify the compiled route, visual field

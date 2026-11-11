@@ -223,7 +223,7 @@ pub fn get(url: &str, timeout_ms: u64) -> Result<HttpResponse, NetError> {
 }
 
 pub fn get_capped(url: &str, timeout_ms: u64, max_bytes: usize) -> Result<HttpResponse, NetError> {
-    let response = get_response(url, timeout_ms, max_bytes, false)?;
+    let response = get_response(url, timeout_ms, max_bytes, false, None)?;
     Ok(HttpResponse {
         status: response.status,
         body: response.body,
@@ -241,7 +241,50 @@ pub fn get_asset_capped(
     if max_bytes == 0 || max_bytes > DEFAULT_MAX_BYTES || timeout_ms == 0 || timeout_ms > 60_000 {
         return Err(NetError::InvalidResponse("invalid asset capture budget"));
     }
-    validate_asset_response(get_response(url, timeout_ms, max_bytes, true)?)
+    validate_asset_response(get_response(url, timeout_ms, max_bytes, true, None)?)
+}
+
+/// A canonical public HTTPS origin, never an arbitrary header value. This
+/// validates syntax only; capture callers must bind it to an admitted document.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PublicRequestOrigin(String);
+impl PublicRequestOrigin {
+    pub fn parse(raw: &str) -> Result<Self, NetError> {
+        let parsed = parse_url(raw)?;
+        if raw.len() > 1024
+            || !parsed.https
+            || parsed.port != 443
+            || parsed.request_target != "/"
+            || parsed.host.contains(':')
+            || raw != format!("https://{}", parsed.host.to_ascii_lowercase())
+            || !waypoint_connectors::is_public_host_url(raw)
+        {
+            return Err(NetError::BadUrl("invalid public request origin".into()));
+        }
+        Ok(Self(raw.to_owned()))
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+/// Anonymous public GET with one validated Origin, for an observed CORS asset.
+/// No credentials, arbitrary headers, preflight or redirect following.
+pub fn get_asset_capped_with_origin(
+    url: &str,
+    timeout_ms: u64,
+    max_bytes: usize,
+    origin: &PublicRequestOrigin,
+) -> Result<CapturedResponse, NetError> {
+    if max_bytes == 0 || max_bytes > DEFAULT_MAX_BYTES || timeout_ms == 0 || timeout_ms > 60_000 {
+        return Err(NetError::InvalidResponse("invalid asset capture budget"));
+    }
+    validate_asset_response(get_response(
+        url,
+        timeout_ms,
+        max_bytes,
+        true,
+        Some(origin),
+    )?)
 }
 
 /// Parse an already obtained response stream without opening any connection.
@@ -306,6 +349,7 @@ fn get_response(
     timeout_ms: u64,
     max_bytes: usize,
     asset: bool,
+    origin: Option<&PublicRequestOrigin>,
 ) -> Result<CapturedResponse, NetError> {
     let parsed = parse_url(url)?;
     if !parsed.https {
@@ -368,9 +412,11 @@ fn get_response(
                     "GET",
                     None,
                     asset,
+                    origin,
                 )?;
                 let mut response = http::receive(&mut stream, "GET", max_bytes)?;
                 response.request_header_names = Some(request_header_names);
+                response.request_origin = origin.cloned();
                 return Ok(response);
             }
             Err(e) => last_err = Some(NetError::Io(format!("connect {addr}: {e}"))),
@@ -415,7 +461,7 @@ pub fn request<S: Read + Write>(
     body: Option<&[u8]>,
     max_bytes: usize,
 ) -> Result<HttpResponse, NetError> {
-    write_request(stream, host, path, method, body, false)?;
+    write_request(stream, host, path, method, body, false, None)?;
     let response = http::receive(stream, method, max_bytes)?;
     Ok(HttpResponse {
         status: response.status,
@@ -430,6 +476,7 @@ fn write_request<S: Write>(
     method: &str,
     body: Option<&[u8]>,
     asset: bool,
+    origin: Option<&PublicRequestOrigin>,
 ) -> Result<Vec<String>, NetError> {
     if host.is_empty()
         || !host.is_ascii()
@@ -444,9 +491,17 @@ fn write_request<S: Write>(
     {
         return Err(NetError::BadUrl("invalid request target or method".into()));
     }
+    if origin.is_some() && (!asset || method != "GET" || body.is_some()) {
+        return Err(NetError::InvalidResponse(
+            "Origin requires an anonymous asset GET",
+        ));
+    }
+    let origin_header = origin
+        .map(|o| format!("Origin: {}\r\n", o.as_str()))
+        .unwrap_or_default();
     let bytes = body.unwrap_or(&[]);
     let head = if asset {
-        format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: {USER_AGENT}\r\nAccept: */*\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n")
+        format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: {USER_AGENT}\r\nAccept: */*\r\nAccept-Encoding: identity\r\n{origin_header}Connection: close\r\n\r\n")
     } else {
         format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: {USER_AGENT}\r\nAccept: application/json\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",bytes.len())
     };
@@ -488,6 +543,70 @@ pub fn decode_chunked(body: &[u8]) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn public_origin_is_canonical_and_cannot_carry_candidate_or_header_data() {
+        assert_eq!(
+            PublicRequestOrigin::parse("https://example.org")
+                .unwrap()
+                .as_str(),
+            "https://example.org"
+        );
+        for value in [
+            "null",
+            "https://localhost",
+            "https://127.0.0.1",
+            "http://example.org",
+            "https://example.org/",
+            "https://example.org:443",
+            "https://example.org/job",
+            "https://example.org?candidate=x",
+            "https://user@example.org",
+            "https://EXAMPLE.org",
+            "https://example.org\r\nCookie: private",
+            "https://[::1]",
+        ] {
+            assert!(PublicRequestOrigin::parse(value).is_err(), "{value:?}");
+        }
+    }
+
+    #[test]
+    fn public_origin_wire_is_exact_and_limited_to_bodyless_asset_get() {
+        let origin = PublicRequestOrigin::parse("https://example.org").unwrap();
+        let mut wire = Vec::new();
+        let names = write_request(
+            &mut wire,
+            "cdn.example.org",
+            "/app.js",
+            "GET",
+            None,
+            true,
+            Some(&origin),
+        )
+        .unwrap();
+        assert!(names.contains(&"origin".to_owned()));
+        assert!(String::from_utf8(wire)
+            .unwrap()
+            .contains("\r\nOrigin: https://example.org\r\n"));
+        for (method, body, asset) in [
+            ("POST", None, true),
+            ("GET", Some(b"".as_slice()), true),
+            ("GET", None, false),
+        ] {
+            let mut wire = Vec::new();
+            assert!(write_request(
+                &mut wire,
+                "example.org",
+                "/",
+                method,
+                body,
+                asset,
+                Some(&origin)
+            )
+            .is_err());
+            assert!(wire.is_empty());
+        }
+    }
 
     #[test]
     fn chunked_stream_requires_complete_delimiters_at_every_boundary() {
@@ -644,11 +763,12 @@ mod tests {
             ("example.org", "/", "GET\r\nPOST"),
         ] {
             let mut written = Vec::new();
-            assert!(write_request(&mut written, host, path, method, None, false).is_err());
+            assert!(write_request(&mut written, host, path, method, None, false, None).is_err());
             assert!(written.is_empty());
         }
         let mut written = Vec::new();
-        let names = write_request(&mut written, "example.org", "/job", "GET", None, true).unwrap();
+        let names =
+            write_request(&mut written, "example.org", "/job", "GET", None, true, None).unwrap();
         assert_eq!(
             names,
             [

@@ -2,7 +2,8 @@
 //!
 //! Run on an owned worker, never the UI thread. Callers establish that the entry
 //! and subsequent URLs are public and contain no candidate data. There is no
-//! browser cookie/header/body input and no candidate-entry operation. Freezing
+//! browser cookie, arbitrary-header or body input and no candidate-entry operation.
+//! A validated public Origin may come from an admitted document's observed asset GET. Freezing
 //! consumes the coordinator and its transport; the archive has no live fallback.
 //! OS DNS cancellation still requires the caller's outer process lifetime.
 use crate::capture_discovery::AssetKind;
@@ -46,7 +47,7 @@ impl Default for CaptureBudget {
         Self {
             resources: 96,
             requests: 160,
-            body_bytes: 4 * 1024 * 1024,
+            body_bytes: 8 * 1024 * 1024,
             received_bytes: 32 * 1024 * 1024,
             seconds: 90,
         }
@@ -56,7 +57,7 @@ impl CaptureBudget {
     fn valid(self) -> bool {
         (1..=512).contains(&self.resources)
             && (1..=1024).contains(&self.requests)
-            && (1..=4 * 1024 * 1024).contains(&self.body_bytes)
+            && (1..=8 * 1024 * 1024).contains(&self.body_bytes)
             && (1..=60 * 1024 * 1024).contains(&self.received_bytes)
             && (1..=120).contains(&self.seconds)
     }
@@ -137,6 +138,8 @@ pub struct AssetOrigin {
     observed_url_sha256: String,
     discovery_round: u8,
     kinds: BTreeSet<AssetKind>,
+    #[serde(skip)]
+    request_origin: Option<waypoint_net::PublicRequestOrigin>,
 }
 
 #[derive(Clone, Serialize)]
@@ -153,6 +156,7 @@ pub struct AssetObservation {
 struct ResourceScope<'a> {
     origin: &'a str,
     assets: Option<&'a BTreeSet<AssetKind>>,
+    request_origin: Option<&'a waypoint_net::PublicRequestOrigin>,
 }
 #[derive(Clone, Serialize)]
 pub struct RobotsRecord {
@@ -168,12 +172,30 @@ pub struct FrozenCapture {
 }
 
 trait Transport: Send {
-    fn get(&mut self, url: &str, millis: u64, max_bytes: usize) -> Result<CapturedResponse, ()>;
+    fn get(
+        &mut self,
+        url: &str,
+        millis: u64,
+        max_bytes: usize,
+        origin: Option<&waypoint_net::PublicRequestOrigin>,
+    ) -> Result<CapturedResponse, ()>;
 }
 struct PublicTransport;
 impl Transport for PublicTransport {
-    fn get(&mut self, url: &str, millis: u64, max_bytes: usize) -> Result<CapturedResponse, ()> {
-        waypoint_net::get_asset_capped(url, millis, max_bytes).map_err(|_| ())
+    fn get(
+        &mut self,
+        url: &str,
+        millis: u64,
+        max_bytes: usize,
+        origin: Option<&waypoint_net::PublicRequestOrigin>,
+    ) -> Result<CapturedResponse, ()> {
+        match origin {
+            Some(origin) => {
+                waypoint_net::get_asset_capped_with_origin(url, millis, max_bytes, origin)
+            }
+            None => waypoint_net::get_asset_capped(url, millis, max_bytes),
+        }
+        .map_err(|_| ())
     }
 }
 enum Robots {
@@ -200,6 +222,7 @@ pub struct CaptureSession {
     embedded_origins: Vec<EmbeddedOrigin>,
     asset_origins: Vec<AssetOrigin>,
     asset_attempts: BTreeSet<String>,
+    document_origins: BTreeSet<String>,
     asset_observations: Vec<AssetObservation>,
     omitted_asset_observations: usize,
     unavailable_robots_asset_origins: BTreeSet<String>,
@@ -326,7 +349,14 @@ impl CaptureSession {
                 // render() must finish verified browser shutdown before returning.
                 // Failure never falls through to a public fetch or unrestricted browser.
                 let probe = match render(snapshot, remaining) {
-                    Ok(p) if p.valid() => p,
+                    Ok(p)
+                        if p.valid()
+                            && p.asset_request_origins
+                                .values()
+                                .all(|origin| self.document_origins.contains(origin)) =>
+                    {
+                        p
+                    }
                     _ => {
                         summary.stopped = DiscoveryStop::BrowserFailed;
                         break;
@@ -363,10 +393,14 @@ impl CaptureSession {
                     } else {
                         None
                     };
-                    let asset = probe
-                        .assets
-                        .get(url)
-                        .and_then(|kinds| self.asset_origin(url, kinds, round + 1));
+                    let asset = probe.assets.get(url).and_then(|kinds| {
+                        self.asset_origin(
+                            url,
+                            kinds,
+                            round + 1,
+                            probe.asset_request_origins.get(url).map(String::as_str),
+                        )
+                    });
                     if let Some(previous) = attempted.get(url) {
                         let new_binding = *previous
                             == (CaptureOutcome::NeedsReview {
@@ -397,6 +431,10 @@ impl CaptureSession {
                         self.capture_embedded(url, scope)
                     } else if let Some(scope) = asset {
                         self.capture_asset(url, scope)
+                    } else if probe.asset_request_origins.contains_key(url) {
+                        CaptureOutcome::NeedsReview {
+                            reason: CaptureGap::OriginNotDeclared,
+                        }
                     } else {
                         self.capture(url)
                     };
@@ -480,6 +518,7 @@ impl CaptureSession {
             Some(ResourceScope {
                 origin: &scope.origin,
                 assets: None,
+                request_origin: None,
             }),
         );
         if matches!(outcome, CaptureOutcome::Recorded { .. }) {
@@ -496,31 +535,47 @@ impl CaptureSession {
         raw: &str,
         kinds: &BTreeSet<AssetKind>,
         round: u8,
+        request_origin: Option<&str>,
     ) -> Option<AssetOrigin> {
         let url = resource_url(raw).ok()?;
         let origin = url.origin().ascii_serialization();
+        let request_origin = match request_origin {
+            Some(value) if self.document_origins.contains(value) => {
+                Some(waypoint_net::PublicRequestOrigin::parse(value).ok()?)
+            }
+            Some(_) => return None,
+            None => None,
+        };
+        let declared = self.sources.contains_key(&origin);
         if !self.entry_recorded
             || kinds.is_empty()
-            || self.sources.contains_key(&origin)
             || self.check_time().is_err()
             || self.records.len() >= self.budget.resources
             || self.sources.len() >= MAX_ORIGINS
-            || self.asset_attempts.len() >= MAX_ASSET_ORIGINS
+            || !declared
+                && self.asset_attempts.len() >= MAX_ASSET_ORIGINS
                 && !self.asset_attempts.contains(&origin)
         {
             return None;
         }
-        let source = waypoint_policy::source_for_host(url.host_str()?);
+        let source = self
+            .sources
+            .get(&origin)
+            .map(String::as_str)
+            .unwrap_or_else(|| waypoint_policy::source_for_host(url.host_str().unwrap_or("")));
         self.registry
             .check_public_route(source, Operation::Read)
             .ok()?;
-        self.asset_attempts.insert(origin.clone());
+        if !declared {
+            self.asset_attempts.insert(origin.clone());
+        }
         Some(AssetOrigin {
             origin,
             source: source.into(),
             observed_url_sha256: waypoint_domain::sha256_hex(raw.as_bytes()),
             discovery_round: round,
             kinds: kinds.clone(),
+            request_origin,
         })
     }
 
@@ -528,21 +583,22 @@ impl CaptureSession {
     fn capture_asset(&mut self, url: &str, scope: AssetOrigin) -> CaptureOutcome {
         // This binding permits only this observed asset and same-origin
         // redirects. It never promotes its host to an HTML/document origin.
-        if self.sources.contains_key(&scope.origin) {
-            return CaptureOutcome::NeedsReview {
-                reason: CaptureGap::OriginNotDeclared,
-            };
+        let temporary = !self.sources.contains_key(&scope.origin);
+        if temporary {
+            self.sources
+                .insert(scope.origin.clone(), scope.source.clone());
         }
-        self.sources
-            .insert(scope.origin.clone(), scope.source.clone());
         let outcome = self.capture_scoped(
             url,
             Some(ResourceScope {
                 origin: &scope.origin,
                 assets: Some(&scope.kinds),
+                request_origin: scope.request_origin.as_ref(),
             }),
         );
-        self.sources.remove(&scope.origin);
+        if temporary {
+            self.sources.remove(&scope.origin);
+        }
         if matches!(outcome, CaptureOutcome::Recorded { .. }) {
             if let Some(previous) = self
                 .asset_origins
@@ -625,6 +681,7 @@ impl CaptureSession {
             embedded_origins: vec![],
             asset_origins: vec![],
             asset_attempts: BTreeSet::new(),
+            document_origins: BTreeSet::new(),
             asset_observations: vec![],
             omitted_asset_observations: 0,
             unavailable_robots_asset_origins: BTreeSet::new(),
@@ -656,7 +713,12 @@ impl CaptureSession {
             .check_public_route(source, Operation::Read)
             .map_err(|_| CaptureGap::SourceNotAllowed)
     }
-    fn get(&mut self, url: &url::Url, limit: usize) -> Result<CapturedResponse, CaptureGap> {
+    fn get(
+        &mut self,
+        url: &url::Url,
+        limit: usize,
+        origin: Option<&waypoint_net::PublicRequestOrigin>,
+    ) -> Result<CapturedResponse, CaptureGap> {
         self.check_time()?;
         self.authorize(url)?;
         crate::capture_privacy::checked_reference(url.as_str()).map_err(privacy_gap)?;
@@ -670,7 +732,7 @@ impl CaptureSession {
         self.requests += 1;
         let response = self
             .transport
-            .get(url.as_str(), millis, body_limit + HEADER_ALLOWANCE)
+            .get(url.as_str(), millis, body_limit + HEADER_ALLOWANCE, origin)
             .map_err(|_| CaptureGap::Network)?;
         if response.request_method != "GET" {
             return Err(CaptureGap::Network);
@@ -693,7 +755,7 @@ impl CaptureSession {
                     if !seen.insert(next.to_string()) {
                         return Err(CaptureGap::RedirectLoop);
                     }
-                    let response = self.get(&next, ROBOTS_BYTES)?;
+                    let response = self.get(&next, ROBOTS_BYTES, None)?;
                     if is_redirect(response.status) {
                         if depth == 5 {
                             return Err(CaptureGap::RedirectLimit);
@@ -807,7 +869,11 @@ impl CaptureSession {
                 &next,
                 scope.as_ref().is_some_and(|scope| scope.assets.is_some()),
             )?;
-            let response = self.get(&next, self.budget.body_bytes)?;
+            let response = self.get(
+                &next,
+                self.budget.body_bytes,
+                scope.as_ref().and_then(|scope| scope.request_origin),
+            )?;
             let status = response.status;
             let size = response.body.len();
             if scope.as_ref().is_some_and(|scope| scope.assets.is_some()) {
@@ -863,12 +929,23 @@ impl CaptureSession {
                 .map_err(|_| CaptureGap::ArchiveRejected)?;
         }
         for (url, response) in chain {
+            let document_origin =
+                response_has_type(&response, &["text/html", "application/xhtml+xml"])
+                    .then(|| {
+                        url::Url::parse(&url)
+                            .map(|u| u.origin().ascii_serialization())
+                            .ok()
+                    })
+                    .flatten();
             if self.recorded.contains(&url) {
                 continue;
             }
             if builder.add(&url, response).is_err() {
                 self.failed = true;
                 return Err(CaptureGap::ArchiveRejected);
+            }
+            if let Some(origin) = document_origin {
+                self.document_origins.insert(origin);
             }
             self.recorded.insert(url);
         }
@@ -1062,20 +1139,9 @@ fn asset_observation(url: &str, response: &CapturedResponse) -> AssetObservation
     }
 }
 fn asset_response(response: &CapturedResponse, kinds: &BTreeSet<AssetKind>) -> bool {
-    // Anonymous assets have no CORS Origin request. A varying representation
-    // cannot be substituted for one selected by a later browser Origin.
-    if response
-        .headers
-        .iter()
-        .filter(|h| h.name.eq_ignore_ascii_case("vary"))
-        .any(|h| {
-            std::str::from_utf8(&h.value).map_or(true, |value| {
-                value
-                    .split(',')
-                    .any(|field| !field.trim().eq_ignore_ascii_case("accept-encoding"))
-            })
-        })
-    {
+    // Use the archive's native request proof and variant contract. An absent
+    // Origin is still insufficient for an Origin-varying non-document asset.
+    if crate::rehearsal_capture::snapshot_origin_binding(response).is_err() {
         return false;
     }
     let Some(mime) = response_mime(response) else {
@@ -1143,14 +1209,26 @@ mod tests {
         dropped: Arc<AtomicBool>,
     }
     impl Transport for Fake {
-        fn get(&mut self, url: &str, millis: u64, max: usize) -> Result<CapturedResponse, ()> {
+        fn get(
+            &mut self,
+            url: &str,
+            millis: u64,
+            max: usize,
+            origin: Option<&waypoint_net::PublicRequestOrigin>,
+        ) -> Result<CapturedResponse, ()> {
             assert!((1..=8000).contains(&millis));
-            assert!(max <= 4 * 1024 * 1024 + HEADER_ALLOWANCE);
+            assert!(max <= 8 * 1024 * 1024 + HEADER_ALLOWANCE);
             self.calls.lock().unwrap().push(url.into());
-            self.replies
+            let mut response = self
+                .replies
                 .get_mut(url)
                 .and_then(VecDeque::pop_front)
-                .ok_or(())
+                .ok_or(())?;
+            if let Some(origin) = origin {
+                response.request_origin = Some(origin.clone());
+                response.request_header_names = Some(vec!["host".into(), "origin".into()]);
+            }
+            Ok(response)
         }
     }
     impl Drop for Fake {
@@ -1162,6 +1240,7 @@ mod tests {
         CapturedResponse {
             request_method: "GET".into(),
             request_header_names: None,
+            request_origin: None,
             status,
             body: body.as_bytes().to_vec(),
             headers: vec![waypoint_net::Header {
@@ -1276,7 +1355,7 @@ mod tests {
         for (url, kind) in [(JS, AssetKind::Script), (CSS, AssetKind::Stylesheet)] {
             let scope = h
                 .session
-                .asset_origin(url, &BTreeSet::from([kind]), 1)
+                .asset_origin(url, &BTreeSet::from([kind]), 1, None)
                 .unwrap();
             assert!(matches!(
                 h.session.capture_asset(url, scope),
@@ -1472,7 +1551,7 @@ mod tests {
             h.session.capture_entry();
             let scope = h
                 .session
-                .asset_origin(CSS, &BTreeSet::from([AssetKind::Stylesheet]), 1)
+                .asset_origin(CSS, &BTreeSet::from([AssetKind::Stylesheet]), 1, None)
                 .unwrap();
             gap(
                 h.session.capture_asset(CSS, scope),
@@ -1547,20 +1626,20 @@ mod tests {
         h.session.capture_entry();
         let kinds = BTreeSet::from([AssetKind::Script]);
         for url in [BAD, MOVED] {
-            let scope = h.session.asset_origin(url, &kinds, 1).unwrap();
+            let scope = h.session.asset_origin(url, &kinds, 1, None).unwrap();
             gap(
                 h.session.capture_asset(url, scope),
                 CaptureGap::AssetUnavailable,
             );
         }
-        let scope = h.session.asset_origin(DENIED, &kinds, 1).unwrap();
+        let scope = h.session.asset_origin(DENIED, &kinds, 1, None).unwrap();
         gap(
             h.session.capture_asset(DENIED, scope),
             CaptureGap::RobotsDenied,
         );
         assert!(h
             .session
-            .asset_origin("https://WWW.LINKEDIN.COM./app.js", &kinds, 1)
+            .asset_origin("https://WWW.LINKEDIN.COM./app.js", &kinds, 1, None)
             .is_none());
         assert!(!h
             .calls
@@ -1578,7 +1657,7 @@ mod tests {
         let kinds = BTreeSet::from([AssetKind::Script]);
         assert!(h
             .session
-            .asset_origin("https://unobserved.fixture.invalid/app.js", &kinds, 1)
+            .asset_origin("https://unobserved.fixture.invalid/app.js", &kinds, 1, None)
             .is_none());
         h.session.capture_entry();
         for index in 0..MAX_ASSET_ORIGINS {
@@ -1587,17 +1666,18 @@ mod tests {
                 .asset_origin(
                     &format!("https://cdn{index}.fixture.invalid/app.js"),
                     &kinds,
-                    1
+                    1,
+                    None
                 )
                 .is_some());
         }
         assert!(h
             .session
-            .asset_origin("https://extra.fixture.invalid/app.js", &kinds, 1)
+            .asset_origin("https://extra.fixture.invalid/app.js", &kinds, 1, None)
             .is_none());
         assert!(h
             .session
-            .asset_origin("https://cdn0.fixture.invalid/other.js", &kinds, 2)
+            .asset_origin("https://cdn0.fixture.invalid/other.js", &kinds, 2, None)
             .is_some());
         assert_eq!(h.session.report().asset_origin_attempts, MAX_ASSET_ORIGINS);
         assert_eq!(h.calls.lock().unwrap().len(), 2);
@@ -1989,7 +2069,7 @@ mod tests {
             gap(h.session.capture(raw), CaptureGap::PrivateUrl);
             assert_eq!(
                 h.session
-                    .get(&url::Url::parse(raw).unwrap(), 1024)
+                    .get(&url::Url::parse(raw).unwrap(), 1024, None)
                     .unwrap_err(),
                 CaptureGap::PrivateUrl
             );
@@ -2161,6 +2241,130 @@ mod tests {
         assert_eq!(h.calls.lock().unwrap().len(), 7);
         assert!(!h.calls.lock().unwrap().iter().any(|u| u.ends_with("/6")));
         assert!(h.session.freeze().is_err());
+    }
+
+    #[test]
+    fn large_script_uses_bounded_resource_allowance_and_smaller_explicit_caps_still_stop() {
+        const ASSET: &str = "https://cdn.fixture.invalid/app.js";
+        let body = format!("/*{}*/", "x".repeat(4 * 1024 * 1024));
+        for (cap, accepted) in [(4 * 1024 * 1024, false), (8 * 1024 * 1024, true)] {
+            let mut h = harness(
+                vec![
+                    ("https://fixture.invalid/robots.txt", robots("")),
+                    (ENTRY, html()),
+                    ("https://cdn.fixture.invalid/robots.txt", robots("")),
+                    (ASSET, response(200, &body, "text/javascript")),
+                ],
+                "user_supplied_url",
+                CaptureBudget {
+                    body_bytes: cap,
+                    ..CaptureBudget::default()
+                },
+            );
+            assert!(matches!(
+                h.session.capture_entry(),
+                CaptureOutcome::Recorded { .. }
+            ));
+            let scope = h
+                .session
+                .asset_origin(ASSET, &BTreeSet::from([AssetKind::Script]), 1, None)
+                .unwrap();
+            let outcome = h.session.capture_asset(ASSET, scope);
+            if accepted {
+                assert!(matches!(outcome, CaptureOutcome::Recorded { .. }));
+            } else {
+                assert_eq!(
+                    outcome,
+                    CaptureOutcome::NeedsReview {
+                        reason: CaptureGap::BudgetExceeded
+                    }
+                );
+            }
+            assert!(h.session.freeze().is_ok());
+        }
+    }
+
+    #[test]
+    fn captured_asset_origin_is_bound_to_an_admitted_document_and_sent_to_transport() {
+        const ASSET: &str = "https://cdn.fixture.invalid/bootstrap.json";
+        let mut asset = response(200, "{}", "application/json");
+        asset.headers.push(waypoint_net::Header {
+            name: "Vary".into(),
+            value: b"Origin, Access-Control-Request-Headers, Access-Control-Request-Method"
+                .to_vec(),
+        });
+        let mut h = harness(
+            vec![
+                ("https://fixture.invalid/robots.txt", robots("")),
+                (ENTRY, html()),
+                ("https://cdn.fixture.invalid/robots.txt", robots("")),
+                (ASSET, asset),
+            ],
+            "user_supplied_url",
+            CaptureBudget::default(),
+        );
+        assert!(matches!(
+            h.session.capture_entry(),
+            CaptureOutcome::Recorded { .. }
+        ));
+        let kinds = BTreeSet::from([AssetKind::Json]);
+        assert!(h
+            .session
+            .asset_origin(ASSET, &kinds, 1, Some("https://unadmitted.invalid"))
+            .is_none());
+        let scope = h
+            .session
+            .asset_origin(ASSET, &kinds, 1, Some(ORIGIN))
+            .unwrap();
+        let outcome = h.session.capture_asset(ASSET, scope);
+        assert!(
+            matches!(outcome, CaptureOutcome::Recorded { .. }),
+            "{outcome:?}"
+        );
+        let frozen = h.session.freeze().unwrap();
+        let manifest: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(frozen.snapshot.root.join("replay.json")).unwrap(),
+        )
+        .unwrap();
+        let row = manifest["resources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["url"] == ASSET)
+            .unwrap();
+        assert_eq!(row["request_origin"], ORIGIN);
+        assert_eq!(row["request_preflight_absent"], true);
+        assert!(row.get("request_origin_absent").is_none());
+    }
+
+    #[test]
+    fn unadmitted_probe_origin_cannot_fall_back_to_an_originless_public_fetch() {
+        const ASSET: &str = "https://fixture.invalid/bootstrap.json";
+        let mut h = harness(
+            vec![
+                ("https://fixture.invalid/robots.txt", robots("")),
+                (ENTRY, html()),
+            ],
+            "user_supplied_url",
+            CaptureBudget::default(),
+        );
+        let summary = h
+            .session
+            .discover_with_probe(1, |snapshot, _| {
+                assert!(snapshot.root.is_dir());
+                let mut p = probe(vec![ASSET]);
+                p.assets
+                    .insert(ASSET.into(), BTreeSet::from([AssetKind::Json]));
+                p.asset_request_origins
+                    .insert(ASSET.into(), "https://unadmitted.invalid".into());
+                Ok(p)
+            })
+            .unwrap();
+        assert!(matches!(
+            summary.stopped,
+            crate::capture_discovery::DiscoveryStop::BrowserFailed
+        ));
+        assert!(!h.calls.lock().unwrap().iter().any(|url| url == ASSET));
     }
 
     fn probe(urls: Vec<&str>) -> crate::capture_discovery::Probe {

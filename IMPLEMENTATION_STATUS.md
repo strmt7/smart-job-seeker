@@ -1,3 +1,12 @@
+## Bound public asset context - 2026-11-11
+
+Saved copies can preserve a validated browser-observed public Origin and explicit
+GET preflight-header absence. An 8 MiB resource allowance now retains a real
+bundle that exceeded 4 MiB, with aggregate/process bounds unchanged. The Ashby
+copy renders its styled application screen, but still stops at an offline data
+error; no successful form completion is claimed.
+[Evidence and remaining limits](docs/g1/PUBLIC_REQUEST_CONTEXT_2026-11-11.md).
+
 ## Real source-copy diversity - 2026-11-11
 
 Three real public page copies now save through the compiled app after shared

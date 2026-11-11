@@ -13,7 +13,14 @@ struct RecordedHttp {
     dropped: Arc<AtomicBool>,
 }
 impl Transport for RecordedHttp {
-    fn get(&mut self, url: &str, _: u64, max: usize) -> Result<CapturedResponse, ()> {
+    fn get(
+        &mut self,
+        url: &str,
+        _: u64,
+        max: usize,
+        origin: Option<&waypoint_net::PublicRequestOrigin>,
+    ) -> Result<CapturedResponse, ()> {
+        assert!(origin.is_none(), "Fixture has no CORS context");
         self.requests.lock().unwrap().push(url.into());
         let bytes = self.responses.remove(url).ok_or(())?;
         waypoint_net::read_asset_response(&mut Cursor::new(bytes), "GET", max).map_err(|_| ())

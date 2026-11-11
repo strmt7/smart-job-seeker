@@ -1,5 +1,13 @@
 # Known limitations register (T050)
 
+Public request-context update, 2026-11-11: observed public Origin and GET
+preflight-absence binding are implemented. One real saved page now renders a
+styled application screen but still cannot expose fields without additional
+data. Its offline error does not establish that the live job is closed.
+Unproven no-CORS asset context and server-dependent steps remain open.
+[Current evidence](docs/g1/PUBLIC_REQUEST_CONTEXT_2026-11-11.md) supersedes the
+earlier request-context gap only within that measured scope.
+
 Real source-copy diversity, 2026-11-11: three anonymous page families saved,
 but offline previews remain incomplete (0, 0 and 9 controls). Request-context/
 CORS binding is unresolved. Archive success and zero blocked requests do not

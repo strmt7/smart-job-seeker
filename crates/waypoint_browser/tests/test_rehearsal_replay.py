@@ -57,6 +57,62 @@ class ReplayTests(unittest.TestCase):
             if marker is not None:item['request_origin_absent']=marker
             with self.subTest(vary=vary,marker=marker),self.assertRaisesRegex(replay.ReplayError,'unbound_replay_variant'):
                 self.fixture.archive()
+    def test_explicit_public_origin_binds_even_a_response_without_vary(self):
+        url='https://cdn.fixture.invalid/app.js'
+        self.fixture.add(url,'app.bin',b'void 0',content_type='text/javascript')
+        self.fixture.resources[-1]['request_origin']='https://fixture.invalid'
+        archive=self.fixture.archive()
+        request={'url':url,'method':'GET','headers':{'Origin':'https://fixture.invalid'}}
+        self.assertEqual(archive.response(request,'Script')[1],'recorded_response')
+        for headers in [{},{'Origin':'null'},{'Origin':'https://other.invalid'},
+                        {'Origin':'https://fixture.invalid','origin':'https://fixture.invalid'}]:
+            self.assertEqual(archive.response({**request,'headers':headers},'Script')[1],'origin_variant_not_recorded')
+        self.fixture.resources[-1]['headers'].append({'name':'Vary','value':'Origin'})
+        self.assertEqual(self.fixture.archive().response(request,'Script')[1],'recorded_response')
+        self.fixture.resources[-1]['request_origin_absent']=True
+        with self.assertRaisesRegex(replay.ReplayError,'unbound_replay_variant'):self.fixture.archive()
+
+    def test_preflight_absence_requires_manifest_proof_and_matching_bodyless_get(self):
+        url='https://cdn.fixture.invalid/bootstrap'
+        self.fixture.add(url,'bootstrap.bin',b'{}',content_type='application/json')
+        item=self.fixture.resources[-1]
+        item['headers'].append({'name':'Vary','value':'Origin, Access-Control-Request-Headers, Access-Control-Request-Method'})
+        item['request_origin']='https://fixture.invalid'
+        request={'url':url,'method':'GET','headers':{'Origin':'https://fixture.invalid'}}
+        for marker in [None,False,1]:
+            item.pop('request_preflight_absent',None)
+            if marker is not None:item['request_preflight_absent']=marker
+            with self.assertRaisesRegex(replay.ReplayError,'unbound_replay_variant'):self.fixture.archive()
+        item['request_preflight_absent']=True
+        archive=self.fixture.archive()
+        self.assertEqual(archive.response(request,'Fetch')[1],'recorded_response')
+        for name in ['Access-Control-Request-Headers','access-control-request-method']:
+            changed={**request,'headers':{**request['headers'],name:''}}
+            self.assertEqual(archive.response(changed,'Fetch')[1],'preflight_variant_not_recorded')
+        for changes in [{'method':'OPTIONS'},{'method':'POST'},{'hasPostData':True}]:
+            self.assertIsNone(archive.response({**request,**changes},'Fetch')[0])
+        item['headers']=[{'name':'Content-Type','value':'application/json'}]
+        with self.assertRaisesRegex(replay.ReplayError,'unbound_replay_variant'):self.fixture.archive()
+
+    def test_large_script_replays_with_the_request_and_aggregate_budgets_preserved(self):
+        url='https://cdn.fixture.invalid/app.js'
+        data=b'/*'+b'x'*(4*1024**2)+b'*/'
+        self.fixture.add(url,'app.bin',data,content_type='text/javascript')
+        archive=self.fixture.archive()
+        response,reason=archive.response({'url':url,'method':'GET'},'Script')
+        self.assertEqual(reason,'recorded_response')
+        self.assertEqual(digest(base64.b64decode(response['body'])),digest(data))
+        self.assertEqual(archive.response({'url':url,'method':'POST','postData':'x'*(4*1024**2+1)})[1],'opaque_request_body')
+        self.fixture.add(url+'2','oversize.bin',b'x'*(replay.MAX_BODY+1),content_type='text/javascript')
+        with self.assertRaises(replay.ReplayError):self.fixture.archive()
+
+    def test_legacy_document_origin_ineligible_for_collection_still_replays(self):
+        for url in ['https://[2606:4700:4700::1111]/form','https://fixture.invalid:443/form']:
+            self.fixture.resources[0]['url']=url
+            archive=self.fixture.archive({'entry_url':url})
+            self.assertEqual(archive.response({'url':url,'method':'GET'},'Document')[1],'recorded_response')
+            self.assertEqual(archive.document_origins,set())
+
     def test_decoded_response_preserves_bytes_and_repairs_transport_headers(self):
         self.fixture.add('https://fixture.invalid/style','style.bin',b'body{color:green}',headers=[{'name':'Content-Encoding','value':'gzip'},{'name':'Content-Length','value':'99'},{'name':'Content-Type','value':'text/css'}])
         archive=self.fixture.archive();response,reason=archive.response({'url':'https://fixture.invalid/style','method':'GET'})
@@ -86,7 +142,7 @@ class ReplayTests(unittest.TestCase):
 
     def test_request_and_manifest_resource_budgets_are_enforced(self):
         archive=self.fixture.archive()
-        with patch.object(replay,'MAX_BODY',64):
+        with patch.object(replay,'MAX_REQUEST_BODY',64):
             for fields in [{'postData':'a'*65}, {'postData':'資格'*32},
                            {'postDataEntries':[{'bytes':base64.b64encode(b'a'*65).decode()}]},
                            {'postDataEntries':[{'bytes':'YQ=='}]*257}]:
@@ -490,6 +546,34 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(report['assets'],{url:['script'],'https://cdn.fixture.invalid/style':['stylesheet'],
                                           'https://cdn.fixture.invalid/manifest':['json']})
         self.assertEqual(report['ineligible_requests'],4)
+    def test_only_admitted_document_origin_is_projected_and_conflicting_variants_are_removed(self):
+        url='https://cdn.fixture.invalid/app.js'
+        self.broker.host({'id':1,'method':'Page.navigate','sessionId':'page','params':{'url':self.fixture.archive().entry_url}})
+        self.frame(url=url,method='GET',resource_type='Script',headers={'Origin':'https://fixture.invalid'})
+        self.assertEqual(self.report()['asset_request_origins'],{url:'https://fixture.invalid'})
+        self.assertNotIn('asset_request_origins',self.broker.report())
+        for index,origin in enumerate(['null','https://unadmitted.invalid','https://fixture.invalid/path']):
+            self.frame(url=url+str(index),method='GET',resource_type='Script',headers={'Origin':origin})
+        self.assertEqual(self.report()['urls'],[url])
+        self.frame(url=url,method='GET',resource_type='Script',headers={})
+        self.assertEqual(self.report()['urls'],[])
+        self.assertEqual(self.report()['asset_request_origins'],{})
+        self.frame(url=url,method='GET',resource_type='Script',headers={'Origin':'https://fixture.invalid'})
+        self.assertEqual(self.report()['urls'],[])
+        self.assertEqual(len(self.broker.conflicting_proposals),1)
+
+    def test_origin_conflict_tombstones_share_the_fixed_proposal_budget(self):
+        self.broker.host({'id':1,'method':'Page.navigate','sessionId':'page','params':{'url':self.fixture.archive().entry_url}})
+        for index in range(140):
+            url='https://cdn.fixture.invalid/'+str(index)
+            self.frame(url=url,method='GET',resource_type='Script',headers={'Origin':'https://fixture.invalid'})
+            self.frame(url=url,method='GET',resource_type='Script',headers={})
+        self.assertEqual(len(self.broker.conflicting_proposals),128)
+        self.assertEqual(self.report()['urls'],[])
+        self.assertGreater(self.report()['omitted_requests'],0)
+        for origin in ['https://fixture.invalid:443','https://FIXTURE.invalid','https://fixture.invalid/path']:
+            with self.assertRaises(replay.ReplayError):replay.public_origin(origin)
+
     def test_published_fetch_preload_matches_observed_other_requests_without_broadening_other_types(self):
         data=b'''<head><base href="https://cdn.fixture.invalid/assets/">
           <link rel="preload" as="fetch" href="bootstrap.data?x=1&amp;y=2">

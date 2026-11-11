@@ -12,7 +12,8 @@ from pathlib import Path, PurePosixPath
 import re
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
-MAX_BODY = 4 * 1024**2
+MAX_BODY = 8 * 1024**2
+MAX_REQUEST_BODY = 4 * 1024**2
 MAX_TOTAL = 64 * 1024**2
 INTERNAL_ID = 1_000_000_000
 MAX_RETIRED_SESSIONS = 4096
@@ -143,6 +144,18 @@ def sha(value):
     return isinstance(value, str) and re.fullmatch('[a-f0-9]{64}', value) is not None
 
 
+def public_origin(value):
+    if not isinstance(value, str) or len(value) > 1024:
+        raise ReplayError('invalid_public_request_origin')
+    url = request_url(value + '/')
+    parsed = urlsplit(url)
+    if (not value.isascii() or any(ord(c) == 127 for c in value) or parsed.port is not None
+            or parsed.netloc != parsed.hostname or value != 'https://' + parsed.netloc
+            or parsed.path != '/' or parsed.query or parsed.fragment):
+        raise ReplayError('invalid_public_request_origin')
+    return value
+
+
 class FetchPreloads(HTMLParser):
     """Project unambiguous head declarations; never fetch or inspect form values."""
     def __init__(self, url):
@@ -227,7 +240,7 @@ class Archive:
         required = {'url', 'method', 'request_body_sha256', 'status', 'headers', 'body_file', 'body_sha256'}
         for item in value['resources']:
             if (not isinstance(item, dict) or not required.issubset(item)
-                    or set(item) - required - {'request_origin_absent'} or not isinstance(item['method'], str)
+                    or set(item) - required - {'request_origin_absent', 'request_origin', 'request_preflight_absent'} or not isinstance(item['method'], str)
                     or not re.fullmatch('[A-Z]{1,32}', item['method'])
                     or item['method'] in ('CONNECT', 'TRACE') or not sha(item['request_body_sha256'])
                     or type(item['status']) is not int or not 200 <= item['status'] <= 599 or item['status'] in (206,304)):
@@ -271,7 +284,19 @@ class Archive:
             vary = next((h['value'] for h in normalized if h['name'].lower() == 'vary'), None)
             fields = {v.strip().lower() for v in vary.split(',')} if vary is not None else set()
             bound_origin = item.get('request_origin_absent') is True
-            if (fields - {'accept-encoding', 'origin'} or ('origin' in fields) != bound_origin
+            explicit_origin = item.get('request_origin')
+            if 'request_origin' in item:
+                public_origin(explicit_origin)
+                if bound_origin or item['method'] != 'GET':
+                    raise ReplayError('unbound_replay_variant')
+            preflight_fields = {'access-control-request-headers', 'access-control-request-method'}
+            preflight_bound = item.get('request_preflight_absent') is True
+            if (bool(fields & preflight_fields) != preflight_bound
+                    or 'request_preflight_absent' in item and not preflight_bound
+                    or preflight_bound and item['method'] != 'GET'):
+                raise ReplayError('unbound_replay_variant')
+            if (fields - {'accept-encoding', 'origin'} - preflight_fields or ('origin' in fields and not (bound_origin or explicit_origin))
+                    or bound_origin and 'origin' not in fields
                     or 'request_origin_absent' in item and not bound_origin
                     or bound_origin and (item['method'] != 'GET' or not any(
                         h['name'].lower() == 'content-type' and h['value'].split(';')[0].strip().lower() in ('text/html', 'application/xhtml+xml')
@@ -281,6 +306,17 @@ class Archive:
             if key in self.resources:
                 raise ReplayError('ambiguous_replay_resource')
             self.resources[key] = {**item, 'headers': normalized}
+        self.document_origins = set()
+        for item in self.resources.values():
+            if not any(h['name'].lower() == 'content-type' and h['value'].split(';')[0].strip().lower()
+                       in ('text/html', 'application/xhtml+xml') for h in item['headers']):
+                continue
+            try:
+                self.document_origins.add(public_origin('https://' + urlsplit(item['url']).netloc))
+            except ReplayError:
+                # A legacy representation may still replay even when its origin
+                # is ineligible for the new anonymous CORS collection path.
+                continue
         self.fetch_preloads = set()
         self.preload_projection_failures = 0
         preload_bytes = 0
@@ -336,26 +372,26 @@ class Archive:
             pieces, size = [], 0
             for entry in entries:
                 if (not isinstance(entry, dict) or set(entry) != {'bytes'}
-                        or not isinstance(entry['bytes'], str) or len(entry['bytes']) > (MAX_BODY+2)//3*4):
+                        or not isinstance(entry['bytes'], str) or len(entry['bytes']) > (MAX_REQUEST_BODY+2)//3*4):
                     return None, 'opaque_request_body'
                 try:
                     piece = base64.b64decode(entry['bytes'], validate=True)
                 except (ValueError, UnicodeEncodeError):
                     return None, 'opaque_request_body'
                 size += len(piece)
-                if size > MAX_BODY:
+                if size > MAX_REQUEST_BODY:
                     return None, 'opaque_request_body'
                 pieces.append(piece)
             data = b''.join(pieces)
         if 'postData' in request:
             post = request['postData']
-            if not isinstance(post, str) or len(post) > MAX_BODY:
+            if not isinstance(post, str) or len(post) > MAX_REQUEST_BODY:
                 return None, 'opaque_request_body'
             try:
                 text_data = post.encode('utf-8')
             except UnicodeEncodeError:
                 return None, 'opaque_request_body'
-            if len(text_data) > MAX_BODY or data is not None and data != text_data:
+            if len(text_data) > MAX_REQUEST_BODY or data is not None and data != text_data:
                 return None, 'opaque_request_body'
             data = text_data
         if data is None:
@@ -365,18 +401,22 @@ class Archive:
         item = self.resources.get((method, url, hashlib.sha256(data).hexdigest()))
         if item is None:
             return None, 'response_not_recorded'
-        if item.get('request_origin_absent'):
-            # GET document navigation has no Fetch-generated Origin. Other
-            # resource types can add Origin in the network stack after a pause;
-            # their apparent absence is insufficient evidence for this variant.
+        if item.get('request_origin') or item.get('request_origin_absent') or item.get('request_preflight_absent'):
             names = [key.lower() for key in headers if isinstance(key, str)]
-            if (resource_type != 'Document' or 'origin' in names or len(headers) > 128
-                    or len(names) != len(headers) or len(set(names)) != len(names)
+            if (len(headers) > 128 or len(names) != len(headers) or len(set(names)) != len(names)
                     or any(not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]{1,256}", key)
                            or not isinstance(value, str) or len(value) > 8192
-                           or any(ord(c) < 32 or ord(c) == 127 for c in value)
-                           for key, value in headers.items())):
+                           or any(ord(c) < 32 or ord(c) == 127 for c in value) for key, value in headers.items())):
                 return None, 'origin_variant_not_recorded'
+            if item.get('request_origin') and [value for key, value in headers.items() if key.lower() == 'origin'] != [item['request_origin']]:
+                return None, 'origin_variant_not_recorded'
+            if item.get('request_origin_absent') and (resource_type != 'Document' or 'origin' in names):
+                return None, 'origin_variant_not_recorded'
+            # Fetch adds these forbidden headers to OPTIONS preflights, not GET.
+            # Explicit or malformed evidence still refuses the recorded variant.
+            if item.get('request_preflight_absent') and any(name in names for name in
+                    ('access-control-request-headers', 'access-control-request-method')):
+                return None, 'preflight_variant_not_recorded'
         return {'responseCode': item['status'], 'responseHeaders': item['headers'],
                 'body': base64.b64encode(self.body(item['body_file'], item['body_sha256'])).decode('ascii')}, 'recorded_response'
 
@@ -390,7 +430,7 @@ class Broker:
         self.discovery = discovery
         self.discovery_session, self.discovery_frames = None, set()
         self.proposals, self.proposal_bytes, self.omitted_proposals, self.ineligible_requests = {}, 0, 0, 0
-        self.asset_proposals = {}
+        self.asset_proposals, self.asset_request_origins, self.conflicting_proposals = {}, {}, set()
         self.next_id, self.pending, self.attaching, self.sessions, self.targets = INTERNAL_ID, {}, {}, {}, {}
         self.session_targets, self.session_parents = {}, {}
         self.retired_sessions, self.retired_replies = set(), set()
@@ -446,6 +486,7 @@ class Broker:
                 'urls':sorted(self.proposals),
                 'child_documents':sorted(url for url, child in self.proposals.items() if child),
                 'assets':{url:sorted(kinds) for url,kinds in sorted(self.asset_proposals.items())},
+                'asset_request_origins':dict(sorted(self.asset_request_origins.items())),
                 'preload_projection_failures':self.archive.preload_projection_failures,
                 'omitted_requests':self.omitted_proposals,
                 'ineligible_requests':self.ineligible_requests, 'pending_commands':len(self.pending),
@@ -553,16 +594,40 @@ class Broker:
             self.ineligible_requests += 1
             return
         url=request_url(request['url'])
+        if url in self.conflicting_proposals:
+            self.ineligible_requests += 1
+            return
+        origins = [value for key, value in request.get('headers', {}).items() if key.lower() == 'origin']
+        origin = None
+        if origins:
+            try:
+                if len(origins) != 1 or asset_kind is None:
+                    raise ReplayError('ambiguous_request_origin')
+                origin = public_origin(origins[0])
+                if origin not in self.archive.document_origins:
+                    raise ReplayError('unadmitted_request_origin')
+            except ReplayError:
+                self.ineligible_requests += 1
+                return
+        if url in self.proposals and self.asset_request_origins.get(url) != origin:
+            self.ineligible_requests += 1
+            self.conflicting_proposals.add(url)
+            self.proposal_bytes -= len(url.encode('utf-8'))
+            del self.proposals[url]
+            self.asset_proposals.pop(url, None)
+            self.asset_request_origins.pop(url, None)
+            return
         if url in self.proposals:
             self.proposals[url] |= child_document
             if asset_kind is not None:self.asset_proposals.setdefault(url,set()).add(asset_kind)
             return
-        if len(url)>4096 or len(self.proposals)>=128 or self.proposal_bytes+len(url.encode('utf-8'))>128*1024:
+        if len(url)>4096 or len(self.proposals)+len(self.conflicting_proposals)>=128 or self.proposal_bytes+len(url.encode('utf-8'))>128*1024:
             self.omitted_proposals += 1
             return
         self.proposals[url]=child_document
         self.proposal_bytes+=len(url.encode('utf-8'))
         if asset_kind is not None:self.asset_proposals[url]={asset_kind}
+        if origin is not None:self.asset_request_origins[url]=origin
 
     def bind(self, session, kind, original, paused, target, parent=None):
         if not isinstance(session, str) or not session or len(session) > 512 or any(ord(c)<32 for c in session) or session in self.sessions or session in self.retired_sessions:

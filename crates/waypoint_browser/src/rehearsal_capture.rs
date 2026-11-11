@@ -11,7 +11,7 @@ use std::{
 };
 use waypoint_net::{BodyFraming, CapturedResponse};
 
-const MAX_BODY: usize = 4 * 1024 * 1024;
+const MAX_BODY: usize = 8 * 1024 * 1024;
 const MAX_TOTAL: usize = 64 * 1024 * 1024;
 
 pub struct SnapshotBuilder {
@@ -51,22 +51,18 @@ fn canonical(raw: &str, entry: bool) -> Result<String, String> {
     }
     Ok(url.to_string())
 }
-/// Return the binding needed by a supported response variant, without writing
-/// or poisoning a snapshot when an optional public resource is unsupported.
-pub(super) fn snapshot_origin_binding(response: &CapturedResponse) -> Result<bool, String> {
-    if response.headers.iter().any(|h| {
-        h.name.eq_ignore_ascii_case("connection")
-            && std::str::from_utf8(&h.value).is_ok_and(|value| {
-                value
-                    .split(',')
-                    .any(|token| token.trim().eq_ignore_ascii_case("vary"))
-            })
-    }) {
-        return Ok(false);
-    }
-    let origin_absent = response.request_header_names.as_ref().is_some_and(|names| {
+/// Native request context needed to match a supported response variant.
+#[derive(Default)]
+pub(super) struct SnapshotRequestBinding {
+    origin: bool,
+    preflight: bool,
+}
+pub(super) fn snapshot_origin_binding(
+    response: &CapturedResponse,
+) -> Result<SnapshotRequestBinding, String> {
+    let names = response.request_header_names.as_ref().and_then(|names| {
         let mut unique = BTreeSet::new();
-        !names.is_empty()
+        (!names.is_empty()
             && names.len() <= 128
             && names.iter().all(|name| {
                 !name.is_empty()
@@ -76,10 +72,34 @@ pub(super) fn snapshot_origin_binding(response: &CapturedResponse) -> Result<boo
                         .all(|c| c.is_ascii_alphanumeric() || b"!#$%&'*+.^_`|~-".contains(&c))
                     && unique.insert(name.to_ascii_lowercase())
             })
-            && unique.contains("host")
-            && !unique.contains("origin")
+            && unique.contains("host"))
+        .then_some(unique)
     });
-    let mut origin = false;
+    let origin_absent = response.request_origin.is_none()
+        && names
+            .as_ref()
+            .is_some_and(|names| !names.contains("origin"));
+    let origin_present = response.request_origin.is_some()
+        && names.as_ref().is_some_and(|names| names.contains("origin"));
+    if response.request_origin.is_some() && (!origin_present || response.request_method != "GET") {
+        return Err("Recorded request Origin lacks native GET header evidence".into());
+    }
+    let preflight_absent = response.request_method == "GET"
+        && names.as_ref().is_some_and(|names| {
+            !names.contains("access-control-request-headers")
+                && !names.contains("access-control-request-method")
+        });
+    if response.headers.iter().any(|h| {
+        h.name.eq_ignore_ascii_case("connection")
+            && std::str::from_utf8(&h.value).is_ok_and(|value| {
+                value
+                    .split(',')
+                    .any(|v| v.trim().eq_ignore_ascii_case("vary"))
+            })
+    }) {
+        return Ok(SnapshotRequestBinding::default());
+    }
+    let mut binding = SnapshotRequestBinding::default();
     for header in response
         .headers
         .iter()
@@ -91,14 +111,19 @@ pub(super) fn snapshot_origin_binding(response: &CapturedResponse) -> Result<boo
             if field.eq_ignore_ascii_case("accept-encoding") {
                 continue;
             }
-            if field.eq_ignore_ascii_case("origin") && origin_absent {
-                origin = true;
+            if field.eq_ignore_ascii_case("origin") && (origin_absent || origin_present) {
+                binding.origin = true;
+            } else if preflight_absent
+                && (field.eq_ignore_ascii_case("access-control-request-headers")
+                    || field.eq_ignore_ascii_case("access-control-request-method"))
+            {
+                binding.preflight = true;
             } else {
                 return Err("Header-dependent snapshot representation needs review".into());
             }
         }
     }
-    if origin {
+    if binding.origin && !origin_present {
         let headers: Vec<_> = response
             .headers
             .iter()
@@ -119,10 +144,10 @@ pub(super) fn snapshot_origin_binding(response: &CapturedResponse) -> Result<boo
                 )
             })
         {
-            return Err("Origin-dependent snapshots require HTML navigation resources".into());
+            return Err("Absent Origin snapshots require HTML navigation resources".into());
         }
     }
-    Ok(origin)
+    Ok(binding)
 }
 pub(super) fn write_new(root: &Path, name: &str, bytes: &[u8]) -> Result<String, String> {
     let mut file = fs::OpenOptions::new()
@@ -257,7 +282,7 @@ impl SnapshotBuilder {
         let mut headers = Vec::new();
         let mut connection_names = BTreeSet::new();
         let mut ignored_cookie = false;
-        let vary_origin = snapshot_origin_binding(&response)?;
+        let binding = snapshot_origin_binding(&response)?;
         for h in &response.headers {
             if h.name.eq_ignore_ascii_case("connection") {
                 let value = std::str::from_utf8(&h.value)
@@ -265,6 +290,10 @@ impl SnapshotBuilder {
                 connection_names.extend(value.split(',').map(|v| v.trim().to_ascii_lowercase()));
             }
         }
+        let request_origin = response
+            .request_origin
+            .as_ref()
+            .map(|origin| origin.as_str().to_owned());
         for h in response.headers {
             let name = h.name.to_ascii_lowercase();
             if matches!(name.as_str(), "set-cookie" | "set-cookie2") {
@@ -348,8 +377,13 @@ impl SnapshotBuilder {
         self.files.insert(filename.clone(), hash.clone());
         self.urls.insert(url.clone());
         let mut resource = json!({"url":url,"method":"GET","request_body_sha256":waypoint_domain::sha256_hex(b""),"status":response.status,"headers":headers,"body_file":filename,"body_sha256":hash});
-        if vary_origin {
+        if let Some(origin) = request_origin {
+            resource["request_origin"] = json!(origin);
+        } else if binding.origin {
             resource["request_origin_absent"] = json!(true);
+        }
+        if binding.preflight {
+            resource["request_preflight_absent"] = json!(true);
         }
         self.resources.push(resource);
         if ignored_cookie {
@@ -421,6 +455,35 @@ mod tests {
     fn builder(root: &Path) -> SnapshotBuilder {
         SnapshotBuilder::start(&root.join("capture"), "https://fixture.invalid/form#apply").unwrap()
     }
+    #[test]
+    fn snapshot_preflight_and_positive_origin_require_complete_native_get_proof() {
+        let mut value = response("void 0", "text/javascript", "");
+        value.headers.push(waypoint_net::Header {
+            name: "Vary".into(),
+            value: b"Origin, Access-Control-Request-Headers, Access-Control-Request-Method"
+                .to_vec(),
+        });
+        value.request_origin =
+            Some(waypoint_net::PublicRequestOrigin::parse("https://example.org").unwrap());
+        value.request_header_names = Some(vec!["host".into(), "origin".into()]);
+        let proof = snapshot_origin_binding(&value).unwrap();
+        assert!(proof.origin && proof.preflight);
+        for names in [
+            None,
+            Some(vec!["host"]),
+            Some(vec!["host", "origin", "access-control-request-method"]),
+            Some(vec!["host", "origin", "access-control-request-headers"]),
+            Some(vec!["host", "origin", "Origin"]),
+        ] {
+            value.request_header_names =
+                names.map(|names| names.into_iter().map(str::to_owned).collect());
+            assert!(snapshot_origin_binding(&value).is_err());
+        }
+        value.request_header_names = Some(vec!["host".into(), "origin".into()]);
+        value.request_method = "OPTIONS".into();
+        assert!(snapshot_origin_binding(&value).is_err());
+    }
+
     #[test]
     fn snapshot_origin_variation_requires_recorded_absence_and_binds_navigation() {
         let temp = tempfile::tempdir().unwrap();

@@ -20,6 +20,14 @@ arbitrary URL contains no personal information. The worker independently checks
 the URL/source binding and accepts no profile, cookies, credentials, request
 headers or form bodies in its request.
 
+Internally observed asset GETs may carry one validated public Origin from an
+admitted document. The native request and saved response retain that binding;
+replay requires the same context. GET preflight-header absence also requires
+explicit native evidence. Cookies, arbitrary headers and bodies remain excluded.
+Per-resource responses now allow 8 MiB with the 32 MiB default aggregate bound
+unchanged. [Context and real-page evidence](g1/PUBLIC_REQUEST_CONTEXT_2026-11-11.md)
+describe unsupported variants and remaining data-dependent stops.
+
 [Shared URL privacy checks](CAPTURE_URL_PRIVACY.md) now also guard redirects,
 robots requests and browser-discovered resources before transport. Known private
 keys/email-like references are refused; decoding and nesting uncertainty remains

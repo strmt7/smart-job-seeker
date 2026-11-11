@@ -1,3 +1,9 @@
+## Bound public asset context - 2026-11-11
+
+Validated Origin/GET-variant binding and a bounded resource-limit adjustment
+let the saved Ashby page render its styled application screen. It still needs
+missing offline data and remains a review case. [Measured scope](g1/PUBLIC_REQUEST_CONTEXT_2026-11-11.md).
+
 ## Real source-copy diversity - 2026-11-11
 
 The compiled app saved three real anonymous copies after shared capture repairs.
