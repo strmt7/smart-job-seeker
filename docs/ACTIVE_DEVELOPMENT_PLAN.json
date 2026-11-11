@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
   "reviewed_on": "2026-11-11",
-  "reviewed_source": "8bd000154a6debeb20c3544d05f20f0731220771",
+  "reviewed_source": "aaf02d03b7e80c18cce600ff2d0ceca2f9d332c0",
   "goal": "Continue the existing active Smart Jobseeker product-development goal",
   "plan": "docs/COMPLETION_PLAN_2026-11-11.md",
   "assessment": "docs/REPO_STATE_REVIEW_2026-11-11.md",
-  "next_task": "R01",
+  "next_task": "R02",
   "boundaries": [
     "main only",
     "headless development only",
@@ -28,7 +28,8 @@
         "apps/web_app/src/fit_task.rs",
         "apps/web_app/src/main.rs",
         "crates/waypoint_inference/src/ollama.rs",
-        "apps/web_app/web/app.js"
+        "apps/web_app/web/app.js",
+        "apps/web_app/src/form_task.rs"
       ],
       "acceptance": [
         "No slow socket monopolizes workspace state",
@@ -39,21 +40,23 @@
         "docs/REPO_STATE_REVIEW_2026-11-11.md",
         "docs/g1/CONTROL_PLANE_IO_2026-11-11.md",
         "docs/g1/DEFERRED_INVENTORY_2026-11-11.md",
-        "docs/g1/DEFERRED_FIT_2026-11-11.md"
+        "docs/g1/DEFERRED_FIT_2026-11-11.md",
+        "docs/g1/DEFERRED_FORM_INSPECTION_2026-11-11.md"
       ],
-      "next_action": "Reproduce and defer the remaining form-opening resident-model preflight with owned cancellation and current input/model binding; measure native-observation costs before declaring all-handler responsiveness.",
+      "next_action": "Qualify remaining native observations, cancellation/cleanup latency and uncollected-session idle expiry alongside representative form work; do not repeat passing preflight fixtures without a relevant change.",
       "execution_batch": "A",
       "steps": [
-        "Measure and move the form-opening resident-model preflight off the workspace owner without weakening source/input/model gates.",
-        "Audit remaining native observations and blocking handlers using bounded latency/overload/cancel/shutdown fixtures.",
-        "Preserve the passing fit/inventory/socket checkpoints; rerun only affected contracts, then advance R02/R03."
+        "Measure native observations and browser-operation cancellation/cleanup latency without blocking owner controls.",
+        "Define and qualify bounded uncollected-session idle expiry with actual owned-browser exit and honest pending-review outcomes.",
+        "Retain exact-source fit/inventory/form transport evidence and keep broader all-handler claims open."
       ],
       "completed_scopes": [
         "Committed bounded nonblocking transport, 68b3e891; hosted checks passed for that exact source.",
         "Owned model inventory, local 8bd00015; scoped local passing evidence only.",
-        "Fit preflight/cancellation, guarded context observation and manual Stop; scoped local workspace/native/client evidence, not all-handler readiness."
+        "Fit preflight/cancellation, guarded context observation and manual Stop; scoped local workspace/native/client evidence, not all-handler readiness.",
+        "Owned/deferred form inspection with task-bound Stop; passing local native/browser/client checks, not universal native-call interruption."
       ],
-      "open_checkpoint": "Other synchronous owner-thread handlers and native observations remain unqualified; main.rs::form_resident_model is still called during form opening.",
+      "open_checkpoint": "Native-observation and cleanup latency, uncollected inspection-session expiry, and broader admitted-workload behavior remain unqualified.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package."
     },
     {
@@ -458,7 +461,7 @@
     "binding": "Existing active Smart Jobseeker goal; verified active on 2026-11-11",
     "entry_point": "AGENTS.md",
     "queue": "docs/ACTIVE_DEVELOPMENT_PLAN.json",
-    "selection": "Read current source and evidence; resume owned handles; select the next unmet criterion of the earliest dependency-ready task. Continue remaining R01 form-opening/native observation work, then R02/R03.",
+    "selection": "Read next_task and verify its prerequisites. R02/R03 is now the independent product priority after scoped control-plane repair; preserve R01 residual native/cleanup work and all other unmet gates. Resume live owned handles rather than restarting.",
     "completion": "A package completion does not complete the product goal. Keep the overall goal active until all required product work is achieved.",
     "scheduling": "No new agents, automation, service or background scheduler created by this plan."
   },
@@ -479,9 +482,9 @@
     "build_state": "Last focused test compile failed; three stale start callers remain in current source. No current full-workspace pass claimed."
   },
   "working_tree_checkpoint": {
-    "baseline_head": "8bd000154a6debeb20c3544d05f20f0731220771",
-    "validated_changes": "Cancellable fit preflight, shared HTTP deadlines/cancellation, manual Stop and isolated lifecycle CI selection.",
-    "build_state": "Local workspace tests 1305 passed/593 ignored; Clippy, format and canonical build passed. Hosted evidence pending coherent publication.",
-    "evidence": "docs/g1/DEFERRED_FIT_2026-11-11.md"
+    "baseline_head": "aaf02d03b7e80c18cce600ff2d0ceca2f9d332c0",
+    "validated_changes": "Owned form inspection, deferred local-model admission, progress/Stop client and two explicitly selected owner-loop cases.",
+    "build_state": "Local workspace 1306 passed/594 ignored; Clippy, format, build and scoped native/browser/client checks passed. No hosted evidence for this local continuation.",
+    "evidence": "docs/g1/DEFERRED_FORM_INSPECTION_2026-11-11.md"
   }
 }

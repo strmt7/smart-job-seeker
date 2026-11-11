@@ -1,6 +1,11 @@
 //! One background form inspection; the server thread owns the resulting session.
 use crate::{doc_suggest, form_preview};
-use std::sync::{mpsc, Mutex};
+use std::sync::{
+    atomic::{AtomicBool, AtomicU8, Ordering},
+    mpsc, Arc, Mutex,
+};
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 use waypoint_applications::driver::BrowserDriver;
 use waypoint_domain::{JobIdentityId, Sha256Digest};
 use waypoint_inference::OllamaInference;
@@ -246,6 +251,9 @@ struct Task {
     visible: bool,
     experience_revisions: Vec<(String, u64)>,
     failure: Option<String>,
+    cancelled: Arc<AtomicBool>,
+    phase: Arc<AtomicU8>,
+    worker: Option<JoinHandle<()>>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 #[cfg(test)]
@@ -587,6 +595,7 @@ pub fn start(
     )
 }
 
+#[cfg(test)]
 pub fn start_bound(
     id: String,
     job_id: JobIdentityId,
@@ -596,15 +605,147 @@ pub fn start_bound(
     visible: bool,
     review: (i64, Vec<ExperienceMatch>, Option<(String, String)>),
 ) -> Result<(), String> {
-    let (pending_revision, experiences, route_binding) = review;
-    let (model, lease, no_model_reason) = match model {
-        Ok(Some(model)) => match doc_suggest::lease() {
-            Ok(lease) => (Some(model), Some(lease), String::new()),
-            Err(error) => (None, None, error),
-        },
-        Ok(None) => (None, None, "No eligible local model is loaded".into()),
-        Err(error) => (None, None, format!("Local model unavailable: {error}")),
+    start_with_source(
+        id,
+        job_id,
+        url,
+        profile,
+        ModelSource::Ready(model),
+        visible,
+        review,
+    )
+}
+
+pub fn start_resident_bound(
+    id: String,
+    job_id: JobIdentityId,
+    url: String,
+    profile: serde_json::Value,
+    runtime: std::net::SocketAddr,
+    visible: bool,
+    review: (i64, Vec<ExperienceMatch>, Option<(String, String)>),
+) -> Result<(), String> {
+    if runtime.ip() != std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST) || runtime.port() == 0 {
+        return Err("Form inspection requires a literal local runtime address".into());
+    }
+    start_with_source(
+        id,
+        job_id,
+        url,
+        profile,
+        ModelSource::Resident(runtime),
+        visible,
+        review,
+    )
+}
+
+enum ModelSource {
+    Resident(std::net::SocketAddr),
+    #[cfg(test)]
+    Ready(Result<Option<String>, String>),
+}
+
+struct SelectedModel {
+    runtime: std::net::SocketAddr,
+    identity: crate::resident_inference::ResidentIdentity,
+    context: u64,
+}
+
+fn check_cancel(cancelled: &AtomicBool) -> Result<(), String> {
+    if cancelled.load(Ordering::Acquire) {
+        Err("Form inspection was stopped".into())
+    } else {
+        Ok(())
+    }
+}
+
+fn guarded_model_status(
+    runtime: std::net::SocketAddr,
+    cancelled: &AtomicBool,
+) -> Result<serde_json::Value, String> {
+    let started = Instant::now();
+    let guard = || {
+        check_cancel(cancelled)?;
+        if started.elapsed() >= Duration::from_secs(6) {
+            Err("Local model check timed out".into())
+        } else {
+            Ok(())
+        }
     };
+    guard()?;
+    #[cfg(windows)]
+    crate::check_inference_memory()?;
+    guard()?;
+    let status = crate::resident_model_status_at_guarded(runtime, Some(&guard))?;
+    guard()?;
+    Ok(status)
+}
+
+fn selected_model(
+    status: &serde_json::Value,
+    runtime: std::net::SocketAddr,
+) -> Result<Option<SelectedModel>, String> {
+    let Some(name) = crate::form_model_from_status(status)? else {
+        return Ok(None);
+    };
+    let digest = status["model_digest"]
+        .as_str()
+        .filter(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()))
+        .ok_or("Resident model digest is unavailable")?;
+    let context = status["context_length"]
+        .as_u64()
+        .filter(|n| *n > 0)
+        .ok_or("Resident model context is unavailable")?;
+    Ok(Some(SelectedModel {
+        runtime,
+        identity: crate::resident_inference::ResidentIdentity {
+            name,
+            digest: digest.into(),
+        },
+        context,
+    }))
+}
+
+fn resolve_model(
+    source: ModelSource,
+    cancelled: &AtomicBool,
+) -> Result<Option<SelectedModel>, String> {
+    #[cfg(not(test))]
+    let ModelSource::Resident(runtime) = source;
+    #[cfg(test)]
+    let runtime = match source {
+        ModelSource::Resident(runtime) => runtime,
+        #[cfg(test)]
+        ModelSource::Ready(model) => {
+            let Some(expected) = model? else {
+                return Ok(None);
+            };
+            let runtime = "127.0.0.1:11434"
+                .parse()
+                .map_err(|_| "Invalid local runtime")?;
+            let selected = selected_model(&guarded_model_status(runtime, cancelled)?, runtime)?;
+            if selected
+                .as_ref()
+                .is_some_and(|model| model.identity.name == expected)
+            {
+                return Ok(selected);
+            }
+            return Err("The selected resident model changed".into());
+        }
+    };
+    selected_model(&guarded_model_status(runtime, cancelled)?, runtime)
+}
+
+fn start_with_source(
+    id: String,
+    job_id: JobIdentityId,
+    url: String,
+    profile: serde_json::Value,
+    source: ModelSource,
+    visible: bool,
+    review: (i64, Vec<ExperienceMatch>, Option<(String, String)>),
+) -> Result<(), String> {
+    let (pending_revision, experiences, route_binding) = review;
     let mut task = TASK.lock().map_err(|_| "Form inspection unavailable")?;
     if task.is_some() {
         return Err("A form inspection is running or awaiting its result".into());
@@ -615,6 +756,10 @@ pub fn start_bound(
         .iter()
         .map(|item| (item.id.clone(), item.revision))
         .collect();
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let flag = cancelled.clone();
+    let phase = Arc::new(AtomicU8::new(0));
+    let worker_phase = phase.clone();
     *task = Some(Task {
         id,
         receiver,
@@ -626,15 +771,32 @@ pub fn start_bound(
         visible,
         experience_revisions: experience_revisions.clone(),
         failure: None,
+        cancelled,
+        phase,
+        worker: None,
     });
-    drop(task);
-    std::thread::spawn(move || {
-        let _lease = lease;
+    let worker = std::thread::Builder::new().name("form-inspection".into()).spawn(move || {
         let mut used_revisions = Vec::new();
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<_, String> {
+            check_cancel(&flag)?;
+            let admission = resolve_model(source, &flag);
+            check_cancel(&flag)?;
+            let (model, lease, no_model_reason) = match admission {
+                Ok(Some(model)) => match doc_suggest::lease() {
+                    Ok(lease) => (Some(model), Some(lease), String::new()),
+                    Err(error) => (None, None, error),
+                },
+                Ok(None) => (None, None, "No eligible local model is loaded".into()),
+                Err(error) => (None, None, format!("Local model unavailable: {error}")),
+            };
+            let _lease = lease;
+            check_cancel(&flag)?;
+            worker_phase.store(1, Ordering::Release);
             let mut driver = crate::runtime_setup::launch_browser(vec![], visible)
                 .map_err(|e| e.to_string())?;
+            check_cancel(&flag)?;
             let (mut live, navigation_warning) = open_application_page(&mut driver, &url)?;
+            check_cancel(&flag)?;
             if should_seek_obscured_form(&live) {
                 let current = driver.current_url().map_err(|e| e.to_string())?;
                 let selector = driver.application_links().ok().and_then(|links| discovery_anchor_selector(&current, &links));
@@ -673,18 +835,27 @@ pub fn start_bound(
                     live.walls.push("The page changed during form discovery; inspect manually.".into());
                 }
             }
+            check_cancel(&flag)?;
             let observed_url = driver.current_url().map_err(|e| e.to_string())?;
             let initial_walls = live.walls.clone();
             let relevant = relevant_experiences(&live.schema, &experiences);
+            worker_phase.store(2, Ordering::Release);
             let mut preview = if let Some(model) = model {
-                let llm = OllamaInference::new("http://127.0.0.1:11434", model.clone())
+                let expected = model.identity.clone();
+                let context = model.context;
+                let address = model.runtime;
+                let resident_cancel = flag.clone();
+                let llm = OllamaInference::new(&format!("http://{address}"), expected.name.clone())
                     .map_err(|e| e.to_string())?
-                    .with_resident_context();
-                let mut llm = crate::resident_inference::ResidentInference::new(
-                    llm,
-                    model,
-                    crate::resident_model_identity,
-                );
+                    .with_resident_context().with_cancel_flag(flag.clone());
+                let identity = expected.clone();
+                let resident = move || {
+                    let status = guarded_model_status(address, &resident_cancel)?;
+                    let observed = selected_model(&status,address)?.ok_or("The resident model changed")?;
+                    if observed.identity != expected || observed.context != context {return Err("The resident model or context changed".into());}
+                    Ok(Some(observed.identity))
+                };
+                let mut llm = crate::resident_inference::ResidentInference::new(llm, identity.name.clone(), resident).with_identity(identity)?;
                 let mut informed = crate::experience_inference::ExperienceInference::new(&mut llm, &relevant);
                 let mut preview = form_preview::suggest_for_live_form(live, &mut informed, &profile)?;
                 used_revisions = used_experience_revisions(&relevant, informed.attempted_with_hints());
@@ -702,6 +873,8 @@ pub fn start_bound(
             } else {
                 form_preview::suggest_without_model(live, &profile, &no_model_reason)?
             };
+            check_cancel(&flag)?;
+            worker_phase.store(3, Ordering::Release);
             let fresh = driver.with_review_timeout(|browser| browser.inspect_current())
                 .map_err(|e| format!("Final form check failed; inspect it again: {e}"))?;
             if driver.current_url().map_err(|e| e.to_string())? != observed_url {
@@ -729,6 +902,7 @@ pub fn start_bound(
             if driver.current_url().map_err(|e| e.to_string())? != observed_url {
                 return Err("The application changed while checking page instructions; inspect it again".into());
             }
+            check_cancel(&flag)?;
             Ok((driver, preview))
         }))
         .unwrap_or_else(|_| Err("Form inspection stopped unexpectedly".into()));
@@ -743,6 +917,64 @@ pub fn start_bound(
             result,
         });
     });
+    match worker {
+        Ok(worker) => {
+            task.as_mut().expect("registered inspection").worker = Some(worker);
+            Ok(())
+        }
+        Err(error) => {
+            *task = None;
+            Err(format!("The form inspection could not start: {error}"))
+        }
+    }
+}
+
+pub fn progress(id: &str) -> Result<serde_json::Value, String> {
+    let tasks = TASK.lock().map_err(|_| "Form inspection unavailable")?;
+    let task = tasks
+        .as_ref()
+        .filter(|task| task.id == id)
+        .ok_or("Form inspection not found")?;
+    let phase = if task.cancelled.load(Ordering::Acquire) {
+        "stopping"
+    } else {
+        match task.phase.load(Ordering::Acquire) {
+            0 => "checking_model",
+            1 => "opening",
+            2 => "assessing",
+            _ => "checking_form",
+        }
+    };
+    Ok(serde_json::json!({"status":"running","phase":phase}))
+}
+
+pub fn cancel(id: &str) -> Result<serde_json::Value, String> {
+    let tasks = TASK.lock().map_err(|_| "Form inspection unavailable")?;
+    let task = tasks
+        .as_ref()
+        .filter(|task| task.id == id)
+        .ok_or("Form inspection not found")?;
+    if task.failure.is_some() || task.worker.as_ref().is_some_and(JoinHandle::is_finished) {
+        return Ok(serde_json::json!({"status":"finished"}));
+    }
+    task.cancelled.store(true, Ordering::Release);
+    Ok(serde_json::json!({"status":"stopping"}))
+}
+
+pub fn shutdown() -> Result<(), String> {
+    let task = TASK
+        .lock()
+        .map_err(|_| "Form inspection unavailable")?
+        .take();
+    if let Some(mut task) = task {
+        task.cancelled.store(true, Ordering::Release);
+        if let Some(worker) = task.worker.take() {
+            worker
+                .join()
+                .map_err(|_| "Form inspection stopped unexpectedly during shutdown")?;
+        }
+        // Dropping the receiver also drains any uncollected browser session.
+    }
     Ok(())
 }
 
@@ -752,6 +984,16 @@ pub fn poll(id: &str) -> Result<Option<Finished>, String> {
         .as_mut()
         .filter(|task| task.id == id)
         .ok_or("Form inspection not found")?;
+    if let Some(worker) = task.worker.as_ref() {
+        if !worker.is_finished() {
+            return Ok(None);
+        }
+    }
+    if let Some(worker) = task.worker.take() {
+        if worker.join().is_err() {
+            task.failure = Some("Form inspection stopped unexpectedly".into());
+        }
+    }
     if let Some(error) = &task.failure {
         return Ok(Some(Finished {
             job_id: task.job_id.clone(),
@@ -765,7 +1007,11 @@ pub fn poll(id: &str) -> Result<Option<Finished>, String> {
         }));
     }
     match task.receiver.try_recv() {
-        Ok(result) => {
+        Ok(mut result) => {
+            if task.cancelled.load(Ordering::Acquire) {
+                result.result = Err("Form inspection was stopped".into());
+                result.experience_revisions.clear();
+            }
             if let Err(error) = &result.result {
                 task.failure = Some(error.clone());
             } else {
@@ -824,6 +1070,34 @@ mod tests {
     use waypoint_applications::form_mapping::{
         BrowserCommand, FormField, FormFieldType, FormSchema,
     };
+
+    #[test]
+    fn admission_requires_model_digest_context_and_refuses_unknown_states() {
+        let runtime = "127.0.0.1:12345".parse().unwrap();
+        let status = serde_json::json!({"state":"ready","model":"fictional","model_digest":"a".repeat(64),"context_length":4096});
+        let selected = selected_model(&status, runtime).unwrap().unwrap();
+        assert_eq!(selected.identity.name, "fictional");
+        assert_eq!(selected.context, 4096);
+        for key in ["model", "model_digest", "context_length"] {
+            let mut missing = status.clone();
+            missing.as_object_mut().unwrap().remove(key);
+            assert!(selected_model(&missing, runtime).is_err());
+        }
+        for state in ["multiple_models", "over_budget", "not_fully_gpu", "unknown"] {
+            let mut invalid = status.clone();
+            invalid["state"] = state.into();
+            assert!(selected_model(&invalid, runtime).is_err());
+        }
+        assert!(
+            selected_model(&serde_json::json!({"state":"no_model"}), runtime)
+                .unwrap()
+                .is_none()
+        );
+        let cancelled = AtomicBool::new(true);
+        assert!(guarded_model_status(runtime, &cancelled)
+            .unwrap_err()
+            .contains("stopped"));
+    }
 
     #[test]
     fn discovery_scroll_target_is_one_safe_same_page_anchor() {
@@ -1847,6 +2121,9 @@ origin: "https://example.org".into(), schema: FormSchema { origin: "https://exam
             visible: false,
             experience_revisions: vec![],
             failure: None,
+            cancelled: Arc::new(AtomicBool::new(false)),
+            phase: Arc::new(AtomicU8::new(1)),
+            worker: None,
         });
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -1944,6 +2221,9 @@ origin: "https://example.org".into(), schema: FormSchema { origin: "https://exam
             visible: false,
             experience_revisions: vec![],
             failure: None,
+            cancelled: Arc::new(AtomicBool::new(false)),
+            phase: Arc::new(AtomicU8::new(1)),
+            worker: None,
         });
         assert_eq!(
             pending().unwrap(),
@@ -2020,6 +2300,9 @@ origin: "https://example.org".into(), schema: FormSchema { origin: "https://exam
             visible: false,
             experience_revisions: vec![],
             failure: None,
+            cancelled: Arc::new(AtomicBool::new(false)),
+            phase: Arc::new(AtomicU8::new(1)),
+            worker: None,
         });
         assert!(crate::active_form_review_reasons(&job_id, &None)
             .unwrap()

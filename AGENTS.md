@@ -152,7 +152,7 @@ passing geometry checks alone does not replace screenshot inspection.
    (see `waypoint_inference/src/ollama.rs` — non-loopback origins are refused at the
    type level). Research queries carrying PII are refused
    (`waypoint_research`); source operations are permission-registry-gated
-   (`waypoint_policy` + `data/source_permissions.json`).
+   (`waypoint_policy` + `crates/waypoint_policy/data/source_permissions.json`).
 6. **Honest accounting everywhere.** Coverage reports carry explicit denominators;
    failures are surfaced as degraded states, never swallowed; docs record measured
    results vs. design targets — never fake a measurement (see the pitfalls below).
@@ -346,7 +346,8 @@ used by development tools and tests. Do not add WSL or Docker as product require
 For continuation of the active product-development goal, read
 `docs/REPO_STATE_REVIEW_2026-11-11.md`, the detailed
 `docs/COMPLETION_PLAN_2026-11-11.md` and `docs/ACTIVE_DEVELOPMENT_PLAN.json`.
-Use that queue's earliest actionable acceptance criterion; do not repeatedly
+Use that queue's prioritized `next_task` once its prerequisites are ready; keep
+all other unfinished criteria visible. Do not repeatedly
 reconstruct a broad roadmap or treat the original T001-T050 `PLANNED` statuses
 as a live progress ledger. The original handoff's contracts and all current
 user/agent safety instructions remain binding. Update queue evidence/status

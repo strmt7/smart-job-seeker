@@ -299,3 +299,8 @@ button.secondary-button { background: var(--surface); color: var(--accent); bord
 .source-question-review textarea{display:block;box-sizing:border-box;width:100%;min-width:0;max-width:100%;min-height:100px;font:inherit;line-height:1.5;resize:vertical;overflow-wrap:anywhere}
 .source-question-text{white-space:pre-line}
 .source-question-review>button{max-width:100%;white-space:normal;overflow-wrap:anywhere}
+
+/* Inspection progress stays outside job content that refreshes during polling. */
+#form-inspection-progress:empty { display: none; }
+#form-inspection-progress:not(:empty) { margin-bottom: 16px; padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+#form-inspection-progress p { margin: 0 0 10px; }

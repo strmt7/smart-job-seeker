@@ -613,7 +613,40 @@ document.querySelector('#clear-review-selection').addEventListener('click',()=>{
 document.querySelector('#queue-reviews').addEventListener('click',()=>{if(reviewQueue.length||reviewQueueBusy||!reviewSelectedJobs.size||reviewSelectedJobs.size>20)return;reviewQueue=state.jobs.filter(row=>reviewSelectedJobs.has(row.job.id)&&['shortlisted','prepared'].includes(row.job.state)).map(row=>row.job.id);reviewSelectedJobs.clear();saveReviewQueue();renderJobs();renderReviewQueue();setWorkspaceView('applications');document.querySelector('#review-queue').scrollIntoView({behavior:'smooth',block:'start'});});
 let formInspectionFollowing=false;
 function pendingFormInspection(){try{const p=JSON.parse(sessionStorage.getItem('waypoint-form-inspection')||'null');return p && typeof p.task==='string' && typeof p.job==='string'?p:null;}catch(_){return null;}}
-async function followFormInspection(task,jobId){if(formInspectionFollowing)throw new Error('Form inspection is already being checked');formInspectionFollowing=true;try{let result;do{await new Promise(resolve=>setTimeout(resolve,1000));result=await api('/api/form/inspect-status',{task_id:task});}while(result.status==='running');if(result.status==='complete'){try{const pending=JSON.parse(sessionStorage.getItem('waypoint-form-inspection')||'null');if(pending?.queued&&pending.task===task&&reviewQueue[0]===jobId){reviewQueue.shift();saveReviewQueue();}}catch(_){}}sessionStorage.removeItem('waypoint-form-inspection');if(result.status!=='complete'){await refresh().catch(()=>{});throw new Error(result.error || 'Form inspection failed');}await refresh();const job=state.jobs.find(row=>row.job.id===jobId)?.job;if(!job)throw new Error('Job no longer available');showFormPreview(job,result);}finally{formInspectionFollowing=false;}}
+async function followFormInspection(task,jobId){
+ if(formInspectionFollowing)throw new Error('Form inspection is already being checked');
+ formInspectionFollowing=true;
+ const panel=document.querySelector('#form-inspection-progress');
+ const message=element('p','Checking the local model…','footnote'),stop=element('button','Stop inspection','button-secondary');
+ stop.type='button';panel.replaceChildren(message,stop);
+ let active=true,stopping=false;
+ stop.addEventListener('click',async()=>{
+  if(!active || stopping)return;
+  stopping=true;stop.disabled=true;message.textContent='Stopping inspection…';
+  try{
+   const result=await api('/api/form/inspect-cancel',{task_id:task});
+   if(active)message.textContent=result.status==='finished'?'Collecting inspection result…':'Stopping inspection…';
+  }catch(error){if(active){stopping=false;stop.disabled=false;notify(error.message);}}
+ });
+ try{
+  let result;
+  do{
+   await new Promise(resolve=>setTimeout(resolve,1000));
+   result=await api('/api/form/inspect-status',{task_id:task});
+   if(result.status==='running'){
+    if(result.phase==='stopping'){stopping=true;stop.disabled=true;}
+    message.textContent=stopping?'Stopping inspection…':({checking_model:'Checking the local model…',opening:'Opening the application page…',assessing:'Reviewing form questions…',checking_form:'Checking the current form…'}[result.phase] || 'Inspecting the application page…');
+   }
+  }while(result.status==='running');
+  active=false;
+  if(result.status==='complete'){try{const pending=JSON.parse(sessionStorage.getItem('waypoint-form-inspection')||'null');if(pending?.queued&&pending.task===task&&reviewQueue[0]===jobId){reviewQueue.shift();saveReviewQueue();}}catch(_){}}
+  sessionStorage.removeItem('waypoint-form-inspection');
+  if(result.status!=='complete'){await refresh().catch(()=>{});throw new Error(result.error || 'Form inspection failed');}
+  await refresh();const job=state.jobs.find(row=>row.job.id===jobId)?.job;
+  if(!job)throw new Error('Job no longer available');
+  showFormPreview(job,result);
+ }finally{active=false;formInspectionFollowing=false;panel.replaceChildren();}
+}
 let formNavigationFollowing=false;
 function pendingFormNavigation(){try{const p=JSON.parse(sessionStorage.getItem('waypoint-form-navigation')||'null');return p && typeof p.task==='string' && typeof p.job==='string'?p:null;}catch(_){return null;}}
 function recoverNavigationPointer(result){const navigation=result?.navigation;if(!result?.active && typeof navigation?.task==='string' && typeof navigation?.job==='string'){const old=pendingFormNavigation();if(!old || old.task!==navigation.task || old.job!==navigation.job){sessionStorage.setItem('waypoint-form-navigation',JSON.stringify(navigation));return true;}}return false;}

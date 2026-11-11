@@ -1,14 +1,19 @@
 # Repository review - 11 November 2026
 
-## Latest implementation checkpoint
+## Latest implementation checkpoints
 
-The subsequent [fit-task repair](g1/DEFERRED_FIT_2026-11-11.md) restores passing
-local workspace compilation/tests and completes task-bound Stop, guarded
-resident-context reads and joined cancellation/shutdown. Its recorded result is
-1,305 passed / 593 ignored, with Clippy/build and scoped native/client evidence.
-The planning checkpoint below retains its earlier unfinished-source observation;
-it no longer describes current fit compilation. Broader readiness remains open,
-including synchronous form-opening admission and native observations.
+The [owned form-inspection continuation](g1/DEFERRED_FORM_INSPECTION_2026-11-11.md)
+now defers form-opening model admission, owns/joins its worker and adds functional
+progress/Stop controls. Local workspace tests passed 1,306 / 594 ignored, with
+Clippy/build and scoped native, fictional-browser and rendered-client evidence.
+Remaining R01 work includes native-observation/cancellation and uncollected-session
+expiry/cleanup qualification. R02/R03 is the next independent product priority.
+
+The preceding [fit-task repair](g1/DEFERRED_FIT_2026-11-11.md) also has successful
+hosted CI, coverage and CodeQL for `aaf02d03`. That hosted result does not validate
+this newer local continuation. The planning checkpoint below preserves the earlier
+unfinished-source observation; it no longer describes current fit compilation or
+form-opening preflight placement. Broad local-model form coverage remains open.
 
 ## Planning checkpoint refresh (before fit repair)
 

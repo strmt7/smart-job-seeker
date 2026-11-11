@@ -2220,6 +2220,7 @@ fn form_model_from_status(status: &Value) -> Result<Option<String>, String> {
     }
 }
 
+// Also used inside the background application-link worker.
 fn form_resident_model() -> Result<Option<String>, String> {
     #[cfg(windows)]
     check_inference_memory()?;
@@ -5540,12 +5541,7 @@ fn serve_request(
                 return Err("Application URL is not a public HTTPS URL".into());
             }
             let visible = body["visible"].as_bool().unwrap_or(false);
-            let model = form_resident_model();
-            let experiences = if matches!(&model, Ok(Some(_))) {
-                navigation_experiences(ws, &id)?
-            } else {
-                Vec::new()
-            };
+            let experiences = navigation_experiences(ws, &id)?;
             let profile: Value = match ws.candidate_profile().map_err(|e| e.to_string())? {
                 Some(text) => {
                     serde_json::from_str(&text).map_err(|_| "stored profile is invalid")?
@@ -5555,12 +5551,12 @@ fn serve_request(
             interrupt_session(ws, session, "Another application was opened")?;
             let task_id = random_id()?;
             let pending_revision = form_task::begin_pending(ws, &id, &task_id, now())?;
-            if let Err(error) = form_task::start_bound(
+            if let Err(error) = form_task::start_resident_bound(
                 task_id.clone(),
                 id.clone(),
                 url,
                 profile,
-                model,
+                runtime,
                 visible,
                 (pending_revision, experiences, route_binding),
             ) {
@@ -5572,6 +5568,12 @@ fn serve_request(
             }
             json_reply(stream, "200 OK", json!({"task_id":task_id}));
         }
+        "/api/form/inspect-cancel" => {
+            let task_id = body["task_id"]
+                .as_str()
+                .ok_or("Missing form inspection task")?;
+            json_reply(stream, "200 OK", form_task::cancel(task_id)?);
+        }
         "/api/form/inspect-status" => {
             let task_id = body["task_id"].as_str().ok_or("missing task id")?;
             if let Some(error) = form_task::completed_failure(task_id)? {
@@ -5579,7 +5581,7 @@ fn serve_request(
                 return Ok(());
             }
             let Some(finished) = form_task::poll(task_id)? else {
-                json_reply(stream, "200 OK", json!({"status":"running"}));
+                json_reply(stream, "200 OK", form_task::progress(task_id)?);
                 return Ok(());
             };
             let form_task::Finished {
@@ -9859,6 +9861,9 @@ fn serve_loop_with_runtime(
     }
     drop(transport);
     drop(inventory_reads);
+    if let Err(error) = form_task::shutdown() {
+        eprintln!("Form inspection shutdown needs review: {error}");
+    }
     if let Err(error) = fit_task::shutdown() {
         eprintln!("Assessment shutdown needs review: {error}");
     }

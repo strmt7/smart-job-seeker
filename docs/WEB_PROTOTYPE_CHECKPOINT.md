@@ -1,3 +1,11 @@
+## Owned form inspection - 2026-11-11
+
+[Deferred form admission](g1/DEFERRED_FORM_INSPECTION_2026-11-11.md) moves the
+resident-model preflight into the inspection worker, retains and joins its handle,
+and adds real progress/Stop controls. Workspace tests (1,306 passed / 594 ignored),
+Clippy, build and scoped native/browser/client checks passed. Broader model/form
+coverage, native-call cancellation and uncollected-session expiry remain open.
+
 ## Cancellable fit startup - 2026-11-11
 
 The [owned fit-task checkpoint](g1/DEFERRED_FIT_2026-11-11.md) moves model

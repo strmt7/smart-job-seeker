@@ -6,8 +6,8 @@ model mechanisms, but broad real-world application coverage and clean-host
 installation are not established. Older measured checkpoints retain their
 original source and fixture scopes.
 
-Current baseline: local `main` at `8bd000154a6debeb20c3544d05f20f0731220771`,
-followed by the [verified fit-task continuation](g1/DEFERRED_FIT_2026-11-11.md). The original audit snapshot remains
+Current baseline: `aaf02d03b7e80c18cce600ff2d0ceca2f9d332c0`, followed by the
+[local owned form-inspection continuation](g1/DEFERRED_FORM_INSPECTION_2026-11-11.md). The original audit snapshot remains
 `4acb9a955bcb961ad7a27cb9538e77bb0e03a547`.
 Read the [repository assessment](REPO_STATE_REVIEW_2026-11-11.md) alongside this
 plan. The [active queue](ACTIVE_DEVELOPMENT_PLAN.json) identifies work packages,
@@ -17,12 +17,11 @@ historical statuses or authorize another goal, delegation, release or submission
 
 ## Immediate execution order
 
-1. **R01: continue blocking-handler qualification.** Socket framing, inventory
-   deferral and the [cancellable fit lifecycle](g1/DEFERRED_FIT_2026-11-11.md) now
-   have scoped passing checkpoints. The earlier fit compile errors are repaired.
-   Measure/defer remaining form-opening admission and native observations while
-   preserving exact input/model identity and joined cancellation. Then advance
-   the representative saved-form work; do not restart broad planning.
+1. **R01: retain the scoped control-plane checkpoints.** Socket framing,
+   inventory deferral, fit and [owned form inspection](g1/DEFERRED_FORM_INSPECTION_2026-11-11.md)
+   have passing local evidence. Native-observation/cleanup latency and uncollected-
+   session expiry remain open. Continue those qualifications alongside R02/R03;
+   do not describe the bounded fixtures as universal handler responsiveness.
 2. **R02/R03: representative evaluation and faithful saved rendering.** Preserve
    current failures, establish held-out cases, and resolve permitted rendering
    and label-context gaps. Do not bypass disallowed sources or weaken matching.
@@ -60,9 +59,10 @@ actual failures; do not spend multiple cycles building a new test framework.
 ### Fit lifecycle slice (implemented, scoped evidence)
 
 The six steps below describe the completed fit-specific slice and its retained
-checks; they do not mark R01 complete. Remaining work is form-opening admission,
-native-observation responsiveness and the broader handler inventory. Resume that
-next criterion rather than rerunning the completed fit transport/model fixtures.
+checks; they do not mark R01 complete. Form-opening admission also has a subsequent owned-worker checkpoint.
+Native-observation responsiveness, cleanup/idle expiry and the broader handler
+inventory remain open. Continue R02/R03 as the next independent priority; retain
+these R01 residuals rather than rerunning completed fit transport/model fixtures.
 
 1. Adapt the three old `start(FitModel, ...)` test callers to the asynchronous
    runtime-selection contract. Preserve stale-digest/context refusal through a
@@ -396,7 +396,8 @@ resume running handles. For plan-only changes, validate JSON, dependency
 order, referenced paths and links; do not repeat unchanged model/browser suites.
 
 At each goal turn: verify source/worktree and owned resources, read the queue,
-choose the earliest actionable package, and inspect only the evidence needed for
+follow the queue's `next_task` when its prerequisites are ready, and inspect
+only the evidence needed for
 its next concrete acceptance criterion. Update its status and evidence after a
 meaningful checkpoint. Record the next failing case, relevant identities and
 owned handles in the existing private handoff. Do not restart a live job after

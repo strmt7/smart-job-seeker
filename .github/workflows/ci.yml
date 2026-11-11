@@ -115,7 +115,7 @@ jobs:
           cargo test -p waypoint_web --bin waypoint_web inventory_read::tests::deferred_inventory_keeps_real_control_requests_responsive -- --exact --ignored --test-threads=1 2>&1 | Tee-Object -FilePath $log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -B -c "import sys; from pathlib import Path; sys.path.insert(0, 'tools'); from qualify_rehearsal import test_denominator; print(test_denominator(Path(sys.argv[1]).read_text(encoding='utf-8-sig'), 'rust', 1))" $log
-      - name: Check fit preflight cancellation in isolation
+      - name: Check fit and form preflight cancellation in isolation
         timeout-minutes: 2
         shell: pwsh
         run: |
@@ -127,9 +127,9 @@ jobs:
           try {
             $env:APPDATA = $fitAppData
             $env:WAYPOINT_FIT_TEST_ISOLATED = '1'
-            cargo test -p waypoint_web --bin waypoint_web fit_control_tests::fit_preflight_remains_responsive_and_drains_on_cancel_or_shutdown -- --exact --ignored --test-threads=1 2>&1 | Tee-Object -FilePath $log
+            cargo test -p waypoint_web --bin waypoint_web fit_control_tests:: -- --ignored --test-threads=1 2>&1 | Tee-Object -FilePath $log
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            python -B -c "import sys; from pathlib import Path; sys.path.insert(0, 'tools'); from qualify_rehearsal import test_denominator; print(test_denominator(Path(sys.argv[1]).read_text(encoding='utf-8-sig'), 'rust', 1))" $log
+            python -B -c "import sys; from pathlib import Path; sys.path.insert(0, 'tools'); from qualify_rehearsal import test_denominator; print(test_denominator(Path(sys.argv[1]).read_text(encoding='utf-8-sig'), 'rust', 2))" $log
           } finally {
             $env:APPDATA = $previousAppData
             $env:WAYPOINT_FIT_TEST_ISOLATED = $previousIsolation
