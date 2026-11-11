@@ -267,6 +267,10 @@ used by development tools and tests. Do not add WSL or Docker as product require
   the task identity. Bind temporary runtime ownership to the task portion.
   Exercise the compiled route as well as direct renderer fixtures when
   changing these contracts.
+- When changing `app.js` startup or introducing a script global, run all
+  `*-ui.test.js` scripts once. Some tests evaluate bounded source fragments;
+  new initialization must stay in the page startup section rather than leak
+  into unrelated fragments at the end of the file.
 - A fully GPU-loaded model can still retain substantial host-memory prompt
   checkpoints. The owned Ollama qualifier uses a 512 MiB saved-prompt cache and
   one checkpoint per slot; verify backend acceptance in its native log. Retain

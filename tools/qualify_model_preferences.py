@@ -85,7 +85,7 @@ def main():
         with log.open('xb') as output:
             process = subprocess.Popen([str(app)], env=environment, stdin=subprocess.DEVNULL, stdout=output,
                 stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW | CREATE_SUSPENDED)
-            owner = ChildContainment(process, admit_child_memory_bytes(10 * 1024**3))
+            owner = ChildContainment(process, admit_child_memory_bytes((4 if args.ui_only else 10) * 1024**3))
             resume_owned_child(process)
             deadline = time.monotonic() + 25
             while not (address := re.search(rb'Smart Jobseeker: (http://127\.0\.0\.1:[0-9]+)/#([0-9a-f]{64})', log.read_bytes())):

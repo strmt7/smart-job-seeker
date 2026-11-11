@@ -65,7 +65,7 @@ Primary receipts:
 
 Final workspace checks passed 1,260 tests across 43 targets; 590 live/optional
 tests remained explicitly ignored. Clippy, formatting, the managed Windows
-debug build, 67 Python tests and five affected model/source-copy UI scripts
+debug build, 67 Python tests and all 169 UI scripts
 passed. Staged-source Gitleaks scanned 26 files with no findings. The final
 host audit observed zero matching development processes, services, tasks or
 startup entries, zero resident models and 27,679,498,240 bytes of available RAM.
@@ -85,6 +85,13 @@ the accepted run retained a timed-out socket probe alongside an empty native
 listener table. An early compiled run also found that application-record folders
 have a job prefix; the namespace contract and regression now use the task suffix.
 Failed receipts remain intact.
+
+The first hosted CI run also caught the settings initializer in an unrelated
+source-fragment test. Wiring it into the page startup section fixed the cause;
+all 169 local UI scripts and a rebuilt compiled settings check then passed.
+The original job log is retained privately, with no test exclusion or suppression.
+The compiled follow-up is `target/model-settings-native-tthm7apq/`; its controller
+and complete UI-script results are under `target/model-preferences-bootstrap-n2md8yer/`.
 
 ## Remaining limits
 
