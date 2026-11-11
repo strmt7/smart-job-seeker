@@ -343,6 +343,19 @@ used by development tools and tests. Do not add WSL or Docker as product require
 
 ## Current state and next work
 
+For continuation of the active product-development goal, read
+`docs/REPO_STATE_REVIEW_2026-11-11.md`, the detailed
+`docs/COMPLETION_PLAN_2026-11-11.md` and `docs/ACTIVE_DEVELOPMENT_PLAN.json`.
+Use that queue's earliest actionable acceptance criterion; do not repeatedly
+reconstruct a broad roadmap or treat the original T001-T050 `PLANNED` statuses
+as a live progress ledger. The original handoff's contracts and all current
+user/agent safety instructions remain binding. Update queue evidence/status
+after meaningful checkpoints, distinguishing measured results from targets.
+Keep work in the existing active goal; do not create another goal, branch,
+release or agent delegation from the queue alone. A completed package does not
+complete the overall goal. Historical plan/limitation text must not override
+current-source evidence or silently remove unresolved acceptance work.
+
 The 2026-09-26 gate results are historical, not evidence of the current checkout.
 Read `IMPLEMENTATION_STATUS.md`, `docs/WEB_PROTOTYPE_CHECKPOINT.md` and current
 source before selecting work. Preserve explicit unknowns and report measured

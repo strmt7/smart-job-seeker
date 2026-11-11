@@ -1,5 +1,15 @@
 # Known limitations register (T050)
 
+Current source/evidence assessment:
+[repository review, 2026-11-11](docs/REPO_STATE_REVIEW_2026-11-11.md).
+The old numbered register below is retained as historical context. In particular,
+the production Windows/SQLCipher build now opens the entire database encrypted
+(`main.rs::main`); DPAPI material sealing is an additional layer, and builds
+without the feature have a different explicit storage contract. Bounded
+frame/shadow traversal, candidate-file import, structured history and semantic
+fit assessment also exist. Their broad qualification and recovery limits remain
+open; the earlier statements that those mechanisms are absent are superseded.
+
 Partial saved-form entry, 2026-11-11: one real archived page passed three
 fictional fields through native readback and local-model visual review. Phone
 stopped before entry because the saved layout left its label outside the crop.
@@ -42,7 +52,7 @@ steps, candidate-data provenance and clean-Windows qualification remain open.
 Continuous RAM checks stop owned work on low memory; they cannot reserve RAM or
 prevent unrelated software from consuming it between observations.
 
-## Hard limitations (known, deliberate, documented)
+## Historical numbered register - consult current evidence above
 
 Current local vision has concrete raw transcription errors even on fictional
 controls. [The eight-condition review](docs/LOCAL_VISION_QUALIFICATION.md) passed

@@ -1,16 +1,19 @@
 # Smart Jobseeker completion plan
 
-Latest review: [results and ordered implementation work, 2026-11-10](RELEASE_COMPLETION_REVIEW.md).
-It updates the evidence and immediate priorities below without reducing the
-requested scope. [Finding-state policy and current inventory](FINDING_STATE_REVIEW.md)
+Current assessment: [repository state, problems and inefficiencies, 2026-11-11](REPO_STATE_REVIEW_2026-11-11.md).
+Use the [detailed current execution plan](COMPLETION_PLAN_2026-11-11.md) and
+[active queue](ACTIVE_DEVELOPMENT_PLAN.json) for continuation of the existing
+development goal. Their ordered work packages supersede older immediate-work
+lists below, while preserving the full product scope and original handoff.
+[Finding-state policy and inventory](FINDING_STATE_REVIEW.md)
 prohibit manual closure across all detection tools; unresolved observations stay
 visible and publication remains the user's decision.
 
-The [runtime ownership checkpoint](g1/RUNTIME_OWNERSHIP_2026-11-11.md) fixes
-untracked app-started Ollama processes and establishes the teardown primitive
-for isolated automatic model admission. Rehearsal still requires an already
-qualified resident vision model; model choice, private endpoint/store binding
-and effective capture-worker memory budgets remain integration work.
+The [private admission checkpoint](g1/PRIVATE_MODEL_ADMISSION_2026-11-11.md)
+connects model selection, private runtime startup, rehearsal and teardown in a
+bounded qualification. The [partial real-form checkpoint](g1/INDEPENDENT_FIELD_REVIEW_2026-11-11.md)
+records three visually matched fictional fields and a correct pre-entry stop.
+These mechanisms are implemented; broad local-model/site coverage remains open.
 
 Status: active development, updated 2026-11-11. This plan translates the requested
 product into implementation and evidence gates. It supplements, rather than

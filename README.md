@@ -11,6 +11,11 @@ Smart Jobseeker is a Windows-first, local job-search and application-assistance 
 
 The [completion plan](docs/COMPLETION_PLAN.md) records the remaining product work and evidence gates; implementation is ongoing and no readiness date is established.
 
+The [current repository review](docs/REPO_STATE_REVIEW_2026-11-11.md) separates
+verified functionality, open problems and development inefficiencies. Its
+[detailed execution plan](docs/COMPLETION_PLAN_2026-11-11.md) and
+[active queue](docs/ACTIVE_DEVELOPMENT_PLAN.json) guide the ongoing development goal.
+
 [Saved-page controls](docs/PUBLIC_FORM_OUTLINES.md) show observed labels and
 question groups under a job's page-copy details and application records.
 Missing states and incomplete coverage remain explicit; this view does not

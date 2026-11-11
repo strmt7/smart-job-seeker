@@ -6,6 +6,30 @@ model mechanisms, but broad real-world application coverage and clean-host
 installation are not established. Older measured checkpoints retain their
 original source and fixture scopes.
 
+Source review: `4acb9a955bcb961ad7a27cb9538e77bb0e03a547`.
+Read the [repository assessment](REPO_STATE_REVIEW_2026-11-11.md) alongside this
+plan. The [active queue](ACTIVE_DEVELOPMENT_PLAN.json) identifies work packages,
+dependencies and existing harnesses for continuation of the **same active goal**.
+It supplements the original T001-T050 design contract; it does not rewrite its
+historical statuses or authorize another goal, delegation, release or submission.
+
+## Immediate execution order
+
+1. **R01: control-plane responsiveness.** A current-source probe reproduced a
+   4.910-second delay behind one incomplete local request. Fix bounded request
+   handling before expanding concurrent automation.
+2. **R02/R03: representative evaluation and faithful saved rendering.** Preserve
+   current failures, establish held-out cases, and resolve permitted rendering
+   and label-context gaps. Do not bypass disallowed sources or weaken matching.
+3. **R04/R05: generic model-driven completion and data-isolation evidence.**
+   Connect existing native capabilities to a bounded planner and verify it with
+   the local model. Keep live employer interactions read-only and all application
+   submission disabled during development.
+4. Progress R06-R13 by dependency and observed failure, then assemble R14.
+   Batch independent lightweight reads; serialize model/browser-heavy runs and
+   preserve host headroom. No speculative calendar estimate or completion
+   percentage substitutes for these gates.
+
 ## Current milestone
 
 Three real public page copies save, with incomplete rendering explicitly retained.
@@ -26,9 +50,9 @@ model services and report ambiguous cleanup. The associated evidence note record
 the final measured outcome separately. This milestone passed its bounded
 fictional qualification; it is not evidence of general employer-site completion.
 
-## Remaining order of work
+## Coverage domains
 
-| Priority | Work | Completion evidence required |
+| Domain | Work | Completion evidence required |
 | --- | --- | --- |
 | Complete, scoped | Automatic model admission and cancellation | Passed compiled settings persistence, stale-write refusal, model-backed section rehearsal, cancellation after warm-up, owned-process exit and unchanged shared service |
 | 2 | Qualify saved-site diversity | Partial entry measured on one saved real form; next resolve permitted rendering/label-context gaps, qualify unseen layouts and ATS families, embedded content and server-dependent stops; classify unsupported cases honestly |
@@ -56,6 +80,258 @@ sent during this development work.
 - Transfer reusable platform observations only after independent validation;
   test corrections against earlier successes and unseen forms to detect
   overfitting. Archived screenshots are evidence, not instructions to trust.
+
+## Detailed work packages
+
+### R01 - Make the local control plane responsive under slow clients
+
+Separate bounded HTTP framing/socket I/O from serialized workspace state changes.
+Use an absolute header/body deadline, byte limits, write deadlines, fixed worker
+and queue limits, backpressure and deterministic shutdown. Keep authentication,
+origin checks, request limits, grant consumption and database mutation ordering
+intact. Move genuinely expensive handlers to the existing task lifecycle rather
+than creating unlimited per-request threads. An async framework is an option
+only if a measured need justifies its dependency and migration cost.
+
+Reproduce baseline, incomplete/trickling headers, incomplete bodies, slow readers,
+concurrent ordinary requests, stop/status requests, queue saturation and shutdown.
+Proposed target: status/stop p95 below 500 ms under the documented admitted-load
+fixture, with bounded rejection under saturation. This is a target, not a current
+measurement. No request may monopolize the workspace owner for its socket timeout.
+
+### R02 - Make evaluation representative and source-bound
+
+Build on the existing qualification tools rather than another competing runner.
+Create a private corpus manifest recording source/fixture identity, permissions,
+expected outcomes, answerability, model/prompt/runtime digests, hardware and
+resource limits. Initial planning target: 48 fictional scenarios across at least
+eight interaction/layout families, plus 12 permitted saved real pages across at
+least four ATS families and six employers. These are **uncollected targets**;
+inaccessible pages remain documented exclusions, not usable-form successes.
+Reserve at least one third by employer/layout family before tuning. The already
+studied Greenhouse example belongs to development data.
+
+Report target-identification errors, wrong/omitted values, supported-field
+coverage, answer abstention, visual disagreement, upload identity, navigation,
+manual-review reasons, final-review reachability, elapsed time and RAM/VRAM.
+Use at least three repeats for model-sensitive promotion candidates. Preserve
+all failed runs; a repaired development case is not held-out evidence.
+
+Provisional promotion gates for a declared supported corpus: zero observed
+unauthorized writes or critical incorrect actions; every accepted entry must pass
+independent readback and visual review; at least 95% of supported answerable
+fields completed and at least 80% of eligible workflows reaching final review.
+Unknown answers and unsupported sites need accurate manual-review outcomes and
+separate denominators. These targets may motivate reducing a declared support
+claim; they must not be lowered silently or turned into universal guarantees.
+
+### R03 - Repair generic captured-page rendering and context
+
+Diagnose missing styles/data, native request context, response variants,
+embedded frames and distant labels with retained network/DOM/image evidence.
+Only acquire resources allowed by the source registry, robots rules, privacy and
+native request-identity contract. Do not infer permission from a familiar ATS,
+operation name or an old success. A robots-disallowed API remains a review case.
+
+Improve bounded, native label/control context capture if rendering alone cannot
+make a field intelligible. Preserve visibility, geometry, node/document identity
+and current-page checks. Test missing, distant, repeated, misleading and obscured
+labels across earlier successes and held-out cases. Do not teach the matcher a
+particular employer's labels or accept an unobserved target.
+
+### R04 - Connect a generic local-model application planner
+
+Inventory actual action capabilities and expose a small typed action set for
+inspect, choose, enter, attach, change section, recheck and stop for review.
+Supply supported candidate facts, visible evidence and uncertainty; validate the
+model's proposal independently. Support native and custom choices, multistep
+forms, tabs, conditional questions, repeating work/education sections, validation
+errors, shadow DOM, nested frames and final review within declared bounds.
+
+Replace the fictional rehearsal's exact-profile mapping as an evaluation ceiling,
+not as permission to enter real candidate data on employer sites. Retain that
+small deterministic smoke fixture. Check current schema/values after each action,
+reinspect visual evidence, detect no-progress loops and stop with a useful review
+record. An unfamiliar control is not an invitation to execute arbitrary model
+JavaScript. Budget steps, retries, repairs, time, images and model tokens.
+
+### R05 - Prove candidate isolation and consequential-action boundaries
+
+Use fictional canary candidate data and approved sample PDFs. Exercise script-
+triggered writes, misleading buttons, Enter-key submission, autosave, uploads,
+XHR/fetch, form actions, frames, service workers, WebSockets, redirects and
+unexpected destinations in contained local fixtures. Assert the archive,
+network/transport evidence and OS containment independently. Include stale grants,
+changed documents, cancellation and interrupted workers.
+
+No application may be sent, and live employer forms remain read-only throughout
+this development goal. Passing a finite test suite cannot establish a literal
+zero-probability guarantee across arbitrary external sites. Keep the structural
+boundary rather than relying on button wording or the model's judgment.
+
+### R06 - Qualify documents from import through final PDF
+
+Use varied privately retained authorized sources and fictional counterparts:
+single/multicolumn, tables, headings, long histories, multiple languages, scans,
+DOCX/PDF templates and different cover-letter structures. Preserve factual
+provenance, dates, attribution, signature/contact sources and instruction scope.
+Run bounded content/natural-writing revisions without inventing qualifications
+or promising AI-detector avoidance.
+
+Require final PDF output for every application attachment. Compare supported
+text/reading order using independent approved local extraction paths; render
+every page, inspect clipping/overlap/empty pages and validate file/digest identity.
+Check relevance and factual consistency separately from layout. Repair at most
+the existing documented budget; otherwise record review. No universal ATS or
+screening-success claim is supported by a parser score.
+
+### R07 - Qualify broad discovery and application-route reachability
+
+Expand intelligent query variants, synonyms, geography/language, direct employer
+pages and varied boards using free, permission-eligible providers. Add per-host
+budgets, pagination, caching, backoff, resume and stopping rules. Treat source
+failures as degradation, not zero openings. Verify the ad, date and actual
+application route; distinguish closed, stale, inaccessible, login, challenge,
+email-only and unverified routes. Retain the original ad and evidence per job.
+
+Measure retrieval/reachability on labeled query sets and varied permitted live
+read-only sources. Do not describe bounded web discovery as searching every
+website. Add a provider or board only where it improves measured coverage.
+
+### R08 - Measure fit and duplicate identity
+
+Keep deterministic hard constraints and explicit unknowns before semantic
+assessment. Freeze rubric/weight versions, normalize input facts and source
+identity, cache only unchanged inputs, and report evidence completeness and
+uncertainty. Test paraphrases, near titles, conflicting dates, missing salaries,
+career changes and negative evidence. Measure repeated-run variation and compare
+to independently reviewed examples; never call fit a hiring probability.
+
+For duplicates, combine requisition, employer identity, location, description,
+date/repost and aliases. Evaluate false merges and missed near-duplicates on
+held-out labels. Preserve distinct openings and reversible review; ensure
+existing attempts exclude repeated applications across source aliases and restarts.
+
+### R09 - Validate reusable experience without overfitting
+
+Propose lessons from structured failures/corrections with provenance and narrow
+scope. Keep review, revision, expiry/revocation and promotion separate. Retrieve
+a bounded diverse set; observations are untrusted advisory context, never an
+authorization or script. Compare paired runs with and without memory on the
+same model/configuration, including unseen employers, changed layouts, stale,
+conflicting and malicious lessons. Promote only improvements without critical
+regressions. Training model weights is not required for this first mechanism.
+
+### R10 - Complete attempt, email and recovery journeys
+
+Connect selected job, original ad, reviewed facts, final PDFs, answers, target
+and final screenshots, transport outcomes and incomplete-capture indicators in
+one manifest. Preserve attempted/submitted packet immutability and correction
+propagation. Reconcile ambiguous outcomes before retry; never automatically
+retry an uncertain external write. Test restart/cancel/crash between boundaries.
+
+Qualify inbox correlation, duplicate handling and application-email preparation
+without sending applications. Reuse existing connectivity evidence until relevant
+code/configuration changes. Only the previously authorized fixed self-test to
+the same account is permitted if connectivity needs rechecking; credentials and
+personal data remain outside Git and logs.
+
+Complete and test final-dispatch mechanisms against fictional loopback forms and
+a local test mail server only: exact destination/document hashes, explicit
+one-use user approval, durable intent, no duplicate dispatch, confirmation versus
+uncertainty and recovery. Implementing this mechanism is distinct from enabling
+live sending. No model, learned lesson, development fixture or general approval
+may authorize a real application, and no live send control is enabled by this plan.
+
+### R11 - Qualify Windows setup, resources and private storage
+
+Exercise a fresh supported non-admin Windows environment with absent tools,
+custom paths, offline/interrupted downloads, low disk/RAM, repair, update,
+rollback, uninstall and backup/restore. Dependencies stay private, verified,
+licensed and free. Do not assume this development host is a clean installation.
+If a separate clean environment is unavailable, keep that gate unqualified and
+continue independent work; do not manufacture evidence or require visible UI.
+
+Verify SQLCipher/DPAPI behavior, degraded build disclosures, plaintext migration,
+wrong-user/machine recovery and deliberate portable exports. Select local models
+by measured capability and actual RAM/VRAM/context/cache footprint, not only
+download size. Retain bounded queues, runtime/cache limits and cancellation.
+Preserve at least the existing host-RAM reserve in development. VRAM spill is a
+measured tradeoff, not permission to exhaust RAM or claim a zero-reserve setup
+will always work.
+
+### R12 - Finish the coherent interface and usability contract
+
+Build a screen/state matrix for search, match explanations, documents, queue,
+records, manual review, settings, setup, license/about, errors, empty/loading,
+cancellation and recovery. Keep shared styling and mouse-drag sizing centralized.
+Use design/image-generation iterations for material redesigns, implement the
+chosen reference faithfully, and compare actual screenshots after each coherent
+change. Do not add inert controls or invent success indicators.
+
+Test narrow/wide sizes, pane minimum/maximum limits, dragging, long text,
+actual browser zoom, DPI/multiple displays where available, reduced motion and
+assistive-technology behavior. CSS-zoom component checks retain their narrower
+label. Primary resize controls remain mouse grips; accessibility does not
+replace them. Every displayed setting must have observable persisted behavior.
+
+### R13 - Reduce development cost while preserving evidence
+
+Refactor large modules along the mechanisms being changed, extract shared
+ownership/request/observation contracts, and preserve public compatibility.
+Consolidate status pointers and use this queue instead of regenerating broad
+plans each turn. Select checks by changed source, dependencies and inputs.
+Reuse unchanged exact-identity evidence; run focused regressions first and the
+required whole-workspace gates once per coherent code batch.
+
+Use shared immutable runtime/model inputs where containment allows. Add a
+bounded artifact inventory and dry-run retention policy before removing any
+proven-owned disposable copy. Retain referenced failure/evidence manifests and
+licenses. Verify process exit, no persistent development registrations and host
+RAM at checkpoints. Do not mistake a clean snapshot for a sustained leak test.
+
+### R14 - Assemble readiness evidence; let the user decide publication
+
+Require a supported-scope acceptance matrix with exact source, build, dependency,
+model and corpus identities; required hosted CI and detector results; complete
+workflow, recovery, storage, installation and interface evidence; and explicit
+remaining limitations. Never manually close/dismiss/suppress findings. Optional
+providers that cannot be inspected remain unknown. Current zero alert counts
+do not establish security or general correctness.
+
+Report readiness only for what passed. Keep applications unsent, do not create a
+release, and leave publication and real application authorization to the user.
+
+## Continuation protocol for the active goal
+
+The queue is a continuation input read through `AGENTS.md`, not a new background
+service or an assertion that every package is running. The existing goal harness
+selects one concrete criterion and invokes the relevant existing qualification
+tool. This plan does not authorize additional agents.
+
+| Work | Existing harness / evidence entry points |
+| --- | --- |
+| R01 control plane | Controlled fresh-workspace latency reproduction; promote its failure into a production request-lifecycle regression; canonical managed Windows workspace tests |
+| R02-R05 saved forms and model | `tools/qualify_capture_replay.py`, `tools/qualify_rehearsal.py`, `tools/qualify_history_ui.py`, `tools/qualify_model_preferences.py`, native CDP and replay-worker tests; select the actual relevant test, not every ignored live test |
+| R06 documents | Existing template/document journey qualifiers referenced by `TEMPLATE_TAILORING.md` and `DOCUMENT_PDF_JOURNEY.md`; draft/import unit regressions and compiled rendered journeys |
+| R07-R09 discovery, fit, memory | Current search/fit/experience module regressions, source-bound local-model comparisons and read-only permitted source journeys |
+| R10-R12 integration/install/UI | Existing archive/recovery, package/runtime and rendered-client qualifiers; actual clean-host and scaling acceptance remain separate |
+| R13-R14 baseline and ownership | Managed `build-windows.ps1 -Workspace -Test` / `-Workspace -Clippy`, fmt, applicable CI/detectors, `tools/tests/test_owned_process_lifecycle.py` and `tools/audit_development_host.ps1` |
+
+Resolve runtime/interpreter/model paths through existing verified configuration;
+never turn private qualification paths into product defaults. Run heavyweight
+qualifiers under the existing bounded process owner, retain native reports and
+resume running handles. For this plan-only change, validate JSON, dependency
+order, referenced paths and links; do not repeat unchanged model/browser suites.
+
+At each goal turn: verify source/worktree and owned resources, read the queue,
+choose the earliest actionable package, and inspect only the evidence needed for
+its next concrete acceptance criterion. Update its status and evidence after a
+meaningful checkpoint. Record the next failing case, relevant identities and
+owned handles in the existing private handoff. Do not restart a live job after
+an observation timeout; resume its handle. Never mark this overall goal complete
+because a package or documentation review finished. Push coherent tested batches
+to `main` infrequently. No separate branch, release or new goal is required.
 - Record resource observations and verified teardown. Snapshot headroom is not
   a reservation, a memory-leak proof or a universal GPU placement guarantee.
 - No claim of zero defects, universal form coverage, undetectable writing or

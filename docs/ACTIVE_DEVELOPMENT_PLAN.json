@@ -1,0 +1,318 @@
+{
+  "schema_version": 1,
+  "reviewed_on": "2026-11-11",
+  "reviewed_source": "4acb9a955bcb961ad7a27cb9538e77bb0e03a547",
+  "goal": "Continue the existing active Smart Jobseeker product-development goal",
+  "plan": "docs/COMPLETION_PLAN_2026-11-11.md",
+  "assessment": "docs/REPO_STATE_REVIEW_2026-11-11.md",
+  "next_task": "R01",
+  "boundaries": [
+    "main only",
+    "headless development only",
+    "no application or application-email submission",
+    "no release",
+    "no delegation or new goal authorized by this file",
+    "preserve resource ownership and host RAM reserve",
+    "never manually close, dismiss or suppress detector findings"
+  ],
+  "tasks": [
+    {
+      "id": "R01",
+      "priority": "P0",
+      "status": "in_progress",
+      "depends_on": [],
+      "title": "Bounded, responsive local control plane",
+      "paths": [
+        "apps/web_app/src/main.rs"
+      ],
+      "acceptance": [
+        "No slow socket monopolizes workspace state",
+        "Absolute read/write deadlines; bounded workers/queue/backpressure",
+        "Status/stop responsiveness, saturation and shutdown regression evidence"
+      ],
+      "evidence": [
+        "docs/REPO_STATE_REVIEW_2026-11-11.md"
+      ]
+    },
+    {
+      "id": "R02",
+      "priority": "P0",
+      "status": "planned",
+      "depends_on": [],
+      "title": "Versioned representative and held-out evaluation",
+      "paths": [
+        "tools/qualify_rehearsal.py",
+        "tools/qualify_capture_replay.py",
+        "tools/qualify_history_ui.py",
+        "tools/qualify_model_preferences.py"
+      ],
+      "acceptance": [
+        "Private source/model/configuration-bound corpus manifest",
+        "Explicit correctness, abstention, completion and resource denominators",
+        "Held-out partition fixed before tuning; repeats for model promotion"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "R03",
+      "priority": "P0",
+      "status": "planned",
+      "depends_on": [
+        "R02"
+      ],
+      "title": "Faithful permitted saved rendering and label context",
+      "paths": [
+        "crates/waypoint_browser/src/capture_session.rs",
+        "crates/waypoint_browser/src/captured_frame.rs",
+        "apps/web_app/src/recorded_preview.rs"
+      ],
+      "acceptance": [
+        "Repair eligible resource/context gaps without relaxing source or write boundaries",
+        "Required labels and controls independently visible and bound",
+        "Earlier and held-out saved cases retain honest review outcomes"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "R04",
+      "priority": "P0",
+      "status": "planned",
+      "depends_on": [
+        "R02",
+        "R03"
+      ],
+      "title": "Generic model-driven form completion",
+      "paths": [
+        "apps/web_app/src/form_task.rs",
+        "apps/web_app/src/recorded_preview.rs",
+        "crates/waypoint_browser/src/lib.rs"
+      ],
+      "acceptance": [
+        "Typed bounded planning using supported candidate facts",
+        "Custom choices, repeated histories, conditional/multistep/frame scenarios",
+        "Independent before/after visual and native checks; no-progress review fallback"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "R05",
+      "priority": "P0",
+      "status": "planned",
+      "depends_on": [
+        "R02",
+        "R04"
+      ],
+      "title": "Candidate isolation and consequential-action gates",
+      "paths": [
+        "crates/waypoint_browser/src/rehearsal.rs",
+        "crates/waypoint_browser/src/rehearsal_worker.py",
+        "crates/waypoint_browser/src/rehearsal_replay.py"
+      ],
+      "acceptance": [
+        "Fictional canary data and adversarial write-transport fixtures",
+        "OS and transport evidence independent of model/button wording",
+        "No real employer interactions beyond read-only; no application sends"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "R06",
+      "priority": "P1",
+      "status": "planned",
+      "depends_on": [
+        "R02"
+      ],
+      "title": "Generic factual documents and final PDF acceptance",
+      "paths": [
+        "apps/web_app/src/candidate_task.rs",
+        "apps/web_app/src/draft_task.rs",
+        "docs/TEMPLATE_TAILORING.md",
+        "docs/DOCUMENT_PDF_JOURNEY.md"
+      ],
+      "acceptance": [
+        "Varied import/template/scanned/long/multilingual evidence",
+        "Every final attachment PDF; independent text and per-page visual review",
+        "Factual provenance, bounded repairs, exact exported attachment hashes"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "R07",
+      "priority": "P1",
+      "status": "planned",
+      "depends_on": [
+        "R02"
+      ],
+      "title": "Broad discovery and real application-route verification",
+      "paths": [
+        "apps/web_app/src/search_planner.rs",
+        "crates/waypoint_research/src/lib.rs",
+        "crates/waypoint_connectors/src/lib.rs"
+      ],
+      "acceptance": [
+        "Varied free provider/direct-employer queries with bounded resume/backoff",
+        "Original ads; fresh/stale/closed/inaccessible/challenge distinctions",
+        "Labeled retrieval and actual-route reachability evidence"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "R08",
+      "priority": "P1",
+      "status": "planned",
+      "depends_on": [
+        "R02",
+        "R07"
+      ],
+      "title": "Fit calibration and near-duplicate/application exclusion",
+      "paths": [
+        "apps/web_app/src/fit_task.rs",
+        "crates/waypoint_search/src/lib.rs"
+      ],
+      "acceptance": [
+        "Versioned objective rubric plus supported semantic assessment",
+        "Repeatability and independently reviewed held-out examples",
+        "False merge/missed duplicate and restart/application-alias evidence"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "R09",
+      "priority": "P1",
+      "status": "planned",
+      "depends_on": [
+        "R02",
+        "R04"
+      ],
+      "title": "Validated experience reuse and lesson promotion",
+      "paths": [
+        "apps/web_app/src/experience_inference.rs",
+        "crates/waypoint_workspace/src/form_experience.rs"
+      ],
+      "acceptance": [
+        "Provenance, review, revisions, scope, revoke/expiry and conflicts",
+        "Paired no-memory/with-memory tests on held-out changed platforms",
+        "Promote only measured improvements without critical regressions"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "R10",
+      "priority": "P1",
+      "status": "planned",
+      "depends_on": [
+        "R05",
+        "R06"
+      ],
+      "title": "Attempt archive, email preparation and recovery",
+      "paths": [
+        "apps/web_app/src/attempt_record.rs",
+        "crates/waypoint_applications/src/journal.rs",
+        "crates/waypoint_applications/src/recovery.rs"
+      ],
+      "acceptance": [
+        "Complete immutable packet/ad/answers/screenshots/outcome manifest",
+        "Crash/cancel/restart/ambiguous-write reconciliation without automatic retry",
+        "Email preparation/correlation; no application email sent"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "R11",
+      "priority": "P1",
+      "status": "planned",
+      "depends_on": [
+        "R01",
+        "R05",
+        "R10"
+      ],
+      "title": "Clean Windows setup, private storage and resource acceptance",
+      "paths": [
+        "apps/web_app/scripts/build-windows.ps1",
+        "apps/web_app/src/runtime_setup.rs",
+        "crates/waypoint_store/src/sqlcipher.rs"
+      ],
+      "acceptance": [
+        "Clean non-admin Windows missing/interrupted/offline/custom-path setup evidence",
+        "SQLCipher/DPAPI migration, backup/restore and degraded-build disclosures",
+        "Measured model/context RAM/VRAM and bounded teardown with host reserve"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "R12",
+      "priority": "P1",
+      "status": "planned",
+      "depends_on": [
+        "R01",
+        "R04",
+        "R06"
+      ],
+      "title": "Whole-interface design and interaction acceptance",
+      "paths": [
+        "apps/web_app/web/workspace-theme.css",
+        "apps/web_app/web/layout.js",
+        "docs/design/2026-11-smart-jobseeker/README.md"
+      ],
+      "acceptance": [
+        "Screen/state matrix and faithful iterative rendered design review",
+        "Mouse-drag resize bounds, real browser zoom/DPI/accessibility where available",
+        "Every setting functional and persisted; no invented status"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "R13",
+      "priority": "P1",
+      "status": "planned",
+      "depends_on": [
+        "R01",
+        "R02"
+      ],
+      "title": "Maintainability, artifact retention and efficient validation",
+      "paths": [
+        "apps/web_app/src/main.rs",
+        "tools/audit_development_host.ps1",
+        "docs/agent-tools.md"
+      ],
+      "acceptance": [
+        "Refactor changed mechanisms while preserving contracts",
+        "Immutable input reuse and dry-run owned-artifact retention",
+        "Change-directed checks, short evidence handoffs and verified cleanup"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "R14",
+      "priority": "P2",
+      "status": "planned",
+      "depends_on": [
+        "R01",
+        "R02",
+        "R03",
+        "R04",
+        "R05",
+        "R06",
+        "R07",
+        "R08",
+        "R09",
+        "R10",
+        "R11",
+        "R12",
+        "R13"
+      ],
+      "title": "Readiness evidence for user decision",
+      "paths": [
+        "AGENTS.md",
+        ".github/workflows/ci.yml",
+        "KNOWN_LIMITATIONS.md"
+      ],
+      "acceptance": [
+        "Exact-source supported-scope integrated acceptance evidence",
+        "Required hosted checks and visible detector states; no manual closure",
+        "Honest remaining limits; no release or application submission"
+      ],
+      "evidence": []
+    }
+  ]
+}
