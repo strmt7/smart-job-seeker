@@ -43,7 +43,7 @@ using runtime 0.40.16. Raw receipts and caches stay ignored under `target/`.
 | Compiled app route | Saved model settings, cold private cache, completed three-section rehearsal, persisted record and unchanged discovered job |
 | Cancellation after warm-up | Owned model exited, no private listener, namespace removed; shared model list unchanged |
 | Rendered settings | Persistence after reload, stale-write refusal, 1360/480/320-pixel layouts, refresh, clear and reselect; no horizontal overflow or page errors |
-| Native ownership regressions | Terminated process with a deliberately retained handle; wrong listener PID; wildcard IPv4 and IPv6 listeners; absent versus unresponsive private test endpoint |
+| Native ownership regressions | Terminated process with a deliberately retained handle; wrong listener PID; native IPv6 listener and synthetic wildcard IPv4 table entry; absent versus unresponsive private test endpoint |
 | Cache regressions | Source immutability, verified reuse, changed manifest, same-size corruption, repair, unknown-cache preservation, disk/time budgets, path refusal and dangling-lock refusal |
 
 The direct renderer native test took 160.26 seconds (190.775 seconds including
@@ -65,7 +65,7 @@ Primary receipts:
 
 Final workspace checks passed 1,260 tests across 43 targets; 590 live/optional
 tests remained explicitly ignored. Clippy, formatting, the managed Windows
-debug build, 67 Python tests and all 169 UI scripts
+debug build, 68 Python tests and all 169 UI scripts
 passed. Staged-source Gitleaks scanned 26 files with no findings. The final
 host audit observed zero matching development processes, services, tasks or
 startup entries, zero resident models and 27,679,498,240 bytes of available RAM.
@@ -92,6 +92,12 @@ all 169 local UI scripts and a rebuilt compiled settings check then passed.
 The original job log is retained privately, with no test exclusion or suppression.
 The compiled follow-up is `target/model-settings-native-tthm7apq/`; its controller
 and complete UI-script results are under `target/model-preferences-bootstrap-n2md8yer/`.
+
+CodeQL subsequently reported the wildcard binding in the native-table test.
+The test now supplies a synthetic wildcard row and retains a real IPv6 loopback
+check. It exercises the same ownership refusal without opening a wildcard socket.
+The finding's state remains under detector control; no dismissal or suppression
+was added. The updated 68-test Python suite passed before publication.
 
 ## Remaining limits
 

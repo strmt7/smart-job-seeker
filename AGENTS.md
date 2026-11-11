@@ -271,6 +271,8 @@ used by development tools and tests. Do not add WSL or Docker as product require
   `*-ui.test.js` scripts once. Some tests evaluate bounded source fragments;
   new initialization must stay in the page startup section rather than leak
   into unrelated fragments at the end of the file.
+- Keep test listeners on loopback. Exercise wildcard listener-table entries
+  with synthetic native records rather than opening an all-interface socket.
 - A fully GPU-loaded model can still retain substantial host-memory prompt
   checkpoints. The owned Ollama qualifier uses a 512 MiB saved-prompt cache and
   one checkpoint per slot; verify backend acceptance in its native log. Retain

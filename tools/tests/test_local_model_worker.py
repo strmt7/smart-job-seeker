@@ -157,16 +157,36 @@ class LocalModelWorkerTests(unittest.TestCase):
             if handle:self.assertTrue(kernel.CloseHandle(handle))
 
     @unittest.skipUnless(os.name == 'nt', 'native Windows listener table')
-    def test_wildcard_and_ipv6_listeners_are_not_mistaken_for_absence(self):
-        for family, address in [(socket.AF_INET, '0.0.0.0'), (socket.AF_INET6, '::1')]:
-            with socket.socket(family, socket.SOCK_STREAM) as server:
-                server.bind((address, 0))
-                server.listen()
-                request = {'port': server.getsockname()[1]}
-                self.assertEqual(WORKER.listener(request)['owners'], [os.getpid()])
-                with self.assertRaisesRegex(ValueError, 'ownership'):
-                    WORKER.listener({**request, 'pid': os.getpid()})
-            self.assertEqual(WORKER.listener(request)['owners'], [])
+    def test_ipv6_listener_is_not_mistaken_for_absence(self):
+        with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as server:
+            server.bind(('::1', 0))
+            server.listen()
+            request = {'port': server.getsockname()[1]}
+            self.assertEqual(WORKER.listener(request)['owners'], [os.getpid()])
+            with self.assertRaisesRegex(ValueError, 'ownership'):
+                WORKER.listener({**request, 'pid': os.getpid()})
+        self.assertEqual(WORKER.listener(request)['owners'], [])
+
+    @unittest.skipUnless(os.name == 'nt', 'native Windows table layout')
+    def test_wildcard_native_table_row_is_not_mistaken_for_absence(self):
+        import ctypes
+        from ctypes import wintypes
+        import struct
+        from types import SimpleNamespace
+        port = 42421
+        # Synthetic MIB_TCPTABLE_OWNER_PID bytes; no wildcard socket is opened.
+        row = struct.pack('<7I', 1, 2, 0, socket.htons(port), 0, 0, os.getpid())
+        def table(buffer, size, _ordered, family, _kind, _reserved):
+            data = row if family == socket.AF_INET else struct.pack('<I', 0)
+            ctypes.cast(size, ctypes.POINTER(wintypes.DWORD)).contents.value = len(data)
+            if buffer is None:
+                return 122
+            ctypes.memmove(buffer, data, len(data))
+            return 0
+        with patch.object(WORKER.ctypes, 'WinDLL', return_value=SimpleNamespace(GetExtendedTcpTable=table)):
+            self.assertEqual(WORKER.listener({'port': port})['owners'], [os.getpid()])
+            with self.assertRaisesRegex(ValueError, 'ownership'):
+                WORKER.listener({'port': port, 'pid': os.getpid()})
 
 
 if __name__ == '__main__':
