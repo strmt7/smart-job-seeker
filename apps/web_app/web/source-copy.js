@@ -156,6 +156,7 @@
             visually_matched: 'Text and image match',
             visual_difference: 'Image transcription differs',
             visual_unobserved: 'Model could not read the image',
+            visual_review_failed: 'Text verified in form · image review failed',
             visual_unavailable: 'Text verified in form · visual review unavailable',
             changed_after_entry: 'Field changed after entry',
             readback_unavailable: 'Field needs manual review',

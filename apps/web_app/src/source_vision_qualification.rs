@@ -104,7 +104,7 @@ struct Case {
     manual_allowed: bool,
 }
 
-fn owned_vision_endpoint() -> (std::net::SocketAddr, String, PathBuf) {
+pub(crate) fn owned_vision_endpoint() -> (std::net::SocketAddr, String, PathBuf) {
     let origin = std::env::var("WAYPOINT_OWNED_OLLAMA_ORIGIN")
         .expect("Use tools/qualify_owned_answers.py --suite vision");
     let url = url::Url::parse(&origin).unwrap();

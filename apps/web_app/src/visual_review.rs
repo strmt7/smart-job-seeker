@@ -946,15 +946,47 @@ pub(crate) fn analyze_targeted_with_verified_text(
 }
 
 #[cfg(windows)]
+pub(crate) enum RecordedVisionOutcome {
+    Matched,
+    Difference,
+    Unobserved,
+    Failed,
+    Stopped,
+}
+
+#[cfg(windows)]
 pub(crate) fn review_recorded_text(
     model: &mut VisionIdentityGuard,
+    addr: std::net::SocketAddr,
     capture: &waypoint_browser::RecordedTextCapture,
-) -> Result<Value, String> {
-    let addr = "127.0.0.1:11434".parse().expect("literal address");
+) -> RecordedVisionOutcome {
     let label = capture.label();
     let expected = [(label.to_owned(), capture.value().to_owned())];
     let name = model.model.clone();
-    model.checked(|| analyze_targeted(addr, &name, capture.image(), label, &expected, None, true))
+    // Check identity even if this crop produced an invalid transcription.
+    // An isolated crop failure should not hide observations on other fields.
+    match model.checked_with(
+        || crate::resident_model_identity_at(addr),
+        || {
+            Ok(analyze_targeted(
+                addr,
+                &name,
+                capture.image(),
+                label,
+                &expected,
+                None,
+                true,
+            ))
+        },
+    ) {
+        Ok(Ok(review)) => match review["comparisons"][0]["status"].as_str() {
+            Some("matches_transcription") => RecordedVisionOutcome::Matched,
+            Some("differs_from_transcription") => RecordedVisionOutcome::Difference,
+            _ => RecordedVisionOutcome::Unobserved,
+        },
+        Ok(Err(_)) => RecordedVisionOutcome::Failed,
+        Err(_) => RecordedVisionOutcome::Stopped,
+    }
 }
 
 fn analyze_targeted(

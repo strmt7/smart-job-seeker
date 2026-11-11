@@ -40,8 +40,10 @@ vision model is already loaded, it receives the focused image, field label and
 verified text-presence cue. The expected characters stay in the comparison
 code. The model's identity is checked before and after inference. Application
 records distinguish a visual match, different or unreadable transcription,
-unavailable vision and failed DOM verification. Each image has a digest and
-can be opened with the shared viewer.
+unavailable vision, a failed image review and failed DOM verification. A crop
+error is recorded for that field. Review continues while the same local model
+remains eligible. The result retains its name and digest, and each saved image
+has a digest and can be opened with the shared viewer.
 
 This exercise covers the saved responses and supported controls. It makes no
 live application request and creates no approval. Real candidate data, choices,
@@ -64,9 +66,37 @@ The complete two-case invocation took 96.811 seconds and sampled at least
 `target/recorded-fill-native-iwpb2uzk/`, with
 `qualification.private.json` SHA-256
 `c3f4654163e364abc0bc652cef00abb0b24087a96a31731fcabf1b02593ab3e8`.
-The run exercised the unavailable-vision state. The
-[prior local model measurements](g1/RECORDED_FRAME_VISION_2026-11-10.md)
-used different captures and do not qualify model accuracy on this route.
+That run exercised the unavailable-vision state. The connected model check
+below exercises the same saved-copy renderer with the resident vision path.
+
+### Connected local vision
+
+The native Windows qualification ran the saved-copy renderer against an owned
+Ollama 0.40.16 instance on a private loopback port. It used
+`gemma4:12b-it-q4_K_M` at 4,096 context. The focused **First name** and
+**Email** captures both matched the verified values. The image digests matched
+the earlier compiled UI captures. The renderer closed the browser before the
+two visual requests. The retained record binds the matches to the model digest.
+
+The contained run took 60.655 seconds and sampled at least 22,739,935,232
+bytes of available host RAM. Native output reported all 49 main layers and all
+five auxiliary layers on the GPU, with a 7,693 MiB fit projection and the
+retained rocBLASLt data warning. The projection is distinct from a device-wide
+peak. The private runtime and model copy were removed. Evidence is in
+`target/owned-answer-qualification-xxx3rri0/`, with
+`result.private.json` SHA-256
+`f1fe5b1d85bb6d3aa6a8d3b8974c5625f209224f954de364e60e04eb46bfdcd6`.
+
+The opt-in `vision-saved-rehearsal` suite in
+`tools/qualify_owned_answers.py` accepts a private JSON fixture under
+`target/` through `--recorded-rehearsal-fixture`. Supply `source` with
+the saved attempt directory, job and attempt IDs, and `rehearse: true`.
+Supply `python`, a `RehearsalConfig` under `config` with the verified
+headless engine inventory, and `manifest_sha256` for the saved replay.
+Use a fictional copy of `https://example.org/fictional-rehearsal` with the
+two eligible fields in its recorded frame. The suite verifies the supplied
+source, config and current model. Its two-field denominator leaves general
+form and model accuracy unmeasured.
 
 ## Compiled Windows evidence, 2026-11-11
 

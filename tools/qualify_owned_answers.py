@@ -32,8 +32,11 @@ REPO = Path(__file__).resolve().parents[1]
 TEST = 'source_answer_qualification::private_runtime_prepares_grounded_answers_and_refuses_unsupported_experience'
 VISION_TEST = 'source_vision_qualification::private_runtime_transcribes_form_values_without_expected_answer_leakage'
 FRAME_VISION_TEST = 'source_vision_qualification::private_runtime_reviews_recorded_frame_captures'
+REHEARSAL_VISION_SUITE = 'vision-saved-rehearsal'
+REHEARSAL_VISION_TEST = 'recorded_preview::tests::owned_runtime_reviews_saved_copy_rehearsal'
 FRAME_VISION_SUITES = ('vision-frames','vision-frames-system','vision-frames-confirmed')
 TESTS = {'answers':TEST, 'vision':VISION_TEST, 'vision-system':VISION_TEST, **dict.fromkeys(FRAME_VISION_SUITES,FRAME_VISION_TEST)}
+TESTS[REHEARSAL_VISION_SUITE] = REHEARSAL_VISION_TEST
 GIB = 1024**3
 PROMPT_CACHE_MIB = 512
 CONTEXT_CHECKPOINTS = 1
@@ -378,6 +381,8 @@ def worker(config_path):
                 'PATH':str(folder / 'test-runtime') + os.pathsep + os.environ.get('PATH','')}
             if suite in ('vision','vision-system'): environment['WAYPOINT_BROWSER']=config['browser']
             if suite in FRAME_VISION_SUITES: environment['WAYPOINT_OWNED_FRAME_VISION_SHA256']=config['frame_input_sha256']
+            if suite == REHEARSAL_VISION_SUITE:
+                environment['WAYPOINT_OWNED_REHEARSAL_SHA256'] = config['rehearsal_input_sha256']
             client_log = folder / (suite + '.private.log')
             with client_log.open('xb') as log:
                 client = subprocess.Popen([config['test_binary'], test_name, '--ignored', '--exact', '--nocapture', '--test-threads=1'],
@@ -426,9 +431,18 @@ def main():
     parser.add_argument('--suite', choices=sorted(TESTS), default='answers')
     parser.add_argument('--browser', type=Path)
     parser.add_argument('--replay-result', type=Path, help='Retained fictional --frame-controls result for vision-frames')
+    parser.add_argument('--recorded-rehearsal-fixture', type=Path, help='Private saved-copy fixture configuration for vision-saved-rehearsal')
     args = parser.parse_args()
     if (args.suite in FRAME_VISION_SUITES) != (args.replay_result is not None):
         parser.error('A replay result is required only for recorded-frame vision suites')
+    if (args.suite == REHEARSAL_VISION_SUITE) != (args.recorded_rehearsal_fixture is not None):
+        parser.error('A saved-copy fixture is required only for vision-saved-rehearsal')
+    rehearsal_input = None
+    if args.recorded_rehearsal_fixture:
+        fixture_path = regular(args.recorded_rehearsal_fixture).resolve(strict=True)
+        if not fixture_path.is_relative_to((REPO / 'target').resolve()) or fixture_path.stat().st_size > 128 * 1024:
+            parser.error('Use a bounded fictional saved-copy fixture under target')
+        rehearsal_input = fixture_path.read_bytes()
     frame_input = recorded_frame_vision(args.replay_result, args.suite!='vision-frames', args.suite=='vision-frames-confirmed') if args.replay_result else None
     if os.name != 'nt' or not args.ollama.is_absolute() or not args.ollama.is_file():
         parser.error('Select an explicit existing Windows Ollama executable')
@@ -458,6 +472,9 @@ def main():
         REPO / 'apps/web_app/scripts/build-windows.ps1', REPO / 'apps/web_app/src/visual_review.rs',
         REPO / 'apps/web_app/src/source_vision_qualification.rs', REPO / 'crates/waypoint_browser/src/lib.rs',
         REPO / 'crates/waypoint_browser/src/cdp.rs']
+    if rehearsal_input is not None:
+        paths.extend([REPO / 'apps/web_app/src/recorded_preview.rs',
+            REPO / 'crates/waypoint_browser/src/captured_frame.rs'])
     hashes = lambda: {p.relative_to(REPO).as_posix(): digest(p) for p in paths}
     receipt['sources'] = hashes()
     memory = RamSamples(); memory.thread.start()
@@ -497,6 +514,11 @@ def main():
             input_path.write_text(json.dumps(frame_input), encoding='utf-8')
             config['frame_input_sha256'] = digest(input_path)
             receipt['frame_input'] = {k:v for k,v in frame_input.items() if k != 'cases'} | {'cases':len(frame_input['cases']), 'sha256':config['frame_input_sha256']}
+        if rehearsal_input is not None:
+            input_path = folder / 'recorded-rehearsal-input.private.json'
+            input_path.write_bytes(rehearsal_input)
+            config['rehearsal_input_sha256'] = digest(input_path)
+            receipt['rehearsal_input_sha256'] = config['rehearsal_input_sha256']
         config_path = folder / 'runtime-config.private.json'
         config_path.write_text(json.dumps(config), encoding='utf-8')
         environment['WAYPOINT_OWNED_ANSWER_NONCE'] = config['nonce']

@@ -2157,9 +2157,18 @@ fn check_inference_memory() -> Result<(), String> {
 /// This check is a snapshot,
 /// not a reservation; Ollama can change its state after it is read.
 fn resident_model_identity() -> Result<Option<resident_inference::ResidentIdentity>, String> {
+    resident_model_identity_at(std::net::SocketAddr::from(([127, 0, 0, 1], 11434)))
+}
+
+fn resident_model_identity_at(
+    addr: std::net::SocketAddr,
+) -> Result<Option<resident_inference::ResidentIdentity>, String> {
+    if addr.ip() != std::net::Ipv4Addr::LOCALHOST || addr.port() == 0 {
+        return Err("Resident inference requires a literal local runtime".into());
+    }
     #[cfg(windows)]
     check_inference_memory()?;
-    let status = resident_model_status()?;
+    let status = resident_model_status_at(addr)?;
     let Some(name) = status["model"].as_str() else {
         return Ok(None);
     };

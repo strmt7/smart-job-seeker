@@ -93,8 +93,27 @@ pub(crate) fn render(
     source: &Source,
     url: &str,
     python: &Path,
+    config: waypoint_browser::rehearsal::RehearsalConfig,
+    screenshots: &Path,
+) -> Result<Value, String> {
+    render_at(
+        source,
+        url,
+        python,
+        config,
+        screenshots,
+        std::net::SocketAddr::from(([127, 0, 0, 1], 11434)),
+    )
+}
+
+#[cfg(windows)]
+fn render_at(
+    source: &Source,
+    url: &str,
+    python: &Path,
     mut config: waypoint_browser::rehearsal::RehearsalConfig,
     screenshots: &Path,
+    vision_addr: std::net::SocketAddr,
 ) -> Result<Value, String> {
     use waypoint_applications::{driver::BrowserDriver, form_mapping::BrowserCommand};
     use waypoint_browser::CdpDriver;
@@ -222,7 +241,7 @@ pub(crate) fn render(
         .map_err(|error| error.to_string())?;
     let mut result = result?;
     if let Some(rehearsal) = rehearsal {
-        result["rehearsal"] = rehearsal.review();
+        result["rehearsal"] = rehearsal.review(vision_addr);
     }
     Ok(result)
 }
@@ -321,29 +340,31 @@ impl Rehearsal {
         }
     }
 
-    fn review(mut self) -> Value {
+    fn review(mut self, addr: std::net::SocketAddr) -> Value {
+        use crate::visual_review::RecordedVisionOutcome;
+        let mut vision_model = None;
         if !self.captures.is_empty() && crate::check_inference_memory().is_ok() {
-            if let Ok(Some(identity)) = crate::resident_model_identity() {
+            if let Ok(Some(identity)) = crate::resident_model_identity_at(addr) {
+                vision_model = Some(json!({"name":identity.name,"digest":identity.digest}));
                 let mut model = crate::visual_review::VisionIdentityGuard::from_identity(identity);
                 for (index, capture) in &self.captures {
                     if crate::check_inference_memory().is_err() {
                         break;
                     }
-                    let Ok(review) =
-                        crate::visual_review::review_recorded_text(&mut model, capture)
-                    else {
-                        break;
-                    };
-                    self.fields[*index]["status"] =
-                        json!(match review["comparisons"][0]["status"].as_str() {
-                            Some("matches_transcription") => "visually_matched",
-                            Some("differs_from_transcription") => "visual_difference",
-                            _ => "visual_unobserved",
-                        });
+                    let status =
+                        match crate::visual_review::review_recorded_text(&mut model, addr, capture)
+                        {
+                            RecordedVisionOutcome::Matched => "visually_matched",
+                            RecordedVisionOutcome::Difference => "visual_difference",
+                            RecordedVisionOutcome::Unobserved => "visual_unobserved",
+                            RecordedVisionOutcome::Failed => "visual_review_failed",
+                            RecordedVisionOutcome::Stopped => break,
+                        };
+                    self.fields[*index]["status"] = json!(status);
                 }
             }
         }
-        json!({"scope":"fictional_text_only","field_limit":REHEARSAL_LIMIT,"halted":self.halted,"fields":self.fields})
+        json!({"scope":"fictional_text_only","field_limit":REHEARSAL_LIMIT,"halted":self.halted,"fields":self.fields,"vision_model":vision_model})
     }
 }
 
@@ -445,6 +466,97 @@ fn save_image(directory: &Path, sequence: usize, image: &str) -> Result<(String,
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "owned model and private fictional saved-copy fixture"]
+    fn owned_runtime_reviews_saved_copy_rehearsal() {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Fixture {
+            source: Source,
+            python: PathBuf,
+            config: waypoint_browser::rehearsal::RehearsalConfig,
+            manifest_sha256: String,
+        }
+        const URL: &str = "https://example.org/fictional-rehearsal";
+        let (addr, model, output) = crate::source_vision_qualification::owned_vision_endpoint();
+        let folder = output.parent().unwrap();
+        let bytes = read(
+            &folder.join("recorded-rehearsal-input.private.json"),
+            128 * 1024,
+        )
+        .unwrap();
+        assert_eq!(
+            waypoint_domain::sha256_hex(&bytes),
+            std::env::var("WAYPOINT_OWNED_REHEARSAL_SHA256").unwrap()
+        );
+        let fixture: Fixture = serde_json::from_slice(&bytes).unwrap();
+        let target = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target")
+            .canonicalize()
+            .unwrap();
+        assert!(fixture
+            .source
+            .directory
+            .canonicalize()
+            .unwrap()
+            .starts_with(target));
+        assert!(fixture.source.rehearse);
+        fixture.source.validate(URL).unwrap();
+        let manifest = fixture
+            .source
+            .directory
+            .join("source-page/archive/replay.json");
+        assert_eq!(
+            waypoint_domain::sha256_hex(&read(&manifest, 1024 * 1024).unwrap()),
+            fixture.manifest_sha256
+        );
+        let screenshots = folder.join("rehearsal-screenshots");
+        fs::create_dir(&screenshots).unwrap();
+        let load = serde_json::to_vec(&json!({"model":model,"prompt":"","stream":false,
+            "keep_alive":"5m","options":{"num_ctx":4096}}))
+        .unwrap();
+        let (code, _) = waypoint_inference::ollama::http_request(
+            addr,
+            "POST",
+            "/api/generate",
+            Some(&load),
+            120_000,
+        )
+        .unwrap();
+        assert_eq!(code, 200);
+        let identity = crate::resident_model_identity_at(addr)
+            .unwrap()
+            .expect("The private model must meet the product resident budget");
+        assert_eq!(identity.name, model);
+        let result = render_at(
+            &fixture.source,
+            URL,
+            &fixture.python,
+            fixture.config,
+            &screenshots,
+            addr,
+        )
+        .unwrap();
+        fs::write(&output, serde_json::to_vec_pretty(&result).unwrap()).unwrap();
+        assert_eq!(result["manifest_sha256"], fixture.manifest_sha256);
+        assert_eq!(
+            result["rehearsal"]["vision_model"]["digest"],
+            identity.digest
+        );
+        assert_eq!(result["rehearsal"]["halted"], false);
+        let fields = result["rehearsal"]["fields"].as_array().unwrap();
+        let labels: Vec<_> = fields
+            .iter()
+            .map(|field| field["label"].as_str().unwrap())
+            .collect();
+        assert_eq!(labels, ["First name", "Email"]);
+        for field in fields {
+            assert_eq!(field["view"], 2);
+            assert_eq!(field["status"], "visually_matched", "{}", field["label"]);
+        }
+    }
 
     #[test]
     fn preview_requires_the_current_job_and_completed_archive() {

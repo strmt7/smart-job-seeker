@@ -1,7 +1,8 @@
 ## Offline autofill rehearsal - 2026-11-11
 
 - The saved-copy workflow exercises supported text fields with fictional details, retains exact DOM readback and saves focused images. A resident local vision model can compare the pixels with the verified value. Rehearsal has no live application or candidate-data path.
-- The compiled UI passed two field checks in a fictional cross-origin frame. A separate scripted fixture cleared an earlier answer and attempted a POST, which was blocked. Entry stopped and the changed answer remained visible in the record. The local-model branch still needs connected qualification. [Evidence and limits](docs/RECORDED_PAGE_PREVIEW.md).
+- The compiled UI passed two field checks in a fictional cross-origin frame. A separate scripted fixture cleared an earlier answer and attempted a POST, which was blocked. Entry stopped and the changed answer remained visible in the record.
+- The connected local 12B model matched both focused captures in the owned native run. A failed crop review remains visible while later fields can still be checked with the same eligible model. [Evidence and limits](docs/RECORDED_PAGE_PREVIEW.md).
 
 ## Embedded application frames in saved page copies - 2026-11-11
 
