@@ -44,6 +44,7 @@ pub enum RecordedFieldKind {
     Text,
     Select,
     Radio,
+    File,
 }
 
 /// Pixels with independently verified field state in a recorded form.
@@ -79,7 +80,10 @@ impl RecordedFieldCapture {
                 ..
             }
             | BrowserCommand::SelectOption { label: value, .. }
-            | BrowserCommand::SelectRadio { label: value, .. } => value,
+            | BrowserCommand::SelectRadio { label: value, .. }
+            | BrowserCommand::UploadFile {
+                file_name: value, ..
+            } => value,
             _ => unreachable!("recorded field capture always has a scalar answer"),
         }
     }
@@ -194,6 +198,13 @@ impl CdpDriver {
                     },
                 )
             }
+            FormFieldType::File => (
+                RecordedFieldKind::File,
+                BrowserCommand::UploadFile {
+                    selector: selector.into(),
+                    file_name: value.into(),
+                },
+            ),
             _ => return Err(review()),
         };
         let document = self.recorded_document()?;
@@ -226,6 +237,10 @@ impl CdpDriver {
                     self.ensure_choice_replaceable(&command)?;
                     self.execute(&command)?;
                 }
+            }
+            RecordedFieldKind::File => {
+                let (path, hash) = self.recorded_attachment(value)?;
+                self.attach_local_files_inner(selector, &[path], Some(&[]), Some(&hash))?;
             }
         }
         self.stop_if_non_read_request_observed(network_before)?;
@@ -288,8 +303,21 @@ impl CdpDriver {
                 selector,
                 value: PacketValue::Text(value),
             } => self.verify_text_value(selector, value),
+            BrowserCommand::UploadFile {
+                selector,
+                file_name,
+            } => {
+                let (path, hash) = self.recorded_attachment(file_name)?;
+                self.verify_local_files_inner(selector, &[path], Some(&hash))
+            }
             _ => self.verify_choice(command),
         }
+    }
+
+    fn recorded_attachment(&self, name: &str) -> Result<(PathBuf, String), DriverError> {
+        let inventory = self.recorded_attachments.as_ref().ok_or_else(review)?;
+        let hash = inventory.files.get(name).ok_or_else(review)?;
+        Ok((inventory.root.join(name), hash.clone()))
     }
 
     fn screenshot_recorded_radio(

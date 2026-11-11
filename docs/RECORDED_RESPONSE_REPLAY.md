@@ -8,8 +8,9 @@ still apply; this does not enable real application interaction.
 
 Status: experimental Windows development interface, 2026-11-10. This adds
 bounded response replay to the existing [isolated browser](ISOLATED_REHEARSAL.md).
-It is not enabled in the web interface or qualified for interacting with real
-employer forms. No ordinary-browser or live-fetch fallback exists.
+The web interface uses it for [saved previews and fictional rehearsal](RECORDED_PAGE_PREVIEW.md).
+Interaction with real employer forms remains unqualified. There is no
+ordinary-browser or live-fetch fallback.
 
 ## Behavior and archive contract
 
@@ -19,6 +20,13 @@ checksum-bound `content_files` inventory. Both versions keep the same process,
 AppContainer, ownership, memory, disk, session and recovery limits. The embedded
 controller receives the replay helper alongside its main script, including when
 running Python in isolated mode; it does not rely on a host module installation.
+
+Schema 2 accepts an optional separate `attachments` inventory with an
+absolute `root` and a `files` map of flat PDF names to SHA-256 digests.
+The worker admits up to five files with a 10 MiB aggregate copy budget and
+copies them into the private profile before launch. The replay manifest and
+response inventory remain independent of these files. The web rehearsal
+supplies only its bundled fictional PDF.
 
 The archive has exactly `schema: 1`, `body_representation: "decoded_http"`, an
 HTTPS `entry_url`, and 1–512 `resources`. Each resource has these fields:

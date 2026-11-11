@@ -563,6 +563,7 @@ fn worker(request: Request) -> Result<Value, String> {
             entry: "index.html".into(),
             seconds: if source.rehearse { 180 } else { 120 },
             replay_manifest: None,
+            attachments: None,
         };
         let preview =
             crate::recorded_preview::render(source, &request.url, &python, config, &screenshots)?;
@@ -594,6 +595,7 @@ fn worker(request: Request) -> Result<Value, String> {
             entry: "index.html".into(),
             seconds: 30,
             replay_manifest: None,
+            attachments: None,
         };
         capture.discover_resources(&python, config, 4, 1500)?;
     }

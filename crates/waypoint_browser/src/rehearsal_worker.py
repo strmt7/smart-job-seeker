@@ -624,6 +624,10 @@ class Container:
             raise WorkerError('headless_engine_incomplete')
         content = self.folder / 'content'
         copy_verified(source_root(config['content_root']), config['content_files'], content, 64 * 1024**2, True, config['schema'] in (2,3))
+        if 'attachments' in config:
+            attachments = config['attachments']
+            copy_verified(source_root(attachments['root']), attachments['files'],
+                          self.folder / 'attachments', 10 * 1024**2, True)
         entry = str(relative_path(config['entry']))
         if entry not in config['content_files'] or Path(entry).suffix.lower() not in ('.html', '.htm'):
             raise WorkerError('invalid_snapshot_entry')
@@ -836,8 +840,18 @@ def validate_config(config):
     required = {'schema', 'engine_root', 'engine_files', 'content_root', 'content_files', 'entry', 'seconds'}
     if (not isinstance(config, dict) or type(config.get('schema')) is not int
             or config['schema'] not in (1,2,3)
-            or set(config) != required | ({'replay_manifest'} if config['schema'] in (2,3) else set())):
+            or set(config) - {'attachments'} != required | ({'replay_manifest'} if config['schema'] in (2,3) else set())):
         raise WorkerError('invalid_worker_configuration')
+    if 'attachments' in config:
+        attachments = config['attachments']
+        if (config['schema'] != 2 or not isinstance(attachments, dict)
+                or set(attachments) != {'root', 'files'}
+                or not isinstance(attachments['root'], str)):
+            raise WorkerError('invalid_attachment_inventory')
+        files = manifest(attachments['files'])
+        if len(files) > 5 or any(not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_.-]{0,95}\.pdf', name)
+                                 for name in files):
+            raise WorkerError('invalid_attachment_inventory')
     if config['schema'] in (2,3):
         name=str(relative_path(config['replay_manifest']))
         if not isinstance(config['content_files'], dict) or not name.endswith('.json') or name not in config['content_files']:

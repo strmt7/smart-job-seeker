@@ -63,12 +63,15 @@ function harness(api, onFinished) {
     ...preview, rehearsal: {scope:'fictional_saved_form', fields:[
       {view:2,kind:'select',label:'Country',status:'visually_matched'},
       {view:2,kind:'radio',label:'City',status:'visual_unavailable'},
+      {view:2,kind:'file',label:'Resume',status:'visual_unavailable',attachment:{name:'sample-resume.pdf'}},
     ]},
   }, {jobId:'job',attemptId:'test',api:async () => {}});
   const choiceSelect = find(choice,node => node.tag==='select');
   choiceSelect.value='1'; choiceSelect.listeners.change();
   assert(find(choice,node => node.textContent==='Country · Selection and image match'));
   assert(find(choice,node => node.textContent==='City · Selection verified in form · visual review unavailable'));
+  assert(find(choice,node => node.textContent==='Resume · Attachment verified in form · visual review unavailable'));
+  assert(find(choice,node => node.textContent==='sample-resume.pdf'));
 })().catch(error=>{console.error(error);process.exitCode=1;});
 
 (async () => {

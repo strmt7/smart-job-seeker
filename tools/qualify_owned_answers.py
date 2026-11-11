@@ -474,7 +474,11 @@ def main():
         REPO / 'crates/waypoint_browser/src/cdp.rs']
     if rehearsal_input is not None:
         paths.extend([REPO / 'apps/web_app/src/recorded_preview.rs',
-            REPO / 'crates/waypoint_browser/src/captured_frame.rs'])
+            REPO / 'apps/web_app/src/rehearsal-sample.pdf',
+            REPO / 'crates/waypoint_browser/src/captured_frame.rs',
+            REPO / 'crates/waypoint_browser/src/rehearsal.rs',
+            REPO / 'crates/waypoint_browser/src/rehearsal_worker.py',
+            REPO / 'crates/waypoint_browser/src/rehearsal_replay.py'])
     hashes = lambda: {p.relative_to(REPO).as_posix(): digest(p) for p in paths}
     receipt['sources'] = hashes()
     memory = RamSamples(); memory.thread.start()

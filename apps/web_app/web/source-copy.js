@@ -152,7 +152,7 @@
         const checks = Array.isArray(rehearsal.fields) ? rehearsal.fields.slice(0, 4).filter(field => field?.view === Number(select.value) + 1) : [];
         if (!checks.length) details.append(el('p', 'No fields were tested in this view.', 'footnote'));
         for (const check of checks) {
-          const stateLabel = ['select', 'radio'].includes(check.kind) ? 'Selection' : 'Text';
+          const stateLabel = check.kind === 'file' ? 'Attachment' : ['select', 'radio'].includes(check.kind) ? 'Selection' : 'Text';
           const states = {
             visually_matched: `${stateLabel} and image match`,
             visual_difference: 'Image transcription differs',
@@ -164,6 +164,9 @@
           };
           const row = el('div', '', 'source-copy-actions');
           row.append(el('span', `${check.label || 'Field'} · ${states[check.status] || 'Needs review'}`, 'footnote'));
+          if (check.kind === 'file' && /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,95}\.pdf$/.test(check.attachment?.name || '')) {
+            row.append(el('span', check.attachment.name, 'footnote'));
+          }
           if (check.image) {
             const button = el('button', 'View field image', 'secondary');
             button.type = 'button';

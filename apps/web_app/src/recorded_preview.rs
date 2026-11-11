@@ -153,6 +153,9 @@ fn render_at(
     config.content_root = archive;
     config.content_files = inventory.files;
     config.replay_manifest = Some("replay.json".into());
+    if source.rehearse {
+        config.attachments = Some(stage_sample_attachments(screenshots)?);
+    }
     let (mut driver, ready) =
         CdpDriver::launch_rehearsal(python, config).map_err(|error| error.to_string())?;
     let mut rehearsal = source.rehearse.then(Rehearsal::default);
@@ -250,6 +253,60 @@ fn render_at(
 const REHEARSAL_LIMIT: usize = 4;
 
 #[cfg(windows)]
+const SAMPLE_PDF: &[u8] = include_bytes!("rehearsal-sample.pdf");
+#[cfg(windows)]
+const SAMPLE_RESUME: &str = "sample-resume.pdf";
+#[cfg(windows)]
+const SAMPLE_COVER: &str = "sample-cover-letter.pdf";
+
+#[cfg(windows)]
+fn stage_sample_attachments(
+    screenshots: &Path,
+) -> Result<waypoint_browser::rehearsal::RehearsalAttachments, String> {
+    let attempt = screenshots
+        .parent()
+        .ok_or("Rehearsal record is unavailable")?;
+    directory(attempt)?;
+    let root = attempt.join("rehearsal-attachments");
+    fs::create_dir(&root).map_err(|_| "Cannot create sample attachment folder")?;
+    let digest = waypoint_domain::sha256_hex(SAMPLE_PDF);
+    let mut files = std::collections::BTreeMap::new();
+    for name in [SAMPLE_RESUME, SAMPLE_COVER] {
+        use std::io::Write;
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(root.join(name))
+            .and_then(|mut file| file.write_all(SAMPLE_PDF))
+            .map_err(|_| "Cannot preserve sample attachment")?;
+        files.insert(name.to_owned(), digest.clone());
+    }
+    Ok(waypoint_browser::rehearsal::RehearsalAttachments { root, files })
+}
+
+#[cfg(windows)]
+fn sample_attachment(
+    field: &waypoint_applications::form_mapping::FormField,
+) -> Option<&'static str> {
+    use waypoint_applications::form_mapping::FormFieldType;
+    if field.sensitive || field.field_type != FormFieldType::File {
+        return None;
+    }
+    match field
+        .label
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+        .as_str()
+    {
+        "resume" | "résumé" | "cv" | "curriculum vitae" => Some(SAMPLE_RESUME),
+        "cover letter" => Some(SAMPLE_COVER),
+        _ => None,
+    }
+}
+
+#[cfg(windows)]
 #[derive(Default)]
 struct Rehearsal {
     fields: Vec<Value>,
@@ -280,29 +337,11 @@ impl Rehearsal {
             return;
         };
         let mut captures = Vec::new();
-        for mapping in mappings {
+        for field in &form.schema.fields {
             if self.fields.len() >= REHEARSAL_LIMIT {
                 break;
             }
-            let PacketValue::Text(value) = mapping.value else {
-                continue;
-            };
-            let Some(field) = form
-                .schema
-                .fields
-                .iter()
-                .find(|f| f.selector == mapping.field_selector)
-            else {
-                continue;
-            };
-            if !matches!(
-                field.field_type,
-                FormFieldType::Text
-                    | FormFieldType::Email
-                    | FormFieldType::TextArea
-                    | FormFieldType::Select { .. }
-                    | FormFieldType::Radio { .. }
-            ) || form
+            if form
                 .schema
                 .fields
                 .iter()
@@ -312,17 +351,48 @@ impl Rehearsal {
             {
                 continue;
             }
+            let value = if field.field_type == FormFieldType::File {
+                let Some(name) = sample_attachment(field) else {
+                    continue;
+                };
+                if form
+                    .schema
+                    .fields
+                    .iter()
+                    .filter(|other| sample_attachment(other) == Some(name))
+                    .count()
+                    != 1
+                {
+                    continue;
+                }
+                name
+            } else {
+                let Some(value) = mappings.iter().find_map(|mapping| match &mapping.value {
+                    PacketValue::Text(value) if mapping.field_selector == field.selector => {
+                        Some(value.as_str())
+                    }
+                    _ => None,
+                }) else {
+                    continue;
+                };
+                value
+            };
             let index = self.fields.len();
             let mut result = json!({"view":view,"label":bounded_text(&field.label),"status":"readback_unavailable"});
-            match driver.rehearse_recorded_field(form, &field.selector, &value) {
+            match driver.rehearse_recorded_field(form, &field.selector, value) {
                 Ok(capture) => {
                     result["kind"] = json!(capture.kind());
                     result["status"] = json!("visual_unavailable");
-                    if let Ok((name, digest)) = save_image(directory, 6 + index, capture.image()) {
+                    let image_saved = if let Ok((name, digest)) =
+                        save_image(directory, 6 + index, capture.image())
+                    {
                         result["image"] = json!(name);
                         result["sha256"] = json!(digest);
-                        captures.push((index, capture));
-                    }
+                        true
+                    } else {
+                        false
+                    };
+                    captures.push((index, capture, image_saved));
                 }
                 Err(_) => self.halted = true,
             }
@@ -335,9 +405,16 @@ impl Rehearsal {
             let unchanged = driver
                 .inspect_current()
                 .is_ok_and(|current| current == *form);
-            for (index, capture) in captures {
+            for (index, capture, image_saved) in captures {
                 if unchanged && driver.verify_recorded_field(&capture).is_ok() {
-                    self.captures.push((index, capture));
+                    if matches!(capture.kind(), waypoint_browser::RecordedFieldKind::File) {
+                        self.fields[index]["attachment"] = json!({
+                            "name":capture.value(), "sha256":waypoint_domain::sha256_hex(SAMPLE_PDF),
+                        });
+                    }
+                    if image_saved {
+                        self.captures.push((index, capture));
+                    }
                 } else {
                     self.fields[index]["status"] = json!("changed_after_entry");
                     self.halted = true;
@@ -486,6 +563,8 @@ mod tests {
             manifest_sha256: String,
             #[serde(default)]
             mixed_controls: bool,
+            #[serde(default)]
+            upload_controls: bool,
         }
         const URL: &str = "https://example.org/fictional-rehearsal";
         let (addr, model, output) = crate::source_vision_qualification::owned_vision_endpoint();
@@ -566,7 +645,16 @@ mod tests {
             .collect();
         let text = [("First name", "text"), ("Email", "text")];
         let mixed = [text[0], text[1], ("Country", "select"), ("City", "radio")];
-        let expected: &[_] = if fixture.mixed_controls {
+        let uploads = [
+            text[0],
+            mixed[2],
+            ("Resume", "file"),
+            ("Cover letter", "file"),
+        ];
+        assert!(!(fixture.mixed_controls && fixture.upload_controls));
+        let expected: &[_] = if fixture.upload_controls {
+            &uploads
+        } else if fixture.mixed_controls {
             &mixed
         } else {
             &text
@@ -575,6 +663,12 @@ mod tests {
         for field in fields {
             assert_eq!(field["view"], 2);
             assert_eq!(field["status"], "visually_matched", "{}", field["label"]);
+            if field["kind"] == "file" {
+                assert_eq!(
+                    field["attachment"]["sha256"],
+                    waypoint_domain::sha256_hex(SAMPLE_PDF)
+                );
+            }
         }
     }
 

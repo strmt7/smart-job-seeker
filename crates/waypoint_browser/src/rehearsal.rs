@@ -20,6 +20,15 @@ pub struct RehearsalConfig {
     pub seconds: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replay_manifest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attachments: Option<RehearsalAttachments>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RehearsalAttachments {
+    pub root: PathBuf,
+    pub files: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -192,6 +201,7 @@ mod windows {
                     (config.schema, config.replay_manifest.is_some()),
                     (1, false) | (2 | 3, true)
                 )
+                || (config.attachments.is_some() && config.schema != 2)
                 || !(5..=3600).contains(&config.seconds)
             {
                 return Err(CdpError("Invalid isolated-browser setup".into()));

@@ -1,3 +1,8 @@
+## Fictional PDF attachments in saved-page rehearsal - 2026-11-11
+
+- Rehearsal attaches bundled PDF samples to uniquely identified résumé and cover-letter inputs. A separate private inventory preserves the saved archive and verifies the selected bytes in an isolated browser script world. Attachment receipts require the final in-view recheck.
+- A compiled headless fixture verified both attachments. Another rejected a replacement with the same filename and size. The owned 12B model read both visible filenames and matched all four focused fields. [Scope and evidence](docs/RECORDED_PAGE_PREVIEW.md).
+
 ## Native choices in offline autofill rehearsal - 2026-11-11
 
 - The saved-copy workflow now verifies native dropdowns and radio groups with one matching option. It keeps existing conflicting selections for review and binds choice evidence to the active document and checked control.

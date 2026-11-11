@@ -24,11 +24,13 @@ embedded origins. Frames outside the saved archive can appear unavailable.
 
 Choose **Rehearse autofill** beside a saved page copy. The task uses a built-in
 fictional profile and the same exact-label and standard autocomplete mapping
-used by the ordinary form review. It checks up to four eligible text fields,
-native dropdowns and radio groups in the saved page and available frames.
-Choices need one matching displayed option. Sensitive, ambiguous and
-unsupported controls remain unfilled. The job snapshot is saved with the rehearsal, while
-the prepared candidate draft stays in its existing location.
+used by the ordinary form review. It checks up to four eligible controls in
+the saved page and available frames. These include text fields, native
+dropdowns, radio groups and PDF inputs identified uniquely as a résumé or
+cover letter. Choices need one matching displayed option. Sensitive,
+ambiguous and unsupported controls remain unfilled. The job snapshot is
+saved with the rehearsal, while the prepared candidate draft stays in its
+existing location.
 
 For each field, the driver checks the current document, frame lease and form
 schema, respects existing values and browser constraints, and uses the browser
@@ -39,21 +41,30 @@ view, it checks the completed values, document identity and observed request
 activity again.
 A failed action stops further entry and the result retains earlier observations.
 
+Rehearsal stages two named copies of a fictional one-page PDF in the new
+record's `rehearsal-attachments` directory. The saved source archive stays
+immutable. The browser receives a verified private copy and exercises only
+an empty file input whose declared formats accept the PDF. An isolated
+browser script world checks the selected file's name, size and actual bytes
+against its admitted digest. The record shows an attachment receipt only
+after the final in-view recheck.
+
 The browser closes before optional visual review. When an eligible local
 vision model is already loaded, it receives the focused image. Text controls
 also get a field label and independently verified text-presence cue. Choices
-are transcribed from the selected state in the image. Expected values stay in
-the comparison code. The model's identity is checked before and after inference. Application
-records distinguish a visual match, different or unreadable transcription,
+are transcribed from the selected state in the image. File input review reads
+the displayed filename. Expected values stay in the comparison code. The
+model's identity is checked before and after inference. Application records
+distinguish a visual match, different or unreadable transcription,
 unavailable vision, a failed image review and failed DOM verification. A crop
 error is recorded for that field. Review continues while the same local model
 remains eligible. The result retains its name and digest, and each saved image
 has a digest and can be opened with the shared viewer.
 
 This exercise covers the saved responses and supported controls. It makes no
-live application request and creates no approval. Real candidate data,
-custom choice widgets, attachments, later steps and server validation remain
-outside this rehearsal.
+live application request and creates no approval. Real candidate data, other
+attachment types, custom choice widgets, later steps and server validation
+remain outside this rehearsal.
 
 ### Rehearsal qualification
 
@@ -90,6 +101,18 @@ sampled at least 27,708,227,584 available physical bytes.
 `target/recorded-choice-native-9rph2hvv/qualification.private.json` has
 SHA-256 `c35f5b75ac318aff87a1dd7833440c1e3ef0ea90809e8028df438a59ec2f4453`.
 
+The attachment fixture retained the two sample PDFs, verified their digests
+and opened the focused file image at 1,360 and 480 pixels. The source archive
+retained its original inventory. A second fixture replaced the résumé after
+attachment with different bytes under the same name and size. Readback
+refused it and stopped, preserving the earlier verified dropdown.
+Both jobs remained discovered. The two-case invocation took 115.069 seconds
+and sampled at least 28,560,060,416 available physical bytes. The evidence
+file `target/recorded-upload-native-63fbw2mg/qualification.private.json`
+has SHA-256 `879277ac2bccc251d65564c9f1015cf8424a011f6de88ef0e31187b9156198d0`.
+The final compiled history view displayed both filenames and fit the field
+image at 1,360, 480 and 320 pixels.
+
 ### Connected local vision
 
 The native Windows qualification ran the saved-copy renderer against an owned
@@ -117,6 +140,8 @@ headless engine inventory, and `manifest_sha256` for the saved replay.
 Use a fictional copy of `https://example.org/fictional-rehearsal` with the
 two eligible text fields in its recorded frame. The `mixed_controls` fixture
 flag additionally expects a **Country** dropdown and **City** radio group.
+The separate `upload_controls` flag expects **First name**, **Country**,
+**Resume** and **Cover letter**.
 The suite verifies the supplied source, config and current model.
 
 The final mixed run used the same model and context. It matched all four
@@ -127,6 +152,15 @@ profile and model copy were removed.
 `target/owned-answer-qualification-2fjmzgrb/result.private.json` has SHA-256
 `2208202dd4976780d26a9f5ab7d5a003d70e8a3ecd5a6979fd08f62d7227b6b3`.
 This fixture leaves broader form coverage and model accuracy unmeasured.
+
+The owned attachment run matched all four fields, including both displayed
+PDF filenames. It reproduced all four compiled fixture image digests.
+The invocation took 80.164 seconds and sampled at least 24,483,835,904
+bytes of available host RAM. The model copy and private profile were
+removed. `target/owned-answer-qualification-jseusjvn/result.private.json`
+has SHA-256 `ba846d95dc2c6807929f0b8f3b3b38e30948b6cacfe013258c5900bde5fb70a9`.
+This visual result corroborates the filenames. The isolated DOM checks
+establish the attachment bytes within the recorded form.
 
 ## Compiled Windows evidence, 2026-11-11
 

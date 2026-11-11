@@ -65,6 +65,19 @@ class RehearsalProtocolTests(unittest.TestCase):
             worker.copy_verified(source,files,root/'replay',4096,True,True)
             self.assertEqual((root/'replay/body.bin').read_bytes(),data)
 
+    def test_separate_attachments_require_recorded_mode_and_flat_pdf_inventory(self):
+        base = dict(schema=2, engine_root='fixture', engine_files={}, content_root='fixture',
+                    content_files={'replay.json':'a'*64}, entry='index.html', seconds=30,
+                    replay_manifest='replay.json')
+        attachments = {'root':'fixture', 'files':{'sample.pdf':'b'*64}}
+        self.assertEqual(worker.validate_config({**base,'attachments':attachments})['attachments'], attachments)
+        for files in ({}, {'nested/sample.pdf':'b'*64}, {'sample.docx':'b'*64},
+                      {'sample.pdf':'invalid'}, {f'file{i}.pdf':'b'*64 for i in range(6)}):
+            with self.subTest(files=files), self.assertRaises(worker.WorkerError):
+                worker.validate_config({**base,'attachments':{**attachments,'files':files}})
+        with self.assertRaises(worker.WorkerError):
+            worker.validate_config({**base,'schema':3,'attachments':attachments})
+
     def test_windows_paths_and_manifest_aliases_are_refused(self):
         for path in ['../file', '/root', 'C:/file', 'dir\\file', 'a//b', 'CON.pdf',
                      'dir/lpt1.txt', 'COM¹.pdf', 'LPT³.txt', 'name.', 'name ', 'file:stream', '.']:

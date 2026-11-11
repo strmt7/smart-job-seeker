@@ -490,6 +490,7 @@ pub struct CdpDriver {
     cdp: Cdp,
     /// Directories searched when a packet asks to upload a named file.
     upload_dirs: Vec<PathBuf>,
+    recorded_attachments: Option<rehearsal::RehearsalAttachments>,
     root_node: Option<u64>,
     /// Human-readable trace of what the driver did, for the UI and for bug
     /// reports. Never contains field values that were typed.
@@ -1695,6 +1696,7 @@ impl CdpDriver {
                     .map(std::path::Path::to_owned)
             })
             .collect();
+        let mut attachments = config.attachments.clone();
         let (owner, pipe, evidence) =
             rehearsal::RehearsalOwner::start(python, config).map_err(derr)?;
         let cdp = Cdp::new_rehearsal(pipe).map_err(derr)?;
@@ -1705,6 +1707,14 @@ impl CdpDriver {
                 .map(|path| evidence.content_root.join(path)),
         );
         let mut driver = Self::initialize(BrowserOwner::Rehearsal(owner), cdp, uploads)?;
+        if let Some(inventory) = &mut attachments {
+            inventory.root = evidence
+                .content_root
+                .parent()
+                .ok_or_else(|| DriverError("Attachment profile is unavailable".into()))?
+                .join("attachments");
+        }
+        driver.recorded_attachments = attachments;
         driver
             .cdp
             .call_browser("Browser.setDownloadBehavior", json!({"behavior":"deny"}))
@@ -1737,6 +1747,7 @@ impl CdpDriver {
             browser,
             cdp,
             upload_dirs,
+            recorded_attachments: None,
             root_node: None,
             trace: vec![],
             load_wait: Duration::from_secs(10),
@@ -2291,7 +2302,7 @@ impl CdpDriver {
         selector: &str,
         paths: &[std::path::PathBuf],
     ) -> Result<(), DriverError> {
-        self.attach_local_files_inner(selector, paths, None)
+        self.attach_local_files_inner(selector, paths, None, None)
     }
 
     /// Refuse to overwrite a selection that differs from the reviewed prior set.
@@ -2301,7 +2312,7 @@ impl CdpDriver {
         paths: &[std::path::PathBuf],
         previous: &[std::path::PathBuf],
     ) -> Result<(), DriverError> {
-        self.attach_local_files_inner(selector, paths, Some(previous))
+        self.attach_local_files_inner(selector, paths, Some(previous), None)
     }
 
     fn attach_local_files_inner(
@@ -2309,6 +2320,7 @@ impl CdpDriver {
         selector: &str,
         paths: &[std::path::PathBuf],
         previous: Option<&[std::path::PathBuf]>,
+        pinned_hash: Option<&str>,
     ) -> Result<(), DriverError> {
         if paths.is_empty() || paths.len() > 5 {
             return Err(DriverError("Choose one to five files".into()));
@@ -2321,14 +2333,7 @@ impl CdpDriver {
         let node = self
             .node_id(selector)?
             .ok_or_else(|| DriverError("File field not found".into()))?;
-        let resolved = self
-            .cdp
-            .call("DOM.resolveNode", json!({"nodeId":node}))
-            .map_err(derr)?;
-        let object = resolved
-            .pointer("/object/objectId")
-            .and_then(Value::as_str)
-            .ok_or_else(|| DriverError("Cannot inspect file field".into()))?;
+        let object = self.file_input_object(node, pinned_hash.is_some())?;
         let available = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function() { return (this.isConnected && !this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]')) && this instanceof HTMLInputElement && this.type === 'file' && !this.matches(':disabled'); }","returnByValue":true})).map_err(derr)?;
         if available.get("exceptionDetails").is_some()
             || available.pointer("/result/value").and_then(Value::as_bool) != Some(true)
@@ -2376,6 +2381,23 @@ impl CdpDriver {
                 })?;
             }
         }
+        if let Some(expected) = pinned_hash {
+            use std::io::Read;
+            let file = std::fs::File::open(&paths[0])
+                .map_err(|_| DriverError("Cannot read staged attachment".into()))?;
+            let mut bytes = Vec::new();
+            file.take(10 * 1024 * 1024 + 1)
+                .read_to_end(&mut bytes)
+                .map_err(|_| DriverError("Cannot read staged attachment".into()))?;
+            if paths.len() != 1
+                || bytes.len() > 10 * 1024 * 1024
+                || waypoint_domain::sha256_hex(&bytes) != expected
+            {
+                return Err(DriverError(
+                    "Staged attachment differs from its verified inventory".into(),
+                ));
+            }
+        }
         // Verification obtains a fresh document and invalidates earlier CDP node IDs.
         let node = self
             .node_id(selector)?
@@ -2386,7 +2408,40 @@ impl CdpDriver {
                 json!({ "files": paths.iter().map(|path| path.to_string_lossy()).collect::<Vec<_>>(), "nodeId": node }),
             )
             .map_err(derr)?;
-        self.verify_local_files(selector, paths)
+        self.verify_local_files_inner(selector, paths, pinned_hash)
+    }
+
+    fn file_input_object(&mut self, node: u64, isolated: bool) -> Result<String, DriverError> {
+        let mut params = json!({"nodeId":node});
+        if isolated {
+            let tree = self
+                .cdp
+                .call("Page.getFrameTree", json!({}))
+                .map_err(derr)?;
+            let frame = tree
+                .pointer("/frameTree/frame/id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| DriverError("File inspection frame is unavailable".into()))?;
+            let world = self
+                .cdp
+                .call(
+                    "Page.createIsolatedWorld",
+                    json!({
+                        "frameId":frame, "worldName":"Smart Jobseeker file verification"
+                    }),
+                )
+                .map_err(derr)?;
+            params["executionContextId"] = json!(world["executionContextId"]
+                .as_u64()
+                .filter(|id| *id > 0)
+                .ok_or_else(|| DriverError("File verification world is unavailable".into()))?);
+        }
+        let resolved = self.cdp.call("DOM.resolveNode", params).map_err(derr)?;
+        resolved
+            .pointer("/object/objectId")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| DriverError("Cannot inspect file field".into()))
     }
 
     /// Check whether the selected input still holds the staged local file.
@@ -2403,7 +2458,16 @@ impl CdpDriver {
         selector: &str,
         paths: &[std::path::PathBuf],
     ) -> Result<(), DriverError> {
-        if paths.is_empty() || paths.len() > 5 {
+        self.verify_local_files_inner(selector, paths, None)
+    }
+
+    fn verify_local_files_inner(
+        &mut self,
+        selector: &str,
+        paths: &[std::path::PathBuf],
+        pinned_hash: Option<&str>,
+    ) -> Result<(), DriverError> {
+        if paths.is_empty() || paths.len() > 5 || (pinned_hash.is_some() && paths.len() != 1) {
             return Err(DriverError("Invalid attachment set".into()));
         }
         let mut expected = Vec::with_capacity(paths.len());
@@ -2431,21 +2495,18 @@ impl CdpDriver {
             if bytes.len() as u64 != size {
                 return Err(DriverError("Attachment changed during verification".into()));
             }
-            expected.push(
-                json!({"name":name,"size":size,"sha256":waypoint_domain::sha256_hex(&bytes)}),
-            );
+            let hash = waypoint_domain::sha256_hex(&bytes);
+            if pinned_hash.is_some_and(|expected| expected != hash) {
+                return Err(DriverError(
+                    "Staged attachment differs from its verified inventory".into(),
+                ));
+            }
+            expected.push(json!({"name":name,"size":size,"sha256":hash}));
         }
         let node = self
             .node_id(selector)?
             .ok_or_else(|| DriverError("File field not found".into()))?;
-        let resolved = self
-            .cdp
-            .call("DOM.resolveNode", json!({"nodeId":node}))
-            .map_err(derr)?;
-        let object = resolved
-            .pointer("/object/objectId")
-            .and_then(Value::as_str)
-            .ok_or_else(|| DriverError("Cannot inspect file field".into()))?;
+        let object = self.file_input_object(node, pinned_hash.is_some())?;
         let retained = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"async function(expected) { const matches = () => this.isConnected && !this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]') && this instanceof HTMLInputElement && this.type === 'file' && !this.matches(':disabled') && (expected.length === 1 || this.multiple) && this.files && this.files.length === expected.length && expected.every((file, i) => this.files[i].name === file.name && this.files[i].size === file.size); if (!matches() || !globalThis.crypto?.subtle) return false; try { const files = Array.from(this.files); for (let i = 0; i < files.length; i++) { const digest = await crypto.subtle.digest('SHA-256', await files[i].arrayBuffer()); const hex = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join(''); if (hex !== expected[i].sha256) return false; } return matches() && files.every((file, i) => this.files[i] === file); } catch (_) { return false; } }","arguments":[{"value":expected}],"awaitPromise":true,"returnByValue":true})).map_err(derr)?;
         if retained.get("exceptionDetails").is_some()
             || retained.pointer("/result/value").and_then(Value::as_bool) != Some(true)
