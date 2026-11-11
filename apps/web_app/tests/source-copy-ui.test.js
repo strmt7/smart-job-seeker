@@ -59,6 +59,16 @@ function harness(api, onFinished) {
   assert(find(tested,node => node.textContent==='Clear field · Text and image match'));
   await button(tested,'View field image').listeners.click();
   assert(find(tested,node => node.tag==='img'));
+  const choice = harness(async () => {}).preview({
+    ...preview, rehearsal: {scope:'fictional_saved_form', fields:[
+      {view:2,kind:'select',label:'Country',status:'visually_matched'},
+      {view:2,kind:'radio',label:'City',status:'visual_unavailable'},
+    ]},
+  }, {jobId:'job',attemptId:'test',api:async () => {}});
+  const choiceSelect = find(choice,node => node.tag==='select');
+  choiceSelect.value='1'; choiceSelect.listeners.change();
+  assert(find(choice,node => node.textContent==='Country · Selection and image match'));
+  assert(find(choice,node => node.textContent==='City · Selection verified in form · visual review unavailable'));
 })().catch(error=>{console.error(error);process.exitCode=1;});
 
 (async () => {

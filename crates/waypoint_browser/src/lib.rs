@@ -21,7 +21,7 @@
 //!   them.
 
 mod captured_frame;
-pub use captured_frame::{CapturedFrame, CapturedFrames, RecordedTextCapture};
+pub use captured_frame::{CapturedFrame, CapturedFrames, RecordedFieldCapture, RecordedFieldKind};
 pub mod capture_discovery;
 pub mod capture_privacy;
 pub mod capture_session;
@@ -2116,7 +2116,7 @@ impl CdpDriver {
         &mut self,
         node: u64,
         context: bool,
-        allow_wide: bool,
+        allow_larger_element: bool,
     ) -> Result<String, DriverError> {
         let model = self
             .cdp
@@ -2127,14 +2127,14 @@ impl CdpDriver {
             .and_then(Value::as_array)
             .ok_or_else(|| DriverError("Field has no capture bounds".into()))?;
         let numbers: Vec<f64> = quad.iter().filter_map(Value::as_f64).collect();
-        self.screenshot_bounds(&numbers, context, allow_wide)
+        self.screenshot_bounds(&numbers, context, allow_larger_element)
     }
 
     fn screenshot_bounds(
         &mut self,
         numbers: &[f64],
         context: bool,
-        allow_wide: bool,
+        allow_larger_element: bool,
     ) -> Result<String, DriverError> {
         if numbers.len() != 8 || numbers.iter().any(|number| !number.is_finite()) {
             return Err(DriverError("Invalid field capture bounds".into()));
@@ -2227,9 +2227,9 @@ impl CdpDriver {
             (
                 left,
                 top,
-                (right - left).min(if allow_wide { 1600.0 } else { 720.0 }),
-                (bottom - top).min(400.0),
-                if allow_wide && right - left > 720.0 {
+                (right - left).min(if allow_larger_element { 1600.0 } else { 720.0 }),
+                (bottom - top).min(if allow_larger_element { 1080.0 } else { 400.0 }),
+                if allow_larger_element && (right - left > 720.0 || bottom - top > 400.0) {
                     1
                 } else {
                     2
@@ -5764,6 +5764,17 @@ impl CdpDriver {
         label: &str,
         apply: bool,
     ) -> Result<(), DriverError> {
+        self.radio_selection(selector, label, apply, false)
+            .map(drop)
+    }
+
+    fn radio_selection(
+        &mut self,
+        selector: &str,
+        label: &str,
+        apply: bool,
+        capture_node: bool,
+    ) -> Result<Option<u64>, DriverError> {
         let node = self
             .node_id(selector)?
             .ok_or_else(|| DriverError("Radio group not found".into()))?;
@@ -5775,7 +5786,7 @@ impl CdpDriver {
             .pointer("/object/objectId")
             .and_then(Value::as_str)
             .ok_or_else(|| DriverError("Cannot inspect radio group".into()))?;
-        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function(label, apply) {
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function(label, apply, captureNode) {
           if (this.tagName !== 'INPUT' || this.type !== 'radio' || !this.name) return false;
           const selector = 'fieldset,[role="radiogroup"]';
           const root = this.getRootNode();
@@ -5806,21 +5817,39 @@ impl CdpDriver {
           const chosen = choices[0];
           const visible = node => { if (!node.getClientRects().length) return false; const rect = node.getBoundingClientRect(); let left = rect.left, right = rect.right, top = rect.top, bottom = rect.bottom; for (let item = node, depth = 0; item; item = item.parentElement) { if (++depth > 64) return false; const style = getComputedStyle(item); if (style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0) return false; if (item !== node) { const box = item.getBoundingClientRect(); if (['hidden','clip'].includes(style.overflowX)) { left = Math.max(left, box.left + item.clientLeft); right = Math.min(right, box.left + item.clientLeft + item.clientWidth); } if (['hidden','clip'].includes(style.overflowY)) { top = Math.max(top, box.top + item.clientTop); bottom = Math.min(bottom, box.top + item.clientTop + item.clientHeight); } } } return right > left && bottom > top; }; if (!visible(chosen)) return false;
           if (apply && !chosen.checked) { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked').set.call(chosen, true); chosen.dispatchEvent(new Event('input', {bubbles:true})); chosen.dispatchEvent(new Event('change', {bubbles:true})); }
-          return chosen.isConnected && chosen.checked && !unavailable(chosen) && chosen.validity.valid;
-        }"#,"arguments":[{"value":label},{"value":apply}],"returnByValue":true}));
+          if (!chosen.isConnected || !chosen.checked || unavailable(chosen) || !chosen.validity.valid) return false;
+          return captureNode ? chosen : true;
+        }"#,"arguments":[{"value":label},{"value":apply},{"value":capture_node}],"returnByValue":!capture_node}));
         let released = self
             .cdp
             .call("Runtime.releaseObject", json!({"objectId":object}));
         let result = result.map_err(derr)?;
         released.map_err(derr)?;
-        if result.get("exceptionDetails").is_some()
-            || result.pointer("/result/value").and_then(Value::as_bool) != Some(true)
-        {
-            return Err(DriverError(
-                "Radio option is unavailable, ambiguous, or was not retained".into(),
-            ));
+        let unavailable =
+            || DriverError("Radio option is unavailable, ambiguous, or was not retained".into());
+        if result.get("exceptionDetails").is_some() {
+            return Err(unavailable());
         }
-        Ok(())
+        if !capture_node {
+            return (result.pointer("/result/value").and_then(Value::as_bool) == Some(true))
+                .then_some(None)
+                .ok_or_else(unavailable);
+        }
+        let option = result
+            .pointer("/result/objectId")
+            .and_then(Value::as_str)
+            .ok_or_else(unavailable)?;
+        let requested = self.cdp.call("DOM.requestNode", json!({"objectId":option}));
+        let released = self
+            .cdp
+            .call("Runtime.releaseObject", json!({"objectId":option}));
+        let requested = requested.map_err(derr)?;
+        released.map_err(derr)?;
+        requested["nodeId"]
+            .as_u64()
+            .filter(|id| *id != 0)
+            .map(Some)
+            .ok_or_else(unavailable)
     }
 
     fn resolve_upload(&self, name: &str) -> Result<PathBuf, DriverError> {

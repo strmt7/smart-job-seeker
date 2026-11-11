@@ -24,21 +24,26 @@ embedded origins. Frames outside the saved archive can appear unavailable.
 
 Choose **Rehearse autofill** beside a saved page copy. The task uses a built-in
 fictional profile and the same exact-label and standard autocomplete mapping
-used by the ordinary form review. It checks up to four eligible text controls
-in the saved page and available frames. Sensitive, ambiguous and unsupported
-controls remain unfilled. The job snapshot is saved with the rehearsal, while
+used by the ordinary form review. It checks up to four eligible text fields,
+native dropdowns and radio groups in the saved page and available frames.
+Choices need one matching displayed option. Sensitive, ambiguous and
+unsupported controls remain unfilled. The job snapshot is saved with the rehearsal, while
 the prepared candidate draft stays in its existing location.
 
 For each field, the driver checks the current document, frame lease and form
-schema, respects existing values and browser constraints, and uses native input
-events. Exact visible DOM readback is required before and after the focused
-image. After the last input in that view, it checks the completed values again.
+schema, respects existing values and browser constraints, and uses the browser
+driver's typed commands. Exact visible DOM readback is required before and
+after the focused image. Radio captures center the checked option and include
+surrounding labels where the viewport permits. After the last input in that
+view, it checks the completed values, document identity and observed request
+activity again.
 A failed action stops further entry and the result retains earlier observations.
 
 The browser closes before optional visual review. When an eligible local
-vision model is already loaded, it receives the focused image, field label and
-verified text-presence cue. The expected characters stay in the comparison
-code. The model's identity is checked before and after inference. Application
+vision model is already loaded, it receives the focused image. Text controls
+also get a field label and independently verified text-presence cue. Choices
+are transcribed from the selected state in the image. Expected values stay in
+the comparison code. The model's identity is checked before and after inference. Application
 records distinguish a visual match, different or unreadable transcription,
 unavailable vision, a failed image review and failed DOM verification. A crop
 error is recorded for that field. Review continues while the same local model
@@ -46,8 +51,9 @@ remains eligible. The result retains its name and digest, and each saved image
 has a digest and can be opened with the shared viewer.
 
 This exercise covers the saved responses and supported controls. It makes no
-live application request and creates no approval. Real candidate data, choices,
-attachments, later steps and server validation remain outside this rehearsal.
+live application request and creates no approval. Real candidate data,
+custom choice widgets, attachments, later steps and server validation remain
+outside this rehearsal.
 
 ### Rehearsal qualification
 
@@ -68,6 +74,21 @@ The complete two-case invocation took 96.811 seconds and sampled at least
 `c3f4654163e364abc0bc652cef00abb0b24087a96a31731fcabf1b02593ab3e8`.
 That run exercised the unavailable-vision state. The connected model check
 below exercises the same saved-copy renderer with the resident vision path.
+
+The mixed-control Windows fixture verified four fields in a 440-pixel
+embedded frame. It checked native dropdown and radio selections alongside two
+text fields, with focused images linked from the record. An earlier attempt
+exposed a 400-pixel overview limit that skipped this visible frame. Larger
+bounded element captures now admit the frame while keeping the viewport and
+image byte limits. The final run rendered the selected radio image at 1,360
+and 480 pixels. One intermediate invocation failed the resize assertion.
+The final capture and render passed both viewport checks, and a separate
+history render also fit at 320 pixels. A second fixture cleared the dropdown and attempted a POST
+during a radio change. Replay blocked the request and the rehearsal stopped.
+Both jobs remained discovered. The two-case run took 137.525 seconds and
+sampled at least 27,708,227,584 available physical bytes.
+`target/recorded-choice-native-9rph2hvv/qualification.private.json` has
+SHA-256 `c35f5b75ac318aff87a1dd7833440c1e3ef0ea90809e8028df438a59ec2f4453`.
 
 ### Connected local vision
 
@@ -94,9 +115,18 @@ the saved attempt directory, job and attempt IDs, and `rehearse: true`.
 Supply `python`, a `RehearsalConfig` under `config` with the verified
 headless engine inventory, and `manifest_sha256` for the saved replay.
 Use a fictional copy of `https://example.org/fictional-rehearsal` with the
-two eligible fields in its recorded frame. The suite verifies the supplied
-source, config and current model. Its two-field denominator leaves general
-form and model accuracy unmeasured.
+two eligible text fields in its recorded frame. The `mixed_controls` fixture
+flag additionally expects a **Country** dropdown and **City** radio group.
+The suite verifies the supplied source, config and current model.
+
+The final mixed run used the same model and context. It matched all four
+values, including both native selections. All four image digests matched the
+compiled UI run. The invocation took 99.505 seconds and sampled at least
+20,365,971,456 bytes of available host RAM. The owned process tree, private
+profile and model copy were removed.
+`target/owned-answer-qualification-2fjmzgrb/result.private.json` has SHA-256
+`2208202dd4976780d26a9f5ab7d5a003d70e8a3ecd5a6979fd08f62d7227b6b3`.
+This fixture leaves broader form coverage and model accuracy unmeasured.
 
 ## Compiled Windows evidence, 2026-11-11
 

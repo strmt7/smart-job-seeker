@@ -253,7 +253,7 @@ const REHEARSAL_LIMIT: usize = 4;
 #[derive(Default)]
 struct Rehearsal {
     fields: Vec<Value>,
-    captures: Vec<(usize, waypoint_browser::RecordedTextCapture)>,
+    captures: Vec<(usize, waypoint_browser::RecordedFieldCapture)>,
     halted: bool,
 }
 
@@ -274,6 +274,7 @@ impl Rehearsal {
         let profile = json!({
             "full_name":"Avery Example", "first_name":"Avery", "last_name":"Example",
             "email":"avery@example.invalid", "phone":"+12025550123",
+            "city":"Example City", "country":"Canada",
         });
         let Ok(mappings) = crate::suggestions::suggest_exact(&form.schema, &profile) else {
             return;
@@ -296,7 +297,11 @@ impl Rehearsal {
             };
             if !matches!(
                 field.field_type,
-                FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea
+                FormFieldType::Text
+                    | FormFieldType::Email
+                    | FormFieldType::TextArea
+                    | FormFieldType::Select { .. }
+                    | FormFieldType::Radio { .. }
             ) || form
                 .schema
                 .fields
@@ -309,13 +314,14 @@ impl Rehearsal {
             }
             let index = self.fields.len();
             let mut result = json!({"view":view,"label":bounded_text(&field.label),"status":"readback_unavailable"});
-            match driver.rehearse_recorded_text(form, &field.selector, &value) {
+            match driver.rehearse_recorded_field(form, &field.selector, &value) {
                 Ok(capture) => {
+                    result["kind"] = json!(capture.kind());
                     result["status"] = json!("visual_unavailable");
                     if let Ok((name, digest)) = save_image(directory, 6 + index, capture.image()) {
                         result["image"] = json!(name);
                         result["sha256"] = json!(digest);
-                        captures.push((index, mapping.field_selector, capture));
+                        captures.push((index, capture));
                     }
                 }
                 Err(_) => self.halted = true,
@@ -329,8 +335,8 @@ impl Rehearsal {
             let unchanged = driver
                 .inspect_current()
                 .is_ok_and(|current| current == *form);
-            for (index, selector, capture) in captures {
-                if unchanged && driver.verify_text_value(&selector, capture.value()).is_ok() {
+            for (index, capture) in captures {
+                if unchanged && driver.verify_recorded_field(&capture).is_ok() {
                     self.captures.push((index, capture));
                 } else {
                     self.fields[index]["status"] = json!("changed_after_entry");
@@ -351,20 +357,20 @@ impl Rehearsal {
                     if crate::check_inference_memory().is_err() {
                         break;
                     }
-                    let status =
-                        match crate::visual_review::review_recorded_text(&mut model, addr, capture)
-                        {
-                            RecordedVisionOutcome::Matched => "visually_matched",
-                            RecordedVisionOutcome::Difference => "visual_difference",
-                            RecordedVisionOutcome::Unobserved => "visual_unobserved",
-                            RecordedVisionOutcome::Failed => "visual_review_failed",
-                            RecordedVisionOutcome::Stopped => break,
-                        };
+                    let status = match crate::visual_review::review_recorded_field(
+                        &mut model, addr, capture,
+                    ) {
+                        RecordedVisionOutcome::Matched => "visually_matched",
+                        RecordedVisionOutcome::Difference => "visual_difference",
+                        RecordedVisionOutcome::Unobserved => "visual_unobserved",
+                        RecordedVisionOutcome::Failed => "visual_review_failed",
+                        RecordedVisionOutcome::Stopped => break,
+                    };
                     self.fields[*index]["status"] = json!(status);
                 }
             }
         }
-        json!({"scope":"fictional_text_only","field_limit":REHEARSAL_LIMIT,"halted":self.halted,"fields":self.fields,"vision_model":vision_model})
+        json!({"scope":"fictional_saved_form","field_limit":REHEARSAL_LIMIT,"halted":self.halted,"fields":self.fields,"vision_model":vision_model})
     }
 }
 
@@ -478,6 +484,8 @@ mod tests {
             python: PathBuf,
             config: waypoint_browser::rehearsal::RehearsalConfig,
             manifest_sha256: String,
+            #[serde(default)]
+            mixed_controls: bool,
         }
         const URL: &str = "https://example.org/fictional-rehearsal";
         let (addr, model, output) = crate::source_vision_qualification::owned_vision_endpoint();
@@ -547,11 +555,23 @@ mod tests {
         );
         assert_eq!(result["rehearsal"]["halted"], false);
         let fields = result["rehearsal"]["fields"].as_array().unwrap();
-        let labels: Vec<_> = fields
+        let controls: Vec<_> = fields
             .iter()
-            .map(|field| field["label"].as_str().unwrap())
+            .map(|field| {
+                (
+                    field["label"].as_str().unwrap(),
+                    field["kind"].as_str().unwrap(),
+                )
+            })
             .collect();
-        assert_eq!(labels, ["First name", "Email"]);
+        let text = [("First name", "text"), ("Email", "text")];
+        let mixed = [text[0], text[1], ("Country", "select"), ("City", "radio")];
+        let expected: &[_] = if fixture.mixed_controls {
+            &mixed
+        } else {
+            &text
+        };
+        assert_eq!(controls, expected);
         for field in fields {
             assert_eq!(field["view"], 2);
             assert_eq!(field["status"], "visually_matched", "{}", field["label"]);

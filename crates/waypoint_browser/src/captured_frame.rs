@@ -38,15 +38,34 @@ pub struct CapturedFrames {
     pub uninspected: usize,
     pub truncated: bool,
 }
-/// Focused pixels with independently verified, visible text in a recorded form.
-/// Only the recorded driver can construct this evidence.
-pub struct RecordedTextCapture {
-    image: String,
-    label: String,
-    value: String,
+#[derive(Clone, Copy, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecordedFieldKind {
+    Text,
+    Select,
+    Radio,
 }
 
-impl RecordedTextCapture {
+/// Pixels with independently verified field state in a recorded form.
+/// Only the recorded driver can construct this evidence.
+pub struct RecordedFieldCapture {
+    image: String,
+    label: String,
+    kind: RecordedFieldKind,
+    command: BrowserCommand,
+    network_before: u64,
+    document: RecordedDocument,
+}
+
+#[derive(PartialEq, Eq)]
+struct RecordedDocument {
+    url: String,
+    frame: String,
+    loader: String,
+    lease: Option<String>,
+}
+
+impl RecordedFieldCapture {
     pub fn image(&self) -> &str {
         &self.image
     }
@@ -54,7 +73,18 @@ impl RecordedTextCapture {
         &self.label
     }
     pub fn value(&self) -> &str {
-        &self.value
+        match &self.command {
+            BrowserCommand::Fill {
+                value: PacketValue::Text(value),
+                ..
+            }
+            | BrowserCommand::SelectOption { label: value, .. }
+            | BrowserCommand::SelectRadio { label: value, .. } => value,
+            _ => unreachable!("recorded field capture always has a scalar answer"),
+        }
+    }
+    pub fn kind(&self) -> RecordedFieldKind {
+        self.kind
     }
 }
 pub(super) struct CapturedScope {
@@ -108,14 +138,14 @@ fn scope_key(frame: &CapturedFrame) -> Result<String, DriverError> {
     ))
 }
 impl CdpDriver {
-    /// Fill a reviewed text control and bind its screenshot to exact visible
-    /// readback on both sides of capture. A changed scope invalidates evidence.
-    pub fn rehearse_recorded_text(
+    /// Exercise an unambiguous text or native choice control. Bind pixels to
+    /// readback on both sides of capture and reject a changed scope.
+    pub fn rehearse_recorded_field(
         &mut self,
         form: &LiveForm,
         selector: &str,
         value: &str,
-    ) -> Result<RecordedTextCapture, DriverError> {
+    ) -> Result<RecordedFieldCapture, DriverError> {
         use waypoint_applications::form_mapping::FormFieldType;
         self.require_recorded_frames()?;
         let fields: Vec<_> = form
@@ -129,59 +159,155 @@ impl CdpDriver {
         };
         if !form.walls.is_empty()
             || field.sensitive
-            || !matches!(
-                field.field_type,
-                FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea
-            )
             || value.trim().is_empty()
             || value.len() > 1000
         {
             return Err(review());
         }
-        let url = self.current_url()?;
-        let lease = self.captured_scope.as_ref().map(|scope| scope.key.clone());
-        let document = |driver: &mut Self| {
-            let tree = driver
-                .cdp
-                .call("Page.getFrameTree", json!({}))
-                .map_err(derr)?;
-            let frame = &tree["frameTree"]["frame"];
-            let identity = |key: &str| {
-                frame[key]
-                    .as_str()
-                    .filter(|id| !id.is_empty())
-                    .map(str::to_owned)
-                    .ok_or_else(review)
-            };
-            Ok::<_, DriverError>((identity("id")?, identity("loaderId")?))
-        };
-        let original_document = document(self)?;
-        let check_scope = |driver: &mut Self| {
-            if driver.inspect_current()? != *form
-                || driver.current_url()? != url
-                || document(driver)? != original_document
-                || driver.captured_scope.as_ref().map(|scope| &scope.key) != lease.as_ref()
+        let (kind, command) = match &field.field_type {
+            FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea => (
+                RecordedFieldKind::Text,
+                BrowserCommand::Fill {
+                    selector: selector.into(),
+                    value: PacketValue::Text(value.into()),
+                },
+            ),
+            FormFieldType::Select { options }
+                if options.iter().filter(|label| *label == value).count() == 1 =>
             {
+                (
+                    RecordedFieldKind::Select,
+                    BrowserCommand::SelectOption {
+                        selector: selector.into(),
+                        label: value.into(),
+                    },
+                )
+            }
+            FormFieldType::Radio { options }
+                if options.iter().filter(|label| *label == value).count() == 1 =>
+            {
+                (
+                    RecordedFieldKind::Radio,
+                    BrowserCommand::SelectRadio {
+                        selector: selector.into(),
+                        label: value.into(),
+                    },
+                )
+            }
+            _ => return Err(review()),
+        };
+        let document = self.recorded_document()?;
+        let check_scope = |driver: &mut Self| {
+            if driver.inspect_current()? != *form || driver.recorded_document()? != document {
                 return Err(review());
             }
             Ok(())
         };
         check_scope(self)?;
-        self.ensure_text_replaceable(selector, value)?;
-        BrowserDriver::check_text_candidate(self, selector, value)?;
-        self.execute(&BrowserCommand::Fill {
-            selector: selector.to_owned(),
-            value: PacketValue::Text(value.to_owned()),
-        })?;
-        self.verify_text_value(selector, value)?;
-        let image = self.screenshot_field_context(selector)?;
+        let network_before = self.observed_non_read_requests()?;
+        match kind {
+            RecordedFieldKind::Text => {
+                self.ensure_text_replaceable(selector, value)?;
+                BrowserDriver::check_text_candidate(self, selector, value)?;
+                self.execute(&command)?;
+            }
+            RecordedFieldKind::Select | RecordedFieldKind::Radio => {
+                if matches!(kind, RecordedFieldKind::Select) {
+                    let node = self.node_id(selector)?.ok_or_else(review)?;
+                    let described = self
+                        .cdp
+                        .call("DOM.describeNode", json!({"nodeId":node}))
+                        .map_err(derr)?;
+                    if described["node"]["nodeName"] != "SELECT" {
+                        return Err(review());
+                    }
+                }
+                if self.verify_choice(&command).is_err() {
+                    self.ensure_choice_replaceable(&command)?;
+                    self.execute(&command)?;
+                }
+            }
+        }
+        self.stop_if_non_read_request_observed(network_before)?;
+        self.verify_recorded_command(&command)?;
+        let image = if matches!(kind, RecordedFieldKind::Radio) {
+            self.screenshot_recorded_radio(selector, value)?
+        } else {
+            self.screenshot_field_context(selector)?
+        };
         check_scope(self)?;
-        self.verify_text_value(selector, value)?;
-        Ok(RecordedTextCapture {
+        self.verify_recorded_command(&command)?;
+        self.observed_non_read_requests()?;
+        self.stop_if_non_read_request_observed(network_before)?;
+        Ok(RecordedFieldCapture {
             image,
             label: field.label.clone(),
-            value: value.to_owned(),
+            kind,
+            command,
+            network_before,
+            document,
         })
+    }
+
+    fn recorded_document(&mut self) -> Result<RecordedDocument, DriverError> {
+        let url = self.current_url()?;
+        let tree = self
+            .cdp
+            .call("Page.getFrameTree", json!({}))
+            .map_err(derr)?;
+        let frame = &tree["frameTree"]["frame"];
+        let identity = |key: &str| {
+            frame[key]
+                .as_str()
+                .filter(|id| !id.is_empty())
+                .map(str::to_owned)
+                .ok_or_else(review)
+        };
+        Ok(RecordedDocument {
+            url,
+            frame: identity("id")?,
+            loader: identity("loaderId")?,
+            lease: self.captured_scope.as_ref().map(|scope| scope.key.clone()),
+        })
+    }
+
+    pub fn verify_recorded_field(
+        &mut self,
+        capture: &RecordedFieldCapture,
+    ) -> Result<(), DriverError> {
+        self.verify_recorded_command(&capture.command)?;
+        if self.recorded_document()? != capture.document {
+            return Err(review());
+        }
+        self.stop_if_non_read_request_observed(capture.network_before)
+    }
+
+    fn verify_recorded_command(&mut self, command: &BrowserCommand) -> Result<(), DriverError> {
+        match command {
+            BrowserCommand::Fill {
+                selector,
+                value: PacketValue::Text(value),
+            } => self.verify_text_value(selector, value),
+            _ => self.verify_choice(command),
+        }
+    }
+
+    fn screenshot_recorded_radio(
+        &mut self,
+        selector: &str,
+        label: &str,
+    ) -> Result<String, DriverError> {
+        let node = self
+            .radio_selection(selector, label, false, true)?
+            .ok_or_else(review)?;
+        self.cdp
+            .call("DOM.scrollIntoViewIfNeeded", json!({"nodeId":node}))
+            .map_err(derr)?;
+        if self.captured_scope.is_some() {
+            self.screenshot_captured_node(node, true, true)
+        } else {
+            self.screenshot_node(node, true, false)
+        }
     }
     fn require_recorded_frames(&mut self) -> Result<(), DriverError> {
         #[cfg(windows)]
@@ -684,6 +810,15 @@ impl CdpDriver {
     ) -> Result<String, DriverError> {
         self.scroll_field_into_view(selector)?;
         let node = self.node_id(selector)?.ok_or_else(review)?;
+        self.screenshot_captured_node(node, context, false)
+    }
+
+    fn screenshot_captured_node(
+        &mut self,
+        node: u64,
+        context: bool,
+        radio: bool,
+    ) -> Result<String, DriverError> {
         let box_model = |driver: &mut Self| -> Result<[f64; 8], DriverError> {
             let response = driver
                 .cdp
@@ -708,7 +843,7 @@ impl CdpDriver {
         let point = self
             .captured_pointer_point(node, x, y)?
             .ok_or_else(review)?;
-        let bounds = recorded_field_crop(quad, &point, x, y, context)?;
+        let bounds = recorded_field_crop(quad, &point, x, y, context, radio)?;
         let image = self.with_captured_parent_capture(|driver| {
             driver.screenshot_bounds(&bounds, false, false)
         })?;
@@ -766,6 +901,7 @@ fn recorded_field_crop(
     x: f64,
     y: f64,
     context: bool,
+    radio: bool,
 ) -> Result<[f64; 8], DriverError> {
     let left = quad
         .iter()
@@ -800,7 +936,18 @@ fn recorded_field_crop(
             "The embedded field is not fully visible; review it manually".into(),
         ));
     }
-    let (left, top, right, bottom) = if context {
+    let (left, top, right, bottom) = if radio {
+        // Include the group heading and adjacent option labels when the
+        // selected radio is positioned far across the row.
+        let width = point.child_width.min(720.0);
+        let start = (right + 240.0 - width).clamp(0.0, point.child_width - width);
+        (
+            start,
+            (top - 100.0).max(0.0),
+            start + width,
+            (bottom + 26.0).min(point.child_height),
+        )
+    } else if context {
         // Keep nearby labels, but never include pixels outside this frame.
         (
             (left - 180.0).max(0.0),
@@ -836,11 +983,11 @@ mod tests {
     fn field_context_is_clipped_to_the_bound_child_viewport() {
         let quad = [20.0, 10.0, 140.0, 10.0, 140.0, 30.0, 20.0, 30.0];
         assert_eq!(
-            recorded_field_crop(quad, &point(), 80.0, 20.0, true).unwrap(),
+            recorded_field_crop(quad, &point(), 80.0, 20.0, true, false).unwrap(),
             [250.0, 400.0, 408.0, 400.0, 408.0, 448.0, 250.0, 448.0]
         );
         assert_eq!(
-            recorded_field_crop(quad, &point(), 80.0, 20.0, false).unwrap(),
+            recorded_field_crop(quad, &point(), 80.0, 20.0, false, false).unwrap(),
             [270.0, 410.0, 390.0, 410.0, 390.0, 430.0, 270.0, 430.0]
         );
     }
@@ -852,7 +999,7 @@ mod tests {
             [20.0, 90.0, 30.0, 90.0, 30.0, 101.0, 20.0, 101.0],
             [20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0],
         ] {
-            assert!(recorded_field_crop(quad, &point(), 80.0, 20.0, true).is_err());
+            assert!(recorded_field_crop(quad, &point(), 80.0, 20.0, true, false).is_err());
         }
     }
 }

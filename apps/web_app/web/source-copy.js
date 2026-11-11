@@ -97,7 +97,7 @@
   }
   function previewView(preview, el, options) {
     const section = el(options.inline ? 'div' : 'details', '', 'source-copy-result');
-    const rehearsal = preview?.rehearsal?.scope === 'fictional_text_only' ? preview.rehearsal : null;
+    const rehearsal = ['fictional_text_only', 'fictional_saved_form'].includes(preview?.rehearsal?.scope) ? preview.rehearsal : null;
     if (!options.inline) section.append(el('summary', rehearsal ? 'Offline autofill rehearsal' : 'Recorded page preview'));
     const captures = Array.isArray(preview?.views) ? preview.views.filter(view => view && ['page','frame'].includes(view.kind)).slice(0, 5) : [];
     if (!captures.length) {
@@ -152,13 +152,14 @@
         const checks = Array.isArray(rehearsal.fields) ? rehearsal.fields.slice(0, 4).filter(field => field?.view === Number(select.value) + 1) : [];
         if (!checks.length) details.append(el('p', 'No fields were tested in this view.', 'footnote'));
         for (const check of checks) {
+          const stateLabel = ['select', 'radio'].includes(check.kind) ? 'Selection' : 'Text';
           const states = {
-            visually_matched: 'Text and image match',
+            visually_matched: `${stateLabel} and image match`,
             visual_difference: 'Image transcription differs',
             visual_unobserved: 'Model could not read the image',
-            visual_review_failed: 'Text verified in form · image review failed',
-            visual_unavailable: 'Text verified in form · visual review unavailable',
-            changed_after_entry: 'Field changed after entry',
+            visual_review_failed: `${stateLabel} verified in form · image review failed`,
+            visual_unavailable: `${stateLabel} verified in form · visual review unavailable`,
+            changed_after_entry: 'Field could not be reverified after entry',
             readback_unavailable: 'Field needs manual review',
           };
           const row = el('div', '', 'source-copy-actions');
@@ -207,7 +208,7 @@
     for (const [label, rehearse] of [['Create recorded preview', false], ['Rehearse autofill', true]]) {
       const button = dependencies.element('button', label, 'secondary');
       button.type = 'button';
-      if (rehearse) button.title = 'Use fictional details to check supported text fields in the saved copy';
+      if (rehearse) button.title = 'Use fictional details to check supported fields in the saved copy';
       root.append(button);
       button.addEventListener('click', async () => {
         if (state.active) {

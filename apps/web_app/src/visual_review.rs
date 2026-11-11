@@ -955,14 +955,15 @@ pub(crate) enum RecordedVisionOutcome {
 }
 
 #[cfg(windows)]
-pub(crate) fn review_recorded_text(
+pub(crate) fn review_recorded_field(
     model: &mut VisionIdentityGuard,
     addr: std::net::SocketAddr,
-    capture: &waypoint_browser::RecordedTextCapture,
+    capture: &waypoint_browser::RecordedFieldCapture,
 ) -> RecordedVisionOutcome {
     let label = capture.label();
     let expected = [(label.to_owned(), capture.value().to_owned())];
     let name = model.model.clone();
+    let text = matches!(capture.kind(), waypoint_browser::RecordedFieldKind::Text);
     // Check identity even if this crop produced an invalid transcription.
     // An isolated crop failure should not hide observations on other fields.
     match model.checked_with(
@@ -975,7 +976,7 @@ pub(crate) fn review_recorded_text(
                 label,
                 &expected,
                 None,
-                true,
+                text,
             ))
         },
     ) {

@@ -1,3 +1,8 @@
+## Native choices in offline autofill rehearsal - 2026-11-11
+
+- The saved-copy workflow now verifies native dropdowns and radio groups with one matching option. It keeps existing conflicting selections for review and binds choice evidence to the active document and checked control.
+- A compiled headless run verified four controls and the selected radio image at two viewport widths. The second fixture blocked a scripted POST and rejected the changed prior selection. The owned 12B model matched all four focused images. [Scope and evidence](docs/RECORDED_PAGE_PREVIEW.md).
+
 ## Offline autofill rehearsal - 2026-11-11
 
 - The saved-copy workflow exercises supported text fields with fictional details, retains exact DOM readback and saves focused images. A resident local vision model can compare the pixels with the verified value. Rehearsal has no live application or candidate-data path.
