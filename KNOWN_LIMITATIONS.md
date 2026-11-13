@@ -10,6 +10,16 @@ frame/shadow traversal, candidate-file import, structured history and semantic
 fit assessment also exist. Their broad qualification and recovery limits remain
 open; the earlier statements that those mechanisms are absent are superseded.
 
+Current intake/context continuation, 2026-11-13: four additional platforms all
+remain entry-ineligible (job-alert panel/CAPTCHA, unsupported representation,
+custom/obscured controls, CAPTCHA). Zero held-out model scores remain. Shared
+section radio questions now retain advisory local context; that platform was
+reclassified to development before tuning. Bounded labels are visibly marked
+when shortened. FreeSerp general search was unavailable and a public SearXNG
+provider returned HTTP429; neither proves broad retrieval. R03 fidelity, R02
+representative/held-out workflows and R07 provider recovery remain open.
+[Evidence](docs/g1/UNSEEN_FAMILIES_AND_QUESTION_CONTEXT_2026-11-13.md).
+
 Current post-entry continuation, 2026-11-13: native-bound blind value coverage
 recovers country and reaches phone. The frozen French case is now 6/7 with no
 wrong/unverified performed entries and two unknown answers untouched. Its original

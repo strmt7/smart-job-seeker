@@ -25,6 +25,11 @@ function harness(api, onFinished) {
     {kind:'page',label:'Page',image:'0001.png',sha256:digest,fields:[{label:'Parent name'}]},
     {kind:'frame',label:'Qualifications',image:'0002.png',sha256:digest,fields:[{label:'Child answer',required:true}]},
   ] };
+  for (const flag of [true, false, undefined, 'true']) {
+    const panel = harness(async()=>{}).preview({views:[{kind:'page',label:'Page',image:'0001.png',sha256:digest,fields:[{label:'Long question',label_truncated:flag,required:true}]}]},{});
+    assert(find(panel,node=>node.textContent===`Long question${flag === true ? '…' : ''} · Required`));
+    assert.equal(Boolean(find(panel,node=>node.textContent==='Some field labels are shortened. Review the saved image for the full question.')),flag === true);
+  }
   for (const [plan,messages] of [
     [{view:1,status:'needs_review',reason:'Local mapping unavailable'},['Contact matching needs review; no contact fields were chosen automatically.','Local mapping unavailable']],
     [{view:1,status:'proposed',proposed_fields:1,warnings:['Review this question']},['1 contact suggestion prepared. Each entry still needs verification.','Review this question']],

@@ -1038,7 +1038,13 @@ fn save_view(
                 FormFieldType::File => "file",
                 _ => "unsupported",
             };
-            json!({"label":bounded_text(&field.label),"required":field.required,"kind":kind})
+            let label_truncated = field
+                .label
+                .chars()
+                .filter(|character| !character.is_control())
+                .nth(160)
+                .is_some();
+            json!({"label":bounded_text(&field.label),"label_truncated":label_truncated,"required":field.required,"kind":kind})
         })
         .collect();
     let walls: Vec<_> = form

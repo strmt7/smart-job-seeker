@@ -1,3 +1,15 @@
+## Unseen-family intake and question context - 2026-11-13
+
+Four additional frozen platform candidates yielded three native inventories;
+all remain entry-ineligible and none has a model score. A generic native repair
+now distinguishes eight radio questions previously collapsed under one section
+heading, keeping them advisory/manual and retaining all barriers. Shortened
+record labels are explicitly marked. Workspace 1,338 passed/599 opt-in ignored,
+11 selected headless browser tests, Clippy/build/fmt, the source-copy UI script
+and actual record checks at four widths pass. R03 fidelity work now precedes
+further held-out evaluation; all exclusions remain. No release or application
+submission. [Evidence](docs/g1/UNSEEN_FAMILIES_AND_QUESTION_CONTEXT_2026-11-13.md).
+
 ## Post-entry value coverage - 2026-11-13
 
 The shared coverage resolver now uses separate native detail images for missing

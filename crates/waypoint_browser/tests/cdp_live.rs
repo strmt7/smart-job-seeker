@@ -2001,6 +2001,55 @@ fn unlabelled_checkbox_group_context_is_advisory() {
 
 #[test]
 #[ignore = "launches a browser against fictional custom choice controls"]
+fn shared_radio_section_preserves_distinct_advisory_questions() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let live = driver
+        .open(&file_url("form_radio_shared_section.html"))
+        .unwrap();
+    let groups: Vec<_> = live
+        .schema
+        .fields
+        .iter()
+        .filter(|field| matches!(field.field_type, FormFieldType::Radio { .. }))
+        .collect();
+    assert_eq!(groups.len(), 5);
+    for (name, question) in [
+        ("travel", "Which travel schedule works for you?"),
+        ("office", "Which office would you choose?"),
+    ] {
+        let group = groups.iter().find(|g| g.selector.contains(name)).unwrap();
+        assert!(group.label.contains("Application questions"));
+        assert!(group
+            .label
+            .contains(&format!("Possible question (review): {question}")));
+        assert!(group.sensitive);
+        assert_eq!(group.required, name == "travel");
+    }
+    for name in ["ambiguous", "hidden"] {
+        let group = groups.iter().find(|g| g.selector.contains(name)).unwrap();
+        assert!(group
+            .label
+            .contains("Question context unavailable (review)"));
+        assert!(!group.label.contains("misleading") && !group.label.contains("First possible"));
+        assert!(group.sensitive);
+    }
+    let nested = groups
+        .iter()
+        .find(|g| g.selector.contains("colour"))
+        .unwrap();
+    assert!(nested.label.contains("Preferred colour"));
+    assert!(!nested.label.contains("Possible question") && !nested.label.contains("unavailable"));
+    assert!(!nested.sensitive);
+    assert_eq!(driver.inspect_current().unwrap(), live);
+    assert!(driver
+        .trace
+        .iter()
+        .all(|line| !line.contains("clicked") && !line.contains("submitted")));
+    driver.execute(&BrowserCommand::Close).unwrap();
+}
+
+#[test]
+#[ignore = "launches a browser against fictional custom choice controls"]
 fn unlabelled_radio_groups_are_deduplicated_but_require_manual_review() {
     let mut driver = CdpDriver::launch(vec![]).unwrap();
     let live = driver

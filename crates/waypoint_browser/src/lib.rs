@@ -34,7 +34,7 @@ pub mod cdp;
 pub mod rehearsal;
 pub mod rehearsal_capture;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -4799,8 +4799,28 @@ impl CdpDriver {
         let mut required_marker_checks = 0usize;
         let marker_started = Instant::now();
         let mut selector_counts: HashMap<String, usize> = HashMap::new();
+        // A fieldset can name an entire section containing several unrelated
+        // radio questions. Its legend alone does not identify those questions.
+        // Use the final (nearest) container mapping so nested groups keep their
+        // own accessible names; nearby text remains advisory, never authority.
+        let mut radio_container_names: HashMap<u64, HashSet<String>> = HashMap::new();
         for control in &controls {
             *selector_counts.entry(selector_for(control)).or_default() += 1;
+            if control
+                .attrs
+                .get("type")
+                .is_some_and(|kind| kind.eq_ignore_ascii_case("radio"))
+            {
+                if let (Some((container, _, _)), Some(name)) = (
+                    radio_containers.get(&control.node_id),
+                    control.attrs.get("name").filter(|name| !name.is_empty()),
+                ) {
+                    radio_container_names
+                        .entry(*container)
+                        .or_default()
+                        .insert(name.clone());
+                }
+            }
         }
         for control in controls {
             let selector = selector_for(&control);
@@ -5268,7 +5288,7 @@ impl CdpDriver {
                     radio_containers.get(&control.node_id),
                     control.attrs.get("name").filter(|name| !name.is_empty()),
                 ) {
-                    let group_label = if let Some(ids) = group_ref {
+                    let mut group_label = if let Some(ids) = group_ref {
                         let ids: Vec<_> = ids.split_whitespace().collect();
                         let resolved: Option<Vec<_>> = if ids.is_empty()
                             || ids.len() > 16
@@ -5297,6 +5317,9 @@ impl CdpDriver {
                     } else {
                         legend.clone()
                     };
+                    let shared_container = radio_container_names
+                        .get(fieldset_id)
+                        .is_some_and(|names| names.len() > 1);
                     let key = (*fieldset_id, name.clone());
                     if let Some(index) = radio_groups.get(&key).copied() {
                         let field: &mut waypoint_applications::form_mapping::FormField =
@@ -5304,9 +5327,33 @@ impl CdpDriver {
                         if let FormFieldType::Radio { options } = &mut field.field_type {
                             options.push(label.clone());
                         }
-                        field.sensitive |= sensitive;
+                        field.sensitive |= sensitive || shared_container;
                         field.required |= required;
                     } else {
+                        if shared_container {
+                            let context = if unassociated_question_count < 16 {
+                                unassociated_question_count += 1;
+                                self.with_review_timeout(|driver| {
+                                    driver.rendered_unassociated_choice_question(
+                                        control.node_id,
+                                        "radio",
+                                    )
+                                })
+                                .ok()
+                                .flatten()
+                                .filter(|text| !text.is_empty())
+                            } else {
+                                None
+                            };
+                            group_label = match context {
+                                Some(text) => {
+                                    format!("{group_label} — Possible question (review): {text}")
+                                }
+                                None => {
+                                    format!("{group_label} — Question context unavailable (review)")
+                                }
+                            };
+                        }
                         let index = fields.len();
                         radio_groups.insert(key, index);
                         fields.push(FormField {
@@ -5317,7 +5364,9 @@ impl CdpDriver {
                                 options: vec![label],
                             },
                             required,
-                            sensitive: sensitive || is_sensitive_label(&group_label),
+                            sensitive: sensitive
+                                || shared_container
+                                || is_sensitive_label(&group_label),
                             editing_mode: None,
                             max_length_utf16: None,
                             min_length_utf16: None,

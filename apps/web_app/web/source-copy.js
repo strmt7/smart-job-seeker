@@ -163,8 +163,9 @@
       else if (!fields.length) details.append(el('p', 'No form fields were detected in this view.', 'footnote'));
       if (fields.length) {
         const list = el('ul');
-        for (const field of fields) list.append(el('li', `${field.label || 'Unlabelled field'}${field.required ? ' · Required' : ''}`));
+        for (const field of fields) list.append(el('li', `${field.label || 'Unlabelled field'}${field.label_truncated === true ? '…' : ''}${field.required ? ' · Required' : ''}`));
         details.append(list);
+        if (fields.some(field => field.label_truncated === true)) details.append(el('p', 'Some field labels are shortened. Review the saved image for the full question.', 'footnote'));
       }
       const walls = Array.isArray(view.walls) ? view.walls.slice(0, 8).filter(wall => typeof wall === 'string') : [];
       const omitted = count(view.omitted_walls);

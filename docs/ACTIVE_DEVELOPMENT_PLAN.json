@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
   "reviewed_on": "2026-11-13",
-  "reviewed_source": "ce22050fc736dc6b74fa40a771014b4add568417",
+  "reviewed_source": "106624baf43f777d9fb3ad11b6acd21d58496565",
   "goal": "Continue the existing active Smart Jobseeker product-development goal",
   "plan": "docs/COMPLETION_PLAN_2026-11-11.md",
   "assessment": "docs/REPO_STATE_REVIEW_2026-11-11.md",
-  "next_task": "R02",
+  "next_task": "R03",
   "boundaries": [
     "main only",
     "headless development only",
@@ -88,7 +88,8 @@
         "docs/g1/INDEPENDENT_ENTRY_EVIDENCE_2026-11-11.md",
         "docs/g1/TELEPHONE_PRESENTATION_2026-11-13.md",
         "docs/g1/HELD_OUT_INTAKE_AND_DOCUMENT_MATCHING_2026-11-13.md",
-        "docs/g1/POST_ENTRY_VALUE_COVERAGE_2026-11-13.md"
+        "docs/g1/POST_ENTRY_VALUE_COVERAGE_2026-11-13.md",
+        "docs/g1/UNSEEN_FAMILIES_AND_QUESTION_CONTEXT_2026-11-13.md"
       ],
       "execution_batch": "B",
       "steps": [
@@ -97,14 +98,15 @@
         "Freeze employer/layout-family held-out partition before tuning.",
         "Report field, workflow, abstention, error, elapsed and resource denominators; repeat model-sensitive promotion candidates."
       ],
-      "next_action": "Freeze the current source/model/config, inspect the existing unseen-family intake and bind independent expected answers before its first model run. Score only eligible scopes; keep excluded/unavailable cases in intake denominators. Add varied permitted faithful inputs and explicit full-workflow truth. Do not tune a held-out case and retain its held-out designation.",
+      "next_action": "Use R03 to address diagnosed fidelity/context gaps before more blocked model attempts. Then freeze independent schema2 truth and evaluate eligible held-out copies; retain all exclusions and do not reuse the tuned Pinpoint family as untouched held-out data.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "completed_scopes": [
         "Bounded corpus identity/partition/input protocol and explicit field gate; two development cases, no held-out coverage.",
         "Actual compiled local12B-model before/after evidence, deterministic final accounting and verified owned cleanup.",
         "Schema2 independent expected values, control/section identity, bound actual image hashes and explicit workflow truth protocol; legacy reports retain original meaning. One known-source initial9-control development case frozen before model entry; field gate correctly fails3/6 with one unverified Phone.",
         "2026-11-13 known-source continuation verifies4/6 initial answerable controls with explicit telephone equality; two uploads unreached and whole workflow not qualified. Historical3/6 exact-mode failures retained.",
-        "2026-11-13: froze two new real-source candidates before model use, collected native read-only archives, preserved original ads/provenance and froze one held-out schema2 initial17-control case (4 answerable/13 unknown). One candidate excluded for empty native inventory; zero held-out model-scored cases and neither candidate actuation-eligible. No accuracy/promotion claim."
+        "2026-11-13: froze two new real-source candidates before model use, collected native read-only archives, preserved original ads/provenance and froze one held-out schema2 initial17-control case (4 answerable/13 unknown). One candidate excluded for empty native inventory; zero held-out model-scored cases and neither candidate actuation-eligible. No accuracy/promotion claim.",
+        "2026-11-13: froze four more platform candidates, collected4 compiled read-only attempts/3 native inventories (3 job-alert,16 and10 supported controls; none omitted),0 entry-eligible/0 model-scored. One response representation excluded. Pinpoint reclassified to development before generic context repair; all original manifests/results preserved."
       ],
       "start_requirements": [
         "Existing versioned input-binding/evaluation protocol is implemented; reviewed in tools/form_corpus.py and docs/FORM_EVALUATION.md."
@@ -133,7 +135,8 @@
         "docs/REPO_STATE_REVIEW_2026-11-11.md",
         "docs/g1/ABSENT_ORIGIN_STYLESHEETS_2026-11-11.md",
         "docs/g1/HELD_OUT_INTAKE_AND_DOCUMENT_MATCHING_2026-11-13.md",
-        "docs/g1/SAVED_UPLOAD_DIAGNOSTICS_2026-11-13.md"
+        "docs/g1/SAVED_UPLOAD_DIAGNOSTICS_2026-11-13.md",
+        "docs/g1/UNSEEN_FAMILIES_AND_QUESTION_CONTEXT_2026-11-13.md"
       ],
       "execution_batch": "B",
       "steps": [
@@ -142,13 +145,14 @@
         "Collect a new permitted read-only source copy and inspect actual rendering/native labels without modifying historical manifests.",
         "Only if necessary, repair generic bounded label/control context; qualify earlier and untouched cases, then coherent integration and ownership checks."
       ],
-      "next_action": "Preserve the diagnosed server-dependent upload as review-required. Continue source/robots/request representation qualification and varied eligible read-only captures; never invent acknowledgements, archive upload credentials or allow arbitrary non-read transports to make an offline page pass.",
+      "next_action": "Diagnose generic document request-representation proof and faithful application-panel context using retained native evidence and fictional contained regressions; preserve Vary/header matching, source permissions, robots and all no-send/review barriers. Teamtailor research Vary Accept/X-Requested-With/Origin is a diagnosis lead only, not broker-header proof. No stripping Vary, fabricated responses or arbitrary non-read transport.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "completed_scopes": [
         "Observed absent-Origin GET Stylesheet binding and strict capture/replay proof; malformed/conflicting/cross-type cases refused.",
         "Replay54, browser-unit98/12 ignored, native discovery1; workspace1312/594 ignored, Clippy/fmt/build passed.",
         "Fresh compiled public capture16 resources/two CSS files; inspected styled offline rendering. Local12B vision now recognizes Phone; entry fails native exact-value validation, three fields verify, zero advances.",
-        "2026-11-13: current Lever/Ashby public listing and application reads succeeded via isolated native research receipts; compiled read-only capture produced17 versus0 supported native controls. Lever review walls and Ashby incomplete replay/403 asset-origin robots plus ineligible requests remain visible."
+        "2026-11-13: current Lever/Ashby public listing and application reads succeeded via isolated native research receipts; compiled read-only capture produced17 versus0 supported native controls. Lever review walls and Ashby incomplete replay/403 asset-origin robots plus ineligible requests remain visible.",
+        "2026-11-13: generic shared-section native radios retain distinct bounded advisory questions; sensitive/manual remains. Fictional positive/hidden/ambiguous/nested checks and11 selected native regressions pass. Compiled saved-development replay distinguishes8 groups with barriers retained; shortened labels explicitly marked in4-width actual record UI."
       ],
       "start_requirements": [
         "R02 input-binding protocol exists; full representative/held-out collection is not required to begin this rendering repair.",
@@ -293,7 +297,9 @@
         "Original ads; fresh/stale/closed/inaccessible/challenge distinctions",
         "Labeled retrieval and actual-route reachability evidence"
       ],
-      "evidence": [],
+      "evidence": [
+        "docs/g1/UNSEEN_FAMILIES_AND_QUESTION_CONTEXT_2026-11-13.md"
+      ],
       "execution_batch": "D",
       "steps": [
         "Evaluate varied role/location/language/query expansions across free eligible web providers, boards and direct employers.",
@@ -301,7 +307,7 @@
         "Retain original ads and verify actual application routes; classify freshness, closure, login/challenge and email-only outcomes.",
         "Measure labeled retrieval and route reachability; add sources only for measured coverage benefit."
       ],
-      "next_action": "Evaluate varied role/location/language/query expansions across free eligible web providers, boards and direct employers.",
+      "next_action": "Qualify free-provider availability/recovery and retained backoff through actual UI. Two3-query provider batches each attempted1/left2 unattempted: FreeSerp general index unavailable and SearXNG HTTP429; neither is successful whole-web retrieval. Then measure varied query expansions and actual application-route reachability.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package."
     },
     {
@@ -541,7 +547,7 @@
     "binding": "Existing active Smart Jobseeker goal; reverified active on 2026-11-13; objective unchanged.",
     "entry_point": "AGENTS.md",
     "queue": "docs/ACTIVE_DEVELOPMENT_PLAN.json",
-    "selection": "Broaden R02 qualification after the scoped before/after coverage mechanism is verified: freeze current source/model/config and independent truth for the existing unseen-family intake and additional eligible cases before inference. Keep unavailable cases and initial-only/full-workflow distinctions explicit. Do not tune on a case while retaining a held-out claim. R04 radio over-abstention, generic facts/histories and other product gates remain open.",
+    "selection": "Prioritize R03 faithful generic saved rendering/request representation and application-panel context after four additional frozen candidates all remain entry-ineligible. Resume R02 only with eligible varied copies and independently frozen expected-value/full-workflow truth. Pinpoint is now development data; retain its original held-out selection/observations without later claiming untouched coverage. R01/R04/R07 and all other acceptance gates remain open.",
     "completion": "A package completion does not complete the product goal. Keep the overall goal active until all required product work is achieved.",
     "scheduling": "No new agents, automation, service or background scheduler created by this plan."
   },
@@ -564,105 +570,111 @@
     "build_state": "Last focused test compile failed; three stale start callers remain in current source. No current full-workspace pass claimed."
   },
   "working_tree_checkpoint": {
-    "baseline_head": "ce22050fc736dc6b74fa40a771014b4add568417",
-    "validated_changes": "Shared evidence-preserving coverage resolver for pre-entry controls and missing post-entry values; separately saved native-bound text/select post-entry detail images, exact/native-telephone checks and centralized record renderer. First observations/mismatches/ambiguity/conflicts remain authoritative.",
+    "baseline_head": "106624baf43f777d9fb3ad11b6acd21d58496565",
+    "validated_changes": "Four additional frozen platform candidates with all exclusions; generic shared-section radio question context stays advisory/manual; explicit native display-label truncation and centralized record rendering. No employer actuation or model run.",
     "validated_source_sha256": {
-      "apps/web_app/src/recorded_preview.rs": "3f2c44acefe1d88e0cbb51b0ac5654bf246fdaf28e1dfa71ece7a71e424701d7",
-      "apps/web_app/src/visual_review.rs": "5089b143f98ab3f7935d243d990650b28530914dd3085ccfa22ebc9cbf1b3b65",
-      "apps/web_app/tests/source-copy-ui.test.js": "e5a2876bbf5b51593bd272e719d62f65b1b753d07c1e12f6f679e55367658304",
-      "apps/web_app/web/source-copy.js": "72a7cfed08158fb655fb565ed400485ffdfae98f229edba1f85a0c23a425c9c6",
-      "crates/waypoint_browser/src/captured_frame.rs": "14247314be239b5c470ca917dfc0b58ef28454956321cd40ad115db89873e8f8"
+      "crates/waypoint_browser/src/lib.rs": "12877c8cbb53e1916ead88b45314514aabf25214f9ab8ee85f7d35deec2efb6f",
+      "crates/waypoint_browser/tests/cdp_live.rs": "369d17c2acdcb7af13d9c6645a8e491a6d407d38c52b43dbe4d65829350ccee8",
+      "crates/waypoint_browser/tests/fixtures/form_radio_shared_section.html": "66a74b3d915c99e3247f3d3760fa762769823648dd0d8006da4ec3d514e7606a",
+      "apps/web_app/src/recorded_preview.rs": "d212c2ab5a9ff9f4e3cfa541d86d4552442a67a6919c99e8d78cfaab5e412c1a",
+      "apps/web_app/web/source-copy.js": "241ef12bf1f333aac6d047c7d0806394f1d3e9fbb2cc4c29068315bd2082d8e6",
+      "apps/web_app/tests/source-copy-ui.test.js": "ca2f22f67d9ce39df74e1124c50f1cdbf09610b3f38fba34b6627ade8fd27b10"
     },
-    "app_sha256": "d16cb8bf94ae1c7326a92fb89c2756bcc70bb7f387509294a0e410902f226e0e",
+    "app_sha256": "8f8cb7d50f9798618c3635115cd39daf991a746d6c43d9f1a0c09646cd4e28dd",
+    "build_state": "Final Windows build, workspace1338 passed/599 opt-in ignored, Clippy warnings-denied and fmt pass;11 selected packaged native browser tests pass separately; source-copy UI script pass. Fresh compiled saved-development route retains8 distinct advisory questions and all barriers. Actual record4 widths, wide/narrow screenshots inspected; two truncation flags/markers verified.",
     "model_qualification": {
-      "private_evidence": [
+      "new_runs": 0,
+      "reason": "All four new candidates ineligible for independent entry; no held-out score or model promotion. Earlier model reports retain their source identity.",
+      "previous_evidence": [
         "target/semantic-profile-model-nvhxrmna/",
         "target/semantic-docs-model-xkz3s0cy/"
-      ],
-      "scope": "French frozen development case improves4/7 to6/7, no incorrect/unexpected/unverified performed entries,2 unknown untouched; residence radio withheld. Earlier family retains4/6,1 unverified resume,1 unreached cover,3 unknown. Both field gates fail/workflows not_qualified; no held-out/general claim.",
-      "model_digest": "6114515d63c17436a7c0417d82820ac65ad643e2806c5a3c89cb62846436ed0b",
-      "context": 4096,
-      "cache_reused": true,
-      "minimum_sampled_available_host_bytes": 20339499008
+      ]
     },
-    "build_state": "Workspace1338 passed/598 ignored; warning-denied Clippy/build/fmt,6 focused coverage regressions and source-copy UI pass. Packaged native failed-entry1/embedded1 pass. Actual record4 widths/inspector2 widths/mouse pan pass, narrow image inspected. Hosted status separately binds exact published commit.",
-    "evidence": "docs/g1/POST_ENTRY_VALUE_COVERAGE_2026-11-13.md",
+    "evidence": "docs/g1/UNSEEN_FAMILIES_AND_QUESTION_CONTEXT_2026-11-13.md",
+    "private_evidence": [
+      "target/form-intake-7auf0a5_/",
+      "target/heldout-native-1kmg4qeo/",
+      "target/shared-question-readiness-kky06yid/",
+      "target/question-review-ui-1_saw3wq/"
+    ],
     "host_checkpoint": {
-      "private_evidence": "target/development-host-f5dc27302c3e4593b03a3f2fc4eb2db0.private.json",
-      "available_ram_bytes": 31112863744,
+      "private_evidence": "target/development-host-2324e6c6dc8b4b46944f7ebb88c9c282.private.json",
+      "available_ram_bytes": 36052713472,
       "matching_processes": 0,
       "resident_models": 0,
       "persistent_registrations": 0,
-      "scope": "Post-model/UI audit and actual owned-tree/listener exit receipts; not sustained leak proof."
+      "scope": "Read-only final audit and owned-tree teardown receipts; not sustained leak proof."
     }
   },
   "dependency_semantics": "depends_on are completion prerequisites; start_requirements admit bounded implementation before the whole prerequisite package completes. Containment, UI consistency and resource ownership apply continuously.",
   "last_validated_checkpoint": {
-    "baseline_head": "27205889628bb867c54785e45743bd5b407f318a",
-    "validated_changes": "Generic bounded document proposals, distinct fictional PDFs, native explicit file-group proof, preserved raw model comparisons, wider bounded crop, honest attachment review UI and bounded redacted replay refusal diagnostics. Frozen new-family intake retains all exclusions.",
+    "baseline_head": "106624baf43f777d9fb3ad11b6acd21d58496565",
+    "validated_changes": "Four additional frozen platform candidates with all exclusions; generic shared-section radio question context stays advisory/manual; explicit native display-label truncation and centralized record rendering. No employer actuation or model run.",
     "validated_source_sha256": {
-      "AGENTS.md": "dbf713c9950d38e19dbdbf98c1de8944cc16be5126d9e7b788c7d714166f0c98",
-      "apps/web_app/src/main.rs": "f3c9c009ea04463ee984fcde4cb8c416ac2cec7ba79bea60ab109690f2791540",
-      "apps/web_app/src/attachment_mapping.rs": "459d964954b166ac0a5d0adb9388b252efc212fe709298f93f16d7d0109a2875",
-      "apps/web_app/src/recorded_preview.rs": "3d0bc440dd2b55b08db6a6ef1d152cad750b110c9392d5554064332c607976d0",
-      "apps/web_app/src/visual_review.rs": "5328cad3eb9f9420d311d9dde2570c05afec42db987c3ec8ab89246d61c82c3c",
-      "apps/web_app/src/rehearsal-sample.pdf": "67174a6e3717b70a030dcb988b825d5e77e839448ba2f02ca3f2131b0058ca2d",
-      "apps/web_app/src/rehearsal-cover-letter.pdf": "0438103bc95980d039cb09038f3627ba6304954fdab29a3d6a160fc52163252a",
-      "apps/web_app/web/source-copy.js": "c4bc62ef6f51ee9ca4d5c3de3cbe57863d9ee7878d07fa1ec88468bd6dd0458c",
-      "apps/web_app/tests/source-copy-ui.test.js": "30bc1d7c9ee1378bddf6f5d7250dcd433e0a02b32f476415040ad245b898d164",
-      "crates/waypoint_browser/src/capture_session_qualification.rs": "ba5a67b5460888fad6b8432fc75003c464b55500fb9e9a82f0a40ba67b91b668",
-      "crates/waypoint_browser/src/captured_frame.rs": "f3dae2b5d1e748611eadd44456098efe598a42d8934bdf62d38f2869cac0743f",
-      "crates/waypoint_browser/src/lib.rs": "328ca0739ba46823fd343b88f196e937d4d74ba82379536eacb9d7896ed0f84a",
-      "crates/waypoint_browser/src/rehearsal_replay.py": "6f4fde15824fa3b90ad5aae28a0d99fa7b62b71a18ed7ecb8350bd6ea7b9b6cd",
-      "crates/waypoint_browser/tests/test_rehearsal_replay.py": "8407f426b49766e9369f40360bb37f9a5e4405432d89e71a102a6842ee11091f",
-      "crates/waypoint_inference/src/ollama.rs": "ad91da0533d2b491e06886321b75d7414179a81217d5a3ab6683dce2cca7cfdc",
-      "tools/qualify_capture_replay.py": "4f288713cccd5101ebdea13f46c4d5aeec7251d0eba80ed06d56a87d29d41406",
-      "tools/form_corpus.py": "7255b7a95a65c459da48dd4f61f726afd926a1defe035b5d051433c876b3c7ca",
-      "apps/web_app/data/rehearsal-profile.json": "ce6e680f2e7180e1f7f6a7bf027123beaae25bb4dfb790098b6fe67afcd919e5"
+      "crates/waypoint_browser/src/lib.rs": "12877c8cbb53e1916ead88b45314514aabf25214f9ab8ee85f7d35deec2efb6f",
+      "crates/waypoint_browser/tests/cdp_live.rs": "369d17c2acdcb7af13d9c6645a8e491a6d407d38c52b43dbe4d65829350ccee8",
+      "crates/waypoint_browser/tests/fixtures/form_radio_shared_section.html": "66a74b3d915c99e3247f3d3760fa762769823648dd0d8006da4ec3d514e7606a",
+      "apps/web_app/src/recorded_preview.rs": "d212c2ab5a9ff9f4e3cfa541d86d4552442a67a6919c99e8d78cfaab5e412c1a",
+      "apps/web_app/web/source-copy.js": "241ef12bf1f333aac6d047c7d0806394f1d3e9fbb2cc4c29068315bd2082d8e6",
+      "apps/web_app/tests/source-copy-ui.test.js": "ca2f22f67d9ce39df74e1124c50f1cdbf09610b3f38fba34b6627ade8fd27b10"
     },
-    "app_sha256": "87e8c548bca2b782d0f9e457ea15413324331c1ed44d45b9df63cea571550675",
-    "build_state": "Workspace1325 passed/596 ignored before opt-in timing/report-only additions; final Clippy/build/fmt and tools90 pass. Portable replay55 and final native diagnostic1 pass after reporting additions. Native capture fixture1 passes. Compiled headless review4 widths and quick layout22 pass; final report-only binary was built, not UI-replayed. Known local12B development4/6 verified,1 unverified résumé,1 unreached cover,3 unknown; field gate false/workflow not_qualified. No final-source model replay or GPU-fit measurement claimed.",
+    "app_sha256": "8f8cb7d50f9798618c3635115cd39daf991a746d6c43d9f1a0c09646cd4e28dd",
+    "build_state": "Final Windows build, workspace1338 passed/599 opt-in ignored, Clippy warnings-denied and fmt pass;11 selected packaged native browser tests pass separately; source-copy UI script pass. Fresh compiled saved-development route retains8 distinct advisory questions and all barriers. Actual record4 widths, wide/narrow screenshots inspected; two truncation flags/markers verified.",
     "model_qualification": {
-      "app_sha256": "3747b1a9b7ae8a80b6da1a4445d8a357cc3a1a82a37c1296a0f2d816495e4751",
-      "private_evidence": "target/semantic-docs-model-22y0i98q/",
-      "scope": "Precedes reporting-only diagnostics, ignored-test timing and UI wording; decision criteria unchanged afterward."
+      "new_runs": 0,
+      "reason": "All four new candidates ineligible for independent entry; no held-out score or model promotion. Earlier model reports retain their source identity.",
+      "previous_evidence": [
+        "target/semantic-profile-model-nvhxrmna/",
+        "target/semantic-docs-model-xkz3s0cy/"
+      ]
     },
-    "evidence": "docs/g1/HELD_OUT_INTAKE_AND_DOCUMENT_MATCHING_2026-11-13.md",
+    "evidence": "docs/g1/UNSEEN_FAMILIES_AND_QUESTION_CONTEXT_2026-11-13.md",
+    "private_evidence": [
+      "target/form-intake-7auf0a5_/",
+      "target/heldout-native-1kmg4qeo/",
+      "target/shared-question-readiness-kky06yid/",
+      "target/question-review-ui-1_saw3wq/"
+    ],
     "host_checkpoint": {
-      "available_ram_bytes": 28130131968,
+      "private_evidence": "target/development-host-2324e6c6dc8b4b46944f7ebb88c9c282.private.json",
+      "available_ram_bytes": 36052713472,
       "matching_processes": 0,
       "resident_models": 0,
       "persistent_registrations": 0,
-      "scope": "Read-only audit plus owned-tree teardown; retained private disk artifacts are intentional, not resident processes or sustained leak proof."
+      "scope": "Read-only final audit and owned-tree teardown receipts; not sustained leak proof."
     }
   },
   "current_hosted_checks": {
-    "head": "7c7a25cf9bb586751b4a36ff81d790f0ff8b728a",
+    "head": "106624baf43f777d9fb3ad11b6acd21d58496565",
     "all_completed_successfully": true,
     "run_ids": {
-      "ci": 43349872741,
-      "coverage": 43349872737,
-      "codeql": 43349871996
+      "ci": 43374746402,
+      "coverage": 43374746424,
+      "codeql": 43374746296
     },
-    "private_receipts": "target/widget-diagnosis-qzchvj0z/hosted-final.private.json",
-    "scope": "Pushed baseline only; later local changes are not hosted validation."
+    "private_receipts": "target/value-coverage-yuqxh46c/hosted-current.private.json",
+    "scope": "Live rechecked 2026-11-13; published baseline only. New local context/truncation changes do not yet have hosted validation."
   },
   "immediate_slices": [
     {
-      "task": "R02",
-      "deliverable": "Frozen unseen-family qualification and additional eligible varied inputs with independent truth; explicit initial-only/full-workflow scope, exclusions and no tuning on held-out cases."
+      "task": "R03",
+      "deliverable": "Diagnose generic document request-representation proof and faithful application-panel context using retained native evidence and fictional contained regressions; preserve Vary/header matching, source permissions, robots and all no-send/review barriers."
     },
     {
-      "task": "R04",
-      "deliverable": "Reviewed fact descriptors/radio over-abstention and broader histories/conditional planning after representative qualification; retain exact native/visual/unknown gates."
+      "task": "R02",
+      "deliverable": "Eligible varied private copies and independently frozen answer/workflow truth before any held-out model run; preserve all six old/new intake candidate outcomes and reclassified development provenance."
     },
     {
       "task": "R01",
-      "deliverable": "Native-before-model/cache admission and remaining lifecycle/cancellation/idle-expiry evidence, reusing verified caches without weakening RAM policy."
+      "deliverable": "Native-before-model/cache admission and remaining lifecycle/cancellation/idle-expiry evidence; reuse verified caches and keep RAM policy."
     },
     {
-      "task": "R03",
-      "deliverable": "Faithful permitted read-only sources and explicit server-dependent review; no invented responses or upload credentials."
+      "task": "R04",
+      "deliverable": "Reviewed fact descriptors, radio over-abstention and broader histories/conditional planning after representative qualification."
+    },
+    {
+      "task": "R07",
+      "deliverable": "Explicit free-provider recovery/backoff and measured broad retrieval/application-route reachability; retain FreeSerp unavailable and SearXNG429 evidence rather than claim successful global search."
     }
   ]
 }
