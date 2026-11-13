@@ -1,5 +1,11 @@
 # Repository state review - 11 November 2026
 
+The [native frame-identity continuation](g1/NATIVE_FRAME_IDENTITY_2026-11-13.md)
+binds fresh loader/owner/document/ancestry evidence while preserving all frame
+review barriers. Local validation passes: 1,365 workspace tests, 610 ignored,
+Clippy/build/fmt and the four-context native matrix. Scope completeness remains
+unfinished; identity alone enables no additional entry.
+
 Reviewed committed source: `8cd7441013a7e54d1cf157c9dc97ef48d6c2146d`, on
 `main`, followed by independent entry-truth and failed-state observation work.
 Hosted baseline checks do not establish this continuation's validation.
@@ -14,9 +20,10 @@ recovery and whole-interface acceptance also remain open. A completion
 percentage or zero-defect claim would not be evidence-based.
 
 The [choice/radio continuation](g1/CHOICE_CONTEXT_AND_RADIO_CAPTURE_2026-11-13.md)
-fixes complete-prompt batching and clipped radio questions. Three measured local
-model runs retain zero wrong or unknown entries, but French 6/7 and English 1/2
-remain the observed scores; the repaired crop awaits model retest. Native scope
+fixes complete-prompt batching and clipped radio questions. Five measured local
+model runs retain zero wrong or unknown entries. French remains 6/7; English
+improves from 1/2 to 2/2 in two same-input post-crop development runs, with six
+required unknowns untouched. These are not held-out or workflow passes. Native scope
 checks expose two unresolved frame cases. Workspace tests pass (1,361 passed,
 610 ignored); the app remains a prototype with incomplete workflow qualification.
 

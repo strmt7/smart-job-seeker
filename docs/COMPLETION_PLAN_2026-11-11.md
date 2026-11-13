@@ -1,5 +1,11 @@
 # Completion plan - 11 November 2026
 
+The [native frame-identity continuation](g1/NATIVE_FRAME_IDENTITY_2026-11-13.md)
+binds fresh loader/owner/document/ancestry evidence while preserving all frame
+review barriers. Local validation passes: 1,365 workspace tests, 610 ignored,
+Clippy/build/fmt and the four-context native matrix. Scope completeness remains
+unfinished; identity alone enables no additional entry.
+
 This is an implementation and qualification sequence, not a release approval.
 The prototype has substantial discovery, document, review, evidence and local
 model mechanisms, but broad real-world application coverage and clean-host
@@ -9,10 +15,10 @@ original source and fixture scopes.
 Latest verified hosted checkpoint: `22c682c90cb68296716c5afe5af985d5ea9670d4`,
 with successful CI (43441505816), coverage (43441506106) and CodeQL (43441504873).
 The local [choice/radio checkpoint](g1/CHOICE_CONTEXT_AND_RADIO_CAPTURE_2026-11-13.md)
-adds exact prompt capacity and complete radio images. It retains measured French
-6/7 and English 1/2 results, six required unknowns untouched, and two frame-review
-limits. The post-crop local-model retest awaits resource admission; scope
-completeness and whole-workflow/held-out gates remain open. No new hosted result
+adds exact prompt capacity and complete radio images. French remains 6/7.
+English improves from 1/2 to 2/2 in two same-input post-crop local 12B runs; all
+six required unknowns remain untouched. Both trees drained. Scope completeness,
+the two frame-review limits and whole-workflow/held-out gates remain open. No new hosted result
 or release is claimed for that local source.
 
 The earlier [scoped mapping/deep discovery batch](g1/SCOPED_MAPPING_AND_DEEP_DISCOVERY_2026-11-13.md)

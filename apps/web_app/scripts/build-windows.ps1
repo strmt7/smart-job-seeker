@@ -12,6 +12,7 @@ param(
     [string]$TestFilter
 )
 $ErrorActionPreference = 'Stop'
+if ($args.Count -gt 0) { throw 'Unexpected build arguments. Use the declared named parameters.' }
 if (-not $IsWindows -and $env:OS -ne 'Windows_NT') { throw 'This helper is for Windows builds.' }
 if ($Test -and $Clippy) { throw '-Test and -Clippy cannot be used together.' }
 if ($NoRun -and (-not $Test -or $TestFilter -or $Ignored -or $NoCapture)) { throw '-NoRun requires -Test without a filter or execution options.' }

@@ -21,7 +21,7 @@ pub struct LiveForm {
     pub walls: Vec<String>,
     /// Snapshot-bound eligibility for independent, supported field entry.
     /// This never authorizes navigation, submission or an external write.
-    pub independent_fields: Option<IndependentFieldAccess>,
+    pub independent_fields: Option<Box<IndependentFieldAccess>>,
 }
 
 /// A visible custom widget that remains unresolved. Its presence must continue
@@ -70,6 +70,10 @@ pub struct IndependentFieldAccess {
     schema_identity: Option<String>,
     inspected_walls: Vec<String>,
     page_barriers: Vec<String>,
+    /// Native document/loader/owner identity, when supplied by the browser.
+    /// Equality with a fresh inspection must reject an old embedded scope even
+    /// when its supported fields and human-readable walls are unchanged.
+    native_scope_identity: Option<String>,
 }
 
 impl LiveForm {
@@ -80,6 +84,17 @@ impl LiveForm {
         page_barriers: Vec<String>,
         completion_reviews: Vec<CompletionReview>,
     ) -> Self {
+        Self::from_scoped_inspection(schema, page_barriers, completion_reviews, None)
+    }
+
+    /// Preserve native scope identity without treating it as proof of complete
+    /// inspection, authorization, or permission to remove any review barrier.
+    pub fn from_scoped_inspection(
+        schema: FormSchema,
+        page_barriers: Vec<String>,
+        completion_reviews: Vec<CompletionReview>,
+        native_scope_identity: Option<String>,
+    ) -> Self {
         let mut walls = page_barriers.clone();
         walls.extend(completion_reviews.iter().map(CompletionReview::message));
         walls.sort();
@@ -88,12 +103,13 @@ impl LiveForm {
             schema_identity: Some(schema.schema_hash_input()),
             inspected_walls: walls.clone(),
             page_barriers,
+            native_scope_identity,
         };
         Self {
             origin: schema.origin.clone(),
             schema,
             walls,
-            independent_fields: Some(evidence),
+            independent_fields: Some(Box::new(evidence)),
         }
     }
 
@@ -226,6 +242,39 @@ mod independent_field_tests {
             "context":{"sections":[{"id":"history","label":"History","inferred":false}]}
         })).unwrap());
         schema
+    }
+
+    #[test]
+    fn native_identity_changes_invalidate_equal_looking_scope_snapshots() {
+        let inspected = |identity: &str| {
+            LiveForm::from_scoped_inspection(
+                field_schema("waypoint-frame:2:4:#name"),
+                vec!["embedded scope still needs review".into()],
+                vec![custom("Country")],
+                Some(identity.into()),
+            )
+        };
+        let first = inspected("loader-owner-document-a");
+        let next = inspected("loader-owner-document-b");
+        assert_eq!(first.schema, next.schema);
+        assert_eq!(first.walls, next.walls);
+        assert_ne!(first, next);
+        assert!(first.independent_field_entry_blocked());
+        assert!(next.independent_field_entry_blocked());
+        let scoped = first.clone().with_control_scope("captured:");
+        assert_eq!(
+            first
+                .independent_fields
+                .as_ref()
+                .unwrap()
+                .native_scope_identity,
+            scoped
+                .independent_fields
+                .as_ref()
+                .unwrap()
+                .native_scope_identity
+        );
+        assert!(scoped.independent_field_entry_blocked());
     }
 
     #[test]

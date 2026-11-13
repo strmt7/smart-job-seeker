@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "reviewed_on": "2026-11-13",
-  "reviewed_source": "22c682c90cb68296716c5afe5af985d5ea9670d4",
+  "reviewed_source": "32d2bec78a8ed6358cb10cfa14b3e4ef00fc99c6",
   "goal": "Continue the existing active Smart Jobseeker product-development goal",
   "plan": "docs/COMPLETION_PLAN_2026-11-11.md",
   "assessment": "docs/REPO_STATE_REVIEW_2026-11-11.md",
@@ -45,7 +45,8 @@
         "docs/g1/SEMANTIC_PROFILE_REHEARSAL_2026-11-13.md",
         "docs/g1/BLIND_VISUAL_COVERAGE_2026-11-13.md",
         "docs/g1/VISIBLE_VIEWPORT_CAPTURE_2026-11-13.md",
-        "docs/g1/CHOICE_CONTEXT_AND_RADIO_CAPTURE_2026-11-13.md"
+        "docs/g1/CHOICE_CONTEXT_AND_RADIO_CAPTURE_2026-11-13.md",
+        "docs/g1/NATIVE_FRAME_IDENTITY_2026-11-13.md"
       ],
       "next_action": "Prepare and qualify lazy private model/cache admission after native eligibility and efficient verified qualification-cache reuse. Retain native worker failure diagnostics and sufficient RAM-admitted aggregate job capacity measured with model/browser/helpers. Native-call interruption, cleanup latency and uncollected-session idle expiry remain open.",
       "execution_batch": "A",
@@ -61,7 +62,8 @@
         "Owned/deferred form inspection with task-bound Stop; passing local native/browser/client checks, not universal native-call interruption.",
         "Qualification reuses existing verified workspace model caches without another8GB copy; this is development harness evidence, not product-wide lazy admission or cache lifecycle completion.",
         "2026-11-13: reproduced and repaired Close acknowledgement before admission release; three immediate isolated sessions and concurrent-refusal assertions pass, as does consumer-failure recovery. This does not complete cancellation latency, idle expiry or long-running leak qualification.",
-        "2026-11-13: post-crop model retest refused before process startup under current shared-policy admission. All three earlier model PIDs rechecked exited; scoped audit0owned matches. Other workloads untouched; no budget below measured needs was forced. This is development containment evidence, not completed product lazy admission or sustained leak qualification."
+        "2026-11-13: post-crop model retest refused before process startup under current shared-policy admission. All three earlier model PIDs rechecked exited; scoped audit0owned matches. Other workloads untouched; no budget below measured needs was forced. This is development containment evidence, not completed product lazy admission or sustained leak qualification.",
+        "2026-11-13: later headroom admitted the post-crop model pass and same-input repeat. App limit10GiB unchanged; outer12GiB then measured11GiB, shared half-free admission and3GiB reserve unchanged. Native app commit peaks9138704384/9148370944 bytes, sampled host minima13323198464/14355136512 bytes. Both trees drained, shared runtime unchanged; not product lazy-admission or leak qualification."
       ],
       "open_checkpoint": "Native-observation and cleanup latency, uncollected inspection-session expiry, and broader admitted-workload behavior remain unqualified.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package."
@@ -97,7 +99,8 @@
         "docs/g1/OBSERVED_DOCUMENT_REPRESENTATION_2026-11-13.md",
         "docs/g1/CONTAINED_DIALOG_PROGRESSION_2026-11-13.md",
         "docs/g1/SCOPED_MAPPING_AND_DEEP_DISCOVERY_2026-11-13.md",
-        "docs/g1/CHOICE_CONTEXT_AND_RADIO_CAPTURE_2026-11-13.md"
+        "docs/g1/CHOICE_CONTEXT_AND_RADIO_CAPTURE_2026-11-13.md",
+        "docs/g1/NATIVE_FRAME_IDENTITY_2026-11-13.md"
       ],
       "execution_batch": "B",
       "steps": [
@@ -106,7 +109,7 @@
         "Freeze employer/layout-family held-out partition before tuning.",
         "Report field, workflow, abstention, error, elapsed and resource denominators; repeat model-sensitive promotion candidates."
       ],
-      "next_action": "Run the unchanged-truth English crop/model retest when the measured aggregate budget and current host/GPU workload admit it; preserve all six required unknowns. A passing result needs a model-sensitive repeat before any promotion claim. Do not repeat the unchanged French mapping case without a relevant change. Continue untouched-family and workflow truth, multilingual abstention diagnosis and the retained employer resume failure; never credit a completed controller as a workflow pass.",
+      "next_action": "Continue independently frozen varied-family and whole-workflow truth, multilingual radio abstention diagnosis and the retained employer resume failure. The unchanged-truth English post-crop development case now passes2/2 in two same-input runs, unknown0/6 each; no additional unchanged repeat is needed. Do not credit it as held-out, general model promotion or workflow completion.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "completed_scopes": [
         "Bounded corpus identity/partition/input protocol and explicit field gate; two development cases, no held-out coverage.",
@@ -117,8 +120,9 @@
         "2026-11-13: froze four more platform candidates, collected4 compiled read-only attempts/3 native inventories (3 job-alert,16 and10 supported controls; none omitted),0 entry-eligible/0 model-scored. One response representation excluded. Pinpoint reclassified to development before generic context repair; all original manifests/results preserved.",
         "2026-11-13: request-representation source family is development; immutable selectionv3 retains initial manifests/failures. New10-control saved inventory has0 omissions but no entry eligibility or independent full-workflow/requiredness truth. No model score or promotion.",
         "Independent four-control fictional dialog truth and raw decision/control oracle retained before inference. Corrected an initial scorer that credited a validated fallback as raw model correctness; original legal response remains failed. Final tuned dialog decisions pass once; contact sensitivity remains 0/3, with no held-out/workflow credit.",
-        "Bounded opt-in native completion/response diagnostics identify missing manual_review and a 512-token invented-selector repair. Offered-ID/key schemas improve frozen fictional contact case 0/3 to3/3; French6/7 and saved-employer4/6 plus1unverified résumé remain unchanged. No unknown entered, held-out or workflow credit.",
-        "2026-11-13: fresh frozen French baseline and choice-context run each verify6/7 facts, unknown0/2; no measured radio mapping gain. A new independently authored eight-control English development variation proposes2facts but verifies1/2 before a clipped radio image; unknown0/6, all native requiredness checked. Original truth/results immutable; the prepared retest controller marks subsequent development use and requires unchanged truth before inference; it has not run. No wrong/unexpected/unverified performed entries in these3runs; no whole-workflow/held-out credit."
+        "Bounded opt-in native completion/response diagnostics identify missing manual_review and a 512-token invented-selector repair. Offered-ID/key schemas improve frozen fictional contact case 0/3 to3/3; French6/7 and saved-employer4/6 plus1unverified rÃƒÆ’Ã‚Â©sumÃƒÆ’Ã‚Â© remain unchanged. No unknown entered, held-out or workflow credit.",
+        "2026-11-13: fresh frozen French baseline and choice-context run each verify6/7 facts, unknown0/2; no measured radio mapping gain. A new independently authored eight-control English development variation proposes2facts but verifies1/2 before a clipped radio image; unknown0/6, all native requiredness checked. Original truth/results immutable; the prepared retest controller marks subsequent development use and requires unchanged truth before inference; its first admission attempt was held; later runs are recorded below. No wrong/unexpected/unverified performed entries in these3runs; no whole-workflow/held-out credit.",
+        "2026-11-13: source32d2bec exact binary, post-crop English development truth unchanged except explicit used_for_tuning/revision2 provenance. Two same-input local12B runs each2/2 verified, unknown0/6, no wrong/unexpected/unverified performed entries or critical uncertainties. Whole-workflow not_qualified; French remains6/7. Immutable results and actual repeat radio image retained."
       ],
       "start_requirements": [
         "Existing versioned input-binding/evaluation protocol is implemented; reviewed in tools/form_corpus.py and docs/FORM_EVALUATION.md."
@@ -168,16 +172,17 @@
         "docs/g1/INSPECTOR_REQUEST_CONTEXT_2026-11-13.md",
         "docs/g1/ANONYMOUS_ASSET_CONTEXTS_2026-11-13.md",
         "docs/g1/VISIBLE_VIEWPORT_CAPTURE_2026-11-13.md",
-        "docs/g1/CHOICE_CONTEXT_AND_RADIO_CAPTURE_2026-11-13.md"
+        "docs/g1/CHOICE_CONTEXT_AND_RADIO_CAPTURE_2026-11-13.md",
+        "docs/g1/NATIVE_FRAME_IDENTITY_2026-11-13.md"
       ],
       "execution_batch": "B",
       "steps": [
-        "Freeze the four-context frame evidence; design a native per-scope completeness record that can distinguish inspected child content from unresolved sibling/nested scopes without clearing barriers by string filtering.",
+        "Use native FrameInspectionIdentity as identity-only input to a separate per-scope completeness record; distinguish inspected content from every unresolved sibling/nested scope without clearing barriers by string filtering.",
         "Qualify owner/document/loader binding and target-less child inspection in zero-capability saved copies, including mixed known/opaque siblings, scope exhaustion, navigation/owner swaps, hidden overlays and stale evidence. Preserve all no-send and unknown-response guards.",
         "Qualify adversarial scripted-submit, stale, credential/body, wrong-target and changed-value cases before native earlier/untouched workflows. No unsupported server response may be invented.",
         "Continue independent requiredness/answer/workflow truth collection with R02; preserve remaining acceptance and resource-lifecycle obligations."
       ],
-      "next_action": "Prioritize fresh native scope-completeness evidence for accessible inline frames and target-less same-site children. The four-context native fixture retains both current refusals; do not remove UNINSPECTED_FRAME_REVIEW merely because a field is visible or invent Target IDs. Bind owner/document/loader identities and preserve every unknown mixed/nested/changed/over-budget scope. Use retained primary protocol captures only as design leads; qualify actual engine support without universal access or CSP changes. Keep server-dependent POSTs/manual outcomes and unsupported stylesheet Vary visible; no guessed headers or manufactured replies.",
+      "next_action": "Build explicit per-scope inspection-completeness evidence on the native identity foundation, then qualify target-less child inspection. Stable inline owner/document/loader identities are now observed, but no frame barrier is discharged. The actual parent-session Page tree omits the independently targeted cross-site child; retain existing separately leased target entry and opaque/mixed/nested/over-budget review. No fabricated Target IDs, universal access, CSP changes, guessed headers or manufactured replies. Keep server-dependent POST/manual and unsupported Vary outcomes visible.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "completed_scopes": [
         "Observed absent-Origin GET Stylesheet binding and strict capture/replay proof; malformed/conflicting/cross-type cases refused.",
@@ -192,7 +197,8 @@
         "Native cause identified: CSS inspector activation creates an absent-Origin stylesheet request. Post-load inspection now occurs within discovery, with pending inspection explicitly review-required and visible in the client. Fresh source35representations/34URLs/43requests writesversion2 and removes that final-inventory mismatch;10controls/3walls and other resource/POST gaps remain. Three native inspector/variant cases, legacy native regressions, workspace1354/604ignored and four-width component checks pass. Changed-source local12B proposes optional decline but stopsbeforeaction on replaygap;0entries, noworkflow/heldout credit.",
         "Typed anonymous asset proof and version3 archives now support observed script/style/font/image/JSON/manifest categories with compatible MIME and exact native GET/header context. Document/preload provenance excludes asset redirects and non-document replies. Native script+SVG+JSON fixture renders2controls/0entries with0refusals; earlier inspector/deep/frame cases pass. Fresh source38representations/37URLs from43requests retains3images, visibly restores logo/background and reducesmissingresponse9to3;10controls/3walls remain, no workflow/held-out credit. Workspace1357passed/605ignored, portable72 and final focused/native/Clippy/build/fmt pass.",
         "2026-11-13: timed passive/sweep evidence isolates an inactive responsive-image request to beyond-viewport context clipping. Visible field crops now stay within native-validated viewport bounds; four raw responsive cases, production context/detail capture, native dialog and lifecycle/viewport/caret regressions pass. Local12B now visually matches optional decline and the saved image shows the dialog gone; a new blocked POST keeps closure unverified, zero entries/advances. Workspace1357/609ignored, portable73, final browser112/23ignored, Clippy/build/fmt pass. No workflow/held-out credit.",
-        "2026-11-13: root radio crop previously clipped a centered question at400x240, causing real12B blind transcription refusal. Shared720CSS-pixel/400height bounded root/child context now retains full question/options. Native matrix: root and independently targeted cross-site selections verified with0replayrefusals; same-origin uninspected scope and target-less same-site child remain2explicit no-entry review outcomes. Images inspected. Current crop/model retest not started because resource admission held. Workspace1361/610ignored, final mapper54/22ignored, Clippy/build/fmt pass."
+        "2026-11-13: root radio crop previously clipped a centered question at400x240, causing real12B blind transcription refusal. Shared720CSS-pixel/400height bounded root/child context now retains full question/options. Native matrix: root and independently targeted cross-site selections verified with0replayrefusals; same-origin uninspected scope and target-less same-site child remain2explicit no-entry review outcomes. Images inspected. Initial crop/model retest attempt was held; later two development passes are recorded in the following checkpoint. Workspace1361/610ignored, final mapper54/22ignored, Clippy/build/fmt pass.",
+        "2026-11-13: bounded native frame/owner/document/loader/ancestry identity observed before/after inline traversal and carried privately in LiveForm equality; original barriers retained. Native mutation checks detect hidden/replaced same-origin owner snapshots. Cross-site parent census remains unavailable in this engine, with existing separately leased child path preserved after a caught regression. Identity is not inspection completeness or additional entry permission."
       ],
       "start_requirements": [
         "R02 input-binding protocol exists; full representative/held-out collection is not required to begin this rendering repair.",
@@ -229,7 +235,8 @@
         "docs/g1/SEMANTIC_PROFILE_REHEARSAL_2026-11-13.md",
         "docs/g1/BLIND_VISUAL_COVERAGE_2026-11-13.md",
         "docs/g1/POST_ENTRY_VALUE_COVERAGE_2026-11-13.md",
-        "docs/g1/CHOICE_CONTEXT_AND_RADIO_CAPTURE_2026-11-13.md"
+        "docs/g1/CHOICE_CONTEXT_AND_RADIO_CAPTURE_2026-11-13.md",
+        "docs/g1/NATIVE_FRAME_IDENTITY_2026-11-13.md"
       ],
       "execution_batch": "C",
       "steps": [
@@ -250,12 +257,13 @@
         "Native-bound failed-entry witness and coherent diagnostic image/text without accepting the entry; challenge/schema/document changes refuse observations.",
         "Actual failed Phone image/value retained: +1 202-555-0123 versus intended +12025550123. Independent gate stays failed; no section advances.",
         "Native tel-only presentation proof and stable actual-value captures, separate raw local-model transcription and explicit oracle comparison; final known-source run verifies4/6 initial answerable controls. No held-out or full-workflow claim.",
-        "Bounded generic document catalog proposals and distinct PDF truth; three known-source local12B runs choose both roles. Explicit current native file-group proof supports separate label comparison. Four of six controls verified; résumé visual gap remains, cover unreached, workflow not qualified.",
-        "Phase-specific file-feedback context preserves pre-entry/contact images; per-entry replay deltas retain degraded states. Final local12B4/6 verified with native résumé selection still visually unverified; field/workflow gates remain failed/not_qualified. Native embedded/contact feedback and rendered record/inspector/zoom checks pass within documented scopes.",
+        "Bounded generic document catalog proposals and distinct PDF truth; three known-source local12B runs choose both roles. Explicit current native file-group proof supports separate label comparison. Four of six controls verified; rÃƒÆ’Ã‚Â©sumÃƒÆ’Ã‚Â© visual gap remains, cover unreached, workflow not qualified.",
+        "Phase-specific file-feedback context preserves pre-entry/contact images; per-entry replay deltas retain degraded states. Final local12B4/6 verified with native rÃƒÆ’Ã‚Â©sumÃƒÆ’Ã‚Â© selection still visually unverified; field/workflow gates remain failed/not_qualified. Native embedded/contact feedback and rendered record/inspector/zoom checks pass within documented scopes.",
         "Contained semantic contact proposals reuse native options/constraints, captured aliases and section context, with strict failure/manual exclusions and bound records. Repaired native preflight passes. Fictional local12B case proposes6, verifies2/7, leaves2 unknown; email vision omission stops entry and residence radio remains manual. No field/workflow/held-out promotion.",
         "Conditional blind coverage distinguishes absence from ambiguous/different/limited evidence, retains raw first and second observations, and vetoes conflicts/failures. Native text/select detail views preserve original inputs. Frozen French case4/7 and prior family4/6; neither field/workflow gate passes. Scoped native/unit/actual UI checks pass.",
         "Shared pre/post coverage resolver retains exact/native-telephone and conflict/ambiguity/failure gates. Post-entry native detail recovers Country; French6/7 with0 wrong/unverified performed entries,2 unknown untouched and radio withheld. Prior family4/6, no full-workflow or held-out success. Native regressions and actual UI pass.",
-        "2026-11-13: bounded complete native choices (12items/200UTF8bytes each/1024serializedbytes) inform key mapping without selecting an answer or clearing manual review. Full-prompt batching respects8000bytes including instructions/keys/layout and retains all ten controls in the regression that old code skipped. Existing200field/20perbatch limits remain; no new candidate values sent in key-mapping prompts. Local French remains6/7, so generic multilingual radio over-abstention is unresolved."
+        "2026-11-13: bounded complete native choices (12items/200UTF8bytes each/1024serializedbytes) inform key mapping without selecting an answer or clearing manual review. Full-prompt batching respects8000bytes including instructions/keys/layout and retains all ten controls in the regression that old code skipped. Existing200field/20perbatch limits remain; no new candidate values sent in key-mapping prompts. Local French remains6/7, so generic multilingual radio over-abstention is unresolved.",
+        "2026-11-13: shared radio crop now improves the unchanged-truth English development case1/2 to2/2 in two local12B runs, with six required unknowns untouched. French6/7 and full workflow/held-out qualification remain open. No label-specific mapper or manual/sensitive override introduced."
       ]
     },
     {
@@ -529,7 +537,9 @@
         "Immutable input reuse and dry-run owned-artifact retention",
         "Change-directed checks, short evidence handoffs and verified cleanup"
       ],
-      "evidence": [],
+      "evidence": [
+        "docs/g1/NATIVE_FRAME_IDENTITY_2026-11-13.md"
+      ],
       "execution_batch": "F",
       "steps": [
         "Extract changed protocol/ownership mechanisms from large modules while retaining compatibility and relevant regressions.",
@@ -537,7 +547,7 @@
         "Inventory disposable owned artifacts with dry-run retention; preserve referenced failures and unrelated resources.",
         "Select checks by actual changes; verify exit, host headroom and absence of unexpected persistent development registrations."
       ],
-      "next_action": "Maintain short current pointers, preserve historical evidence separately, reuse verified immutable inputs and inspect dry-run artifact retention before deleting anything. Extract production mechanisms only along changed code paths.",
+      "next_action": "Maintain short current pointers, preserve historical evidence separately, reuse verified immutable inputs and inspect dry-run artifact retention before deleting anything. Extract production mechanisms only along changed code paths. Preserve the Windows PowerShell5.1 contract-suite Get-FileHash autoload failure from the inherited development environment; PowerShell7.6.9 full contract and real Clippy pass, but this is not a full clean-host qualification.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "start_requirements": [
         "Continuous ownership, bounded context and change-directed validation obligations are already applicable."
@@ -612,76 +622,114 @@
     "build_state": "Last focused test compile failed; three stale start callers remain in current source. No current full-workspace pass claimed."
   },
   "working_tree_checkpoint": {
-    "baseline_head": "22c682c90cb68296716c5afe5af985d5ea9670d4",
-    "validated_changes": "Exact complete-prompt batching, bounded native choice context and shared root/isolated-child radio image bounds. Root/cross-site native positives and two unresolved frame-review outcomes retained.",
+    "baseline_head": "32d2bec78a8ed6358cb10cfa14b3e4ef00fc99c6",
+    "validated_changes": "Bounded native frame identity before/after traversal; private loader/owner/document/ancestry evidence participates in fresh LiveForm equality. Existing review barriers and independently leased cross-site target entry remain intact; no scope-completeness or new frame-entry claim.",
     "validated_source_sha256": {
-      "apps/web_app/src/suggestions.rs": "caba226d853c928d80af4c0a2ee5f6a9da246069f03405c2b11c0aa99d079790",
-      "crates/waypoint_browser/src/lib.rs": "25a9c2f3bcf3c403e9bcf3925b5af3e494552fe2db7140925245e0b355ffe1ad",
-      "crates/waypoint_browser/src/captured_frame.rs": "40dfcaa2107e74113a69cc0ff3da64268acb1dc0dd6ef5655d2bb1e77f8d0570",
-      "crates/waypoint_browser/src/recorded_dialog_qualification.rs": "33c52b97e71be95f42db0176f5ead0cb2c53a734efd5319a9c02a478ff9916fe"
+      "crates/waypoint_browser/src/frame_identity.rs": "80caad500401dcccf692a352e05c63e1530963986c296b9ae1c47fec362edd41",
+      "crates/waypoint_browser/src/lib.rs": "20de3b5a206c38cfffa4e9eba6cbd7bedf1bcd7d109e124b11e44f0cc1287309",
+      "crates/waypoint_browser/src/recorded_dialog_qualification.rs": "b428fd015177b14d43373853f07507855c5973311b2208b7784c3eee64c13ee4",
+      "crates/waypoint_applications/src/driver.rs": "1dee0aa7ad51ee95dc2d3b2b4672be5c69e7267e9a29db363de996db4db79018",
+      "apps/web_app/scripts/build-windows.ps1": "210dffa340e02fe713ee534be0c83dda136ab788e303898a9b6719863517d903",
+      "apps/web_app/scripts/test-build-paths.ps1": "14183d87c265739bcb0460a5f62cd398684f0dcd86745d678f708a662279e5fc"
     },
-    "app_sha256": "9a0d8bd7af76622b5239a2f71d5427a6e108da96ee1f2a4f4e889b76968b6a45",
-    "build_state": "Workspace1361passed/610ignored across43 result groups; final mapper54passed/22ignored, Clippy/build/fmt pass. A test-only call-count assertion was removed after the workspace run; actual field coverage remains asserted and fails on old code. Final focused tests/Clippy/app rebuild pass. Native four-context fixture2positive choices/2no-entry refusals; image widths720/1440 confirmed and visually inspected.",
+    "app_sha256": "52dec99c86003ec0c9f288c60d86aa5fd4ee3c5f4d8070dfc30812d5a8eea6c1",
+    "build_state": "Windows workspace1365passed/610ignored across43 groups, warnings-denied Clippy, app build and fmt pass. Final exact-source native matrix1selected test, four contexts:2positive native choices/2no-entry review outcomes, stable inline reobservations and hidden/replaced owner identity changes. One later test-only report-key clarification received final native compilation/execution, fmt and Clippy; workspace production behavior unchanged.",
     "model_qualification": {
-      "new_runs": 3,
+      "new_runs": 5,
       "model": "gemma4:12b-it-q4_K_M",
-      "scope": "French6/7 before and after choice context; new English1/2 before radio crop, six required unknowns untouched. No whole-workflow/held-out credit. Post-crop model retest not started under RAM admission.",
+      "scope": "French6/7 before and after choice context; English1/2 before radio crop then2/2 in two post-crop development repeats on source32d2bec, unknown0/6 each. No whole-workflow/held-out or new-frame-model qualification.",
       "results": [
         "target/choice-baseline-rc8x9mbw/result.private.json",
         "target/choice-context-d_d7gypb/result.private.json",
-        "target/choice-adversarial-a4pl6lvd/result.private.json"
+        "target/choice-adversarial-a4pl6lvd/result.private.json",
+        "target/radio-context-model-lawzl712/result.private.json",
+        "target/radio-context-model-673g6azo/result.private.json"
       ],
-      "pending_current_binary_retest": true,
-      "minimum_available_host_ram_bytes": 19710500864,
+      "minimum_available_host_ram_bytes": 13323198464,
       "all_completed_trees_drained": true,
-      "all_shared_unchanged": true
+      "all_shared_unchanged": true,
+      "measured_post_crop_model_source": "32d2bec78a8ed6358cb10cfa14b3e4ef00fc99c6",
+      "scope_note": "Model branch unchanged by subsequent frame-identity work; these model results bind the exact32d2bec binary. They are not model qualification of embedded-frame completeness.",
+      "post_crop_development_repeat_complete": true
     },
-    "evidence": "docs/g1/CHOICE_CONTEXT_AND_RADIO_CAPTURE_2026-11-13.md",
+    "evidence": "docs/g1/NATIVE_FRAME_IDENTITY_2026-11-13.md",
     "private_evidence": "target/residence-review-fm9o0g4o/",
     "host_checkpoint": {
-      "private_evidence": "target/development-host-ec5905097ec3427bb42b5e5ff6ce73ac.private.json",
-      "available_ram_bytes": 22723637248,
+      "private_evidence": "target/development-host-9dec1d11cabf439c811b885d36133d9d.private.json",
+      "available_ram_bytes": 28679987200,
       "matching_processes": 0,
       "resident_models": 0,
       "persistent_registrations": 0,
-      "scope": "Scoped audit plus direct owned model PID rechecks and completed command trees; not sustained leak proof or exhaustive host inventory."
+      "scope": "Final scoped audit and native job/browser teardown. Both owned model creation identities directly rechecked exited; earlier audit controller match subsequently verified absent. Not sustained leak proof or exhaustive host inventory."
+    },
+    "native_frame_qualification": {
+      "private_evidence": "target/frame-identity-native-d0ce1imj",
+      "results": {
+        "native_choices_verified": 2,
+        "needs_review_no_entry": 2
+      },
+      "native_scope_identity": "Supported inline contexts only; independently targeted cross-site child absent from parent session Page tree. No completeness witness or additional form entry enabled.",
+      "all_browsers_closed": true
+    },
+    "build_contract": {
+      "scope": "Unknown arguments now fail before dependency setup; full existing routing/environment contract passes in discovered PowerShell7.6.9 followed by real Clippy. Windows PowerShell5.1 contract suite could not autoload Get-FileHash in inherited development environment; qualification remains open.",
+      "private_evidence": "target/residence-review-fm9o0g4o/frame-build-guard-pwsh-checks.private.json"
     }
   },
   "dependency_semantics": "depends_on are completion prerequisites; start_requirements admit bounded implementation before the whole prerequisite package completes. Containment, UI consistency and resource ownership apply continuously.",
   "last_validated_checkpoint": {
-    "baseline_head": "22c682c90cb68296716c5afe5af985d5ea9670d4",
-    "validated_changes": "Exact complete-prompt batching, bounded native choice context and shared root/isolated-child radio image bounds. Root/cross-site native positives and two unresolved frame-review outcomes retained.",
+    "baseline_head": "32d2bec78a8ed6358cb10cfa14b3e4ef00fc99c6",
+    "validated_changes": "Bounded native frame identity before/after traversal; private loader/owner/document/ancestry evidence participates in fresh LiveForm equality. Existing review barriers and independently leased cross-site target entry remain intact; no scope-completeness or new frame-entry claim.",
     "validated_source_sha256": {
-      "apps/web_app/src/suggestions.rs": "caba226d853c928d80af4c0a2ee5f6a9da246069f03405c2b11c0aa99d079790",
-      "crates/waypoint_browser/src/lib.rs": "25a9c2f3bcf3c403e9bcf3925b5af3e494552fe2db7140925245e0b355ffe1ad",
-      "crates/waypoint_browser/src/captured_frame.rs": "40dfcaa2107e74113a69cc0ff3da64268acb1dc0dd6ef5655d2bb1e77f8d0570",
-      "crates/waypoint_browser/src/recorded_dialog_qualification.rs": "33c52b97e71be95f42db0176f5ead0cb2c53a734efd5319a9c02a478ff9916fe"
+      "crates/waypoint_browser/src/frame_identity.rs": "80caad500401dcccf692a352e05c63e1530963986c296b9ae1c47fec362edd41",
+      "crates/waypoint_browser/src/lib.rs": "20de3b5a206c38cfffa4e9eba6cbd7bedf1bcd7d109e124b11e44f0cc1287309",
+      "crates/waypoint_browser/src/recorded_dialog_qualification.rs": "b428fd015177b14d43373853f07507855c5973311b2208b7784c3eee64c13ee4",
+      "crates/waypoint_applications/src/driver.rs": "1dee0aa7ad51ee95dc2d3b2b4672be5c69e7267e9a29db363de996db4db79018",
+      "apps/web_app/scripts/build-windows.ps1": "210dffa340e02fe713ee534be0c83dda136ab788e303898a9b6719863517d903",
+      "apps/web_app/scripts/test-build-paths.ps1": "14183d87c265739bcb0460a5f62cd398684f0dcd86745d678f708a662279e5fc"
     },
-    "app_sha256": "9a0d8bd7af76622b5239a2f71d5427a6e108da96ee1f2a4f4e889b76968b6a45",
-    "build_state": "Workspace1361passed/610ignored across43 result groups; final mapper54passed/22ignored, Clippy/build/fmt pass. A test-only call-count assertion was removed after the workspace run; actual field coverage remains asserted and fails on old code. Final focused tests/Clippy/app rebuild pass. Native four-context fixture2positive choices/2no-entry refusals; image widths720/1440 confirmed and visually inspected.",
+    "app_sha256": "52dec99c86003ec0c9f288c60d86aa5fd4ee3c5f4d8070dfc30812d5a8eea6c1",
+    "build_state": "Windows workspace1365passed/610ignored across43 groups, warnings-denied Clippy, app build and fmt pass. Final exact-source native matrix1selected test, four contexts:2positive native choices/2no-entry review outcomes, stable inline reobservations and hidden/replaced owner identity changes. One later test-only report-key clarification received final native compilation/execution, fmt and Clippy; workspace production behavior unchanged.",
     "model_qualification": {
-      "new_runs": 3,
+      "new_runs": 5,
       "model": "gemma4:12b-it-q4_K_M",
-      "scope": "French6/7 before and after choice context; new English1/2 before radio crop, six required unknowns untouched. No whole-workflow/held-out credit. Post-crop model retest not started under RAM admission.",
+      "scope": "French6/7 before and after choice context; English1/2 before radio crop then2/2 in two post-crop development repeats on source32d2bec, unknown0/6 each. No whole-workflow/held-out or new-frame-model qualification.",
       "results": [
         "target/choice-baseline-rc8x9mbw/result.private.json",
         "target/choice-context-d_d7gypb/result.private.json",
-        "target/choice-adversarial-a4pl6lvd/result.private.json"
+        "target/choice-adversarial-a4pl6lvd/result.private.json",
+        "target/radio-context-model-lawzl712/result.private.json",
+        "target/radio-context-model-673g6azo/result.private.json"
       ],
-      "pending_current_binary_retest": true,
-      "minimum_available_host_ram_bytes": 19710500864,
+      "minimum_available_host_ram_bytes": 13323198464,
       "all_completed_trees_drained": true,
-      "all_shared_unchanged": true
+      "all_shared_unchanged": true,
+      "measured_post_crop_model_source": "32d2bec78a8ed6358cb10cfa14b3e4ef00fc99c6",
+      "scope_note": "Model branch unchanged by subsequent frame-identity work; these model results bind the exact32d2bec binary. They are not model qualification of embedded-frame completeness.",
+      "post_crop_development_repeat_complete": true
     },
-    "evidence": "docs/g1/CHOICE_CONTEXT_AND_RADIO_CAPTURE_2026-11-13.md",
+    "evidence": "docs/g1/NATIVE_FRAME_IDENTITY_2026-11-13.md",
     "private_evidence": "target/residence-review-fm9o0g4o/",
     "host_checkpoint": {
-      "private_evidence": "target/development-host-ec5905097ec3427bb42b5e5ff6ce73ac.private.json",
-      "available_ram_bytes": 22723637248,
+      "private_evidence": "target/development-host-9dec1d11cabf439c811b885d36133d9d.private.json",
+      "available_ram_bytes": 28679987200,
       "matching_processes": 0,
       "resident_models": 0,
       "persistent_registrations": 0,
-      "scope": "Scoped audit plus direct owned model PID rechecks and completed command trees; not sustained leak proof or exhaustive host inventory."
+      "scope": "Final scoped audit and native job/browser teardown. Both owned model creation identities directly rechecked exited; earlier audit controller match subsequently verified absent. Not sustained leak proof or exhaustive host inventory."
+    },
+    "native_frame_qualification": {
+      "private_evidence": "target/frame-identity-native-d0ce1imj",
+      "results": {
+        "native_choices_verified": 2,
+        "needs_review_no_entry": 2
+      },
+      "native_scope_identity": "Supported inline contexts only; independently targeted cross-site child absent from parent session Page tree. No completeness witness or additional form entry enabled.",
+      "all_browsers_closed": true
+    },
+    "build_contract": {
+      "scope": "Unknown arguments now fail before dependency setup; full existing routing/environment contract passes in discovered PowerShell7.6.9 followed by real Clippy. Windows PowerShell5.1 contract suite could not autoload Get-FileHash in inherited development environment; qualification remains open.",
+      "private_evidence": "target/residence-review-fm9o0g4o/frame-build-guard-pwsh-checks.private.json"
     }
   },
   "current_hosted_checks": {

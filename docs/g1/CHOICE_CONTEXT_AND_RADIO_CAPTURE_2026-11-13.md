@@ -12,19 +12,23 @@ Radio screenshots now use a shared bounded context for main-page and independent
 
 ## Measured model results
 
-All three completed runs used the same local `gemma4:12b-it-q4_K_M`, digest `6114515d63c17436a7c0417d82820ac65ad643e2806c5a3c89cb62846436ed0b`, with context 4,096. The independent answer keys remained outside inference.
+All five completed runs used the same local `gemma4:12b-it-q4_K_M`, digest `6114515d63c17436a7c0417d82820ac65ad643e2806c5a3c89cb62846436ed0b`, with context 4,096. The independent answer keys remained outside inference.
 
 | Development case | Verified answerable fields | Unknown answers entered | Result |
 | --- | --- | --- | --- |
 | Fresh frozen French baseline on `22c682c` | 6/7 | 0/2 | Residence radio withheld |
 | Same French source after choice context and prompt batching | 6/7 | 0/2 | Same conservative radio decision; no measured score gain |
 | New English boundary case before radio-crop repair | 1/2 | 0/6 | Both facts proposed; clipped radio image prevents entry |
+| Same English truth after crop repair, first run | 2/2 | 0/6 | Native and blind visual checks agree |
+| Same English truth after crop repair, repeat | 2/2 | 0/6 | Same verified values and abstentions |
 
 Each run has zero incorrect values, unexpected entries and unverified performed entries. These counts do not turn withheld or unreached fields into successes. The English case separates the applicant's current residence from citizenship, relocation preference, work permission, a compound residence-and-permission question, contact preference and another person's country. All eight controls are independently authored as required, and native requiredness is checked before inference. Both supported facts were proposed; all six unknowns remained untouched.
 
-The English pre-entry image was 400 by 240 pixels and cut off the question after its initial words. The actual local model returned an incomplete label and refused the target, including after its existing image recheck. Native qualification of the repaired crop now retains the complete question and option labels: root images are 720 by 112 pixels; independently targeted child images are 1,440 by 224 because of their existing scale. Before/after images were decoded and visually inspected. Native selection/readback succeeds in both contexts with no replay refusals. This is native/image evidence, not a new local-model field score.
+The English pre-entry image was 400 by 240 pixels and cut off the question after its initial words. The actual local model returned an incomplete label and refused the target, including after its existing image recheck. Native qualification of the repaired crop now retains the complete question and option labels: root images are 720 by 112 pixels; independently targeted child images are 1,440 by 224 because of their existing scale. Before/after images were decoded and visually inspected. Native selection/readback succeeds in both contexts with no replay refusals. The initial native matrix alone was image/driver evidence. Two subsequent local-model runs on committed source `32d2bec78a8ed6358cb10cfa14b3e4ef00fc99c6` now each verify both supported facts, including residence; each leaves all six required unknowns untouched. Both have zero incorrect values, unexpected entries, unverified performed entries and critical uncertainties. The actual repeat radio image was visually inspected. Neither run qualifies a complete workflow: six required answers remain unknown and this case has no workflow oracle.
 
-The model retest after the crop repair did not start: the development command's 12 GiB aggregate budget exceeded current shared-policy admission. No model process or result folder was created. All three earlier model PIDs were independently rechecked as exited, and the scoped host audit found no matching leftovers. Other workloads were left untouched; the budget was not lowered below measured needs to force a test. Retest remains required when resources admit it. The prepared retest controller marks development use explicitly and requires the original source/control/value/requiredness truth unchanged before inference. It has not run and must not be called held-out.
+The first post-crop attempt was held before process startup under shared RAM admission. Later headroom admitted a 12 GiB aggregate controller/app job; a same-input repeat used 11 GiB outside the unchanged 10 GiB app limit, leaving 1 GiB for the measured controller overhead. The shared half-free-RAM admission policy and 3 GiB host reserve were unchanged. The app's native aggregate commit peaks were 9,138,704,384 and 9,148,370,944 bytes; sampled whole-host available RAM minima were 13,323,198,464 and 14,355,136,512 bytes. These are differently scoped measurements, not GPU peaks or leak proof. Both owned trees drained and the shared model runtime remained unchanged. Other workloads were untouched.
+
+The two successful runs require exact original source/control/value/requiredness truth before inference. Their provenance explicitly marks subsequent development use, revision 2. They are development repeats, not held-out results or a general model promotion. The unchanged French abstention remains open; no unchanged French rerun was used to seek a more favorable score.
 
 ## Frame coverage remains incomplete
 
@@ -47,8 +51,9 @@ Private evidence stays under ignored `target/`:
 
 - `residence-review-fm9o0g4o/`: source-bound index receipts, old-source coverage reproduction, command logs, research bindings and final checks.
 - `choice-baseline-rc8x9mbw/`, `choice-context-d_d7gypb/`, `choice-adversarial-a4pl6lvd/`: immutable model results, independent corpus bindings and resources.
-- `radio-context-native-3knillpj/`: final native matrix and images; earlier failed runs are separate.
+- `radio-context-native-3knillpj/`: initial native matrix and images; earlier failed runs are separate.
+- `radio-context-model-lawzl712/`, `radio-context-model-673g6azo/`: post-crop development pass and same-input repeat, bound to source `32d2bec` and the exact app binary.
 
 The completed model runs each closed their private session and drained the owned app tree, leaving the shared runtime unchanged. Resource samples and native aggregate commit peaks are retained in the private summaries; neither is a universal GPU-fit or sustained leak claim. Public protocol research retained three successful HTTP 200 native captures, substantive text, version `0.9.5+flitzzip.portable2`, reviewed provider-source identity, integration hashes and capture digests. No challenge or robots restriction was bypassed.
 
-R03 next: implement and adversarially qualify scope-completeness evidence for accessible inline documents and target-less children. Keep the saved employer's server-dependent POST manual and retain unsupported request representations. R02/R04 still need the pending crop/model retest, multilingual radio diagnosis, varied independently frozen truth, whole-workflow evidence and real held-out qualification. No release readiness or universal-form claim is made.
+R03 next: implement and adversarially qualify scope-completeness evidence for accessible inline documents and target-less children. Keep the saved employer's server-dependent POST manual and retain unsupported request representations. R02/R04 still need multilingual radio diagnosis, varied independently frozen truth, whole-workflow evidence and real held-out qualification. No release readiness or universal-form claim is made.

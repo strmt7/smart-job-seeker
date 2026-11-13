@@ -1,5 +1,11 @@
 # Known limitations register (T050)
 
+The [native frame-identity continuation](docs/g1/NATIVE_FRAME_IDENTITY_2026-11-13.md)
+binds fresh loader/owner/document/ancestry evidence while preserving all frame
+review barriers. Local validation passes: 1,365 workspace tests, 610 ignored,
+Clippy/build/fmt and the four-context native matrix. Scope completeness remains
+unfinished; identity alone enables no additional entry.
+
 Current source/evidence assessment:
 [repository review, 2026-11-11](docs/REPO_STATE_REVIEW_2026-11-11.md).
 The old numbered register below is retained as historical context. In particular,
@@ -15,9 +21,9 @@ reproduced skipped-field batch. Main-page radio images no longer clip the full
 question. The local French case remains 6/7; the new English boundary case was
 1/2 before the crop repair, with six required unknowns untouched. Native root and
 independently targeted child selections now verify; same-origin uninspected
-scopes and target-less same-site children still need review. The post-crop model
-retest was not started because development RAM admission was unavailable; all
-previous owned model PIDs were confirmed gone. No workflow or held-out credit.
+scopes and target-less same-site children still need review. Two later post-crop local 12B runs each verify
+2/2 supported English facts and leave all six required unknowns untouched. The
+initial admission hold remains historical evidence. Both model trees drained. No workflow or held-out credit.
 [Evidence](docs/g1/CHOICE_CONTEXT_AND_RADIO_CAPTURE_2026-11-13.md).
 
 Current viewport continuation, 2026-11-13: field clipping no longer introduces an

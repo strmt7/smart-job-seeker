@@ -51,8 +51,32 @@ fn centered_radio_context_preserves_question_and_native_choice() {
         assert!(ready.appcontainer && ready.capabilities == 0);
         let mut phase = "open";
         let mut native_form = Value::Null;
+        let mut scope_identity = Value::Null;
         let result = (|| -> Result<Value, DriverError> {
             let mut form = driver.open(entry)?;
+            let root = driver.document_with_frames(true)?;
+            let observed = driver.frame_inspection_identity(&root);
+            scope_identity = json!({"native":observed.as_ref().map_err(|error|error.to_string()),"scope":"Native identity only; existing frame barriers remain, no completeness or model credit"});
+            if observed.is_err() {
+                scope_identity["diagnostic_dom"] = root.clone();
+                scope_identity["diagnostic_tree"] = driver
+                    .cdp
+                    .call("Page.getFrameTree", json!({}))
+                    .map_err(derr)?;
+            } else {
+                let repeated_root = driver.document_with_frames(true)?;
+                let repeated = driver.frame_inspection_identity(&repeated_root)?;
+                if observed.as_ref().ok() != Some(&repeated) {
+                    return Err(DriverError(
+                        "Unchanged native frame scope did not retain its identity".into(),
+                    ));
+                }
+            }
+            if name == "same-origin" && observed.is_err() {
+                return Err(DriverError(
+                    "Same-origin native frame identity was not verified".into(),
+                ));
+            }
             native_form = json!({"schema":form.schema,"walls":form.walls});
             if matches!(name, "same-site" | "cross-site") {
                 phase = "enter_cross_origin";
@@ -124,8 +148,49 @@ fn centered_radio_context_preserves_question_and_native_choice() {
                         "Uninspected inline scope reached a radio interaction".into(),
                     ));
                 }
+                let original = observed.map_err(|_| review())?;
+                driver
+                    .cdp
+                    .call(
+                        "Runtime.evaluate",
+                        json!({"expression":"document.querySelector('iframe').hidden = true"}),
+                    )
+                    .map_err(derr)?;
+                let hidden_root = driver.document_with_frames(true)?;
+                let hidden = driver.frame_inspection_identity(&hidden_root)?;
+                if hidden == original || driver.inspect_current()? == form {
+                    return Err(DriverError(
+                        "A hidden frame retained its old native scope identity".into(),
+                    ));
+                }
+                driver.cdp.call("Runtime.evaluate",json!({"expression":"document.querySelector('iframe').hidden = false; document.querySelector('iframe').replaceWith(document.querySelector('iframe').cloneNode(true))"})).map_err(derr)?;
+                let mut replacement = None;
+                for _ in 0..12 {
+                    driver
+                        .cdp
+                        .pump_checked(Duration::from_millis(100))
+                        .map_err(derr)?;
+                    let root = driver.document_with_frames(true)?;
+                    if let Ok(current) = driver.frame_inspection_identity(&root) {
+                        if current != original {
+                            replacement = Some(current);
+                            break;
+                        }
+                    }
+                }
+                let replacement = replacement.ok_or_else(review)?;
+                if driver.inspect_current()? == form
+                    || driver
+                        .trace
+                        .iter()
+                        .any(|event| event.starts_with("clicked"))
+                {
+                    return Err(DriverError(
+                        "A replaced frame retained the prior inspection".into(),
+                    ));
+                }
                 return Ok(
-                    json!({"document":name,"status":"needs_review","reason":"uninspected_inline_scope","fields_entered":0,"external_delivery":"not_performed","scope":"Existing refusal only; no crop or model success credit"}),
+                    json!({"document":name,"status":"needs_review","reason":"uninspected_inline_scope","fields_entered":0,"external_delivery":"not_performed","scope":"Existing refusal preserved; native identity changes only, no crop or model success credit","native_identity_changes":{"hidden":hidden.digest()?,"replacement":replacement.digest()?,"original":original.digest()?,"old_form_differs_from_fresh":true}}),
                 );
             }
             let mut before = None;
@@ -160,7 +225,7 @@ fn centered_radio_context_preserves_question_and_native_choice() {
             )
         })();
         let closed = driver.execute(&waypoint_applications::form_mapping::BrowserCommand::Close);
-        observations.push(json!({"result":result.as_ref().map_err(|e|e.to_string()),"browser_closed":closed.is_ok(),"phase":phase,"native_form":native_form,"document":name}));
+        observations.push(json!({"result":result.as_ref().map_err(|e|e.to_string()),"browser_closed":closed.is_ok(),"phase":phase,"native_form":native_form,"document":name,"frame_identity":scope_identity}));
         if result.is_err() || closed.is_err() {
             break;
         }

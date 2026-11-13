@@ -1,3 +1,12 @@
+## Embedded-document identity - 2026-11-13
+
+Native frame identity now participates in fresh inspection checks, including
+loader, owner, document and ancestry changes. The four-context headless matrix
+preserves two native selections and two review outcomes; no additional frame
+entry is enabled. Windows workspace: 1,365 passed, 610 ignored; Clippy, build
+and formatting pass. [Evidence](g1/NATIVE_FRAME_IDENTITY_2026-11-13.md).
+Scope completeness and whole-workflow qualification remain open.
+
 ## Choice context and radio images — 2026-11-13
 
 The mapper now includes bounded native choices and sizes each complete prompt,
@@ -5,8 +14,9 @@ fixing a reproduced skipped-field batch. Radio images retain the full question
 on main pages and independently targeted child frames. Native checks verify two
 selections and preserve two frame-review outcomes. Workspace tests pass (1,361
 passed, 610 ignored), as do Clippy, build and formatting. The French model case
-remains 6/7; the new English case was 1/2 before the crop repair. Its model retest
-is pending resource admission, with six required unknowns kept untouched.
+remains 6/7. The English development case improves from 1/2 to 2/2 after the
+crop repair in two same-input local 12B runs, with six required unknowns kept
+untouched. Both owned model trees drained; sampled host RAM stayed above 12 GiB.
 [Evidence](g1/CHOICE_CONTEXT_AND_RADIO_CAPTURE_2026-11-13.md). No whole-workflow
 or held-out pass, and no release.
 

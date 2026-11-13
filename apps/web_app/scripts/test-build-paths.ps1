@@ -51,7 +51,15 @@ try { & $script -Workspace } catch {
     if ($_.Exception.Message -notmatch 'requires -Test or -Clippy') { throw }
     $rejected++
 }
-if ($rejected -ne 4) { throw 'Invalid option combinations were not rejected.' }
+try { & $script -CargoArguments 'test -p fictional-package' } catch {
+    if ($_.Exception.Message -notmatch 'Unexpected build arguments') { throw }
+    $rejected++
+}
+try { & $script -Workspace -Test -TestFiltre 'fictional-test' } catch {
+    if ($_.Exception.Message -notmatch 'Unexpected build arguments') { throw }
+    $rejected++
+}
+if ($rejected -ne 6) { throw 'Invalid or unrecognized options were not rejected.' }
 $runtimeDefinition = $ast.Find({
     param($node)
     $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Install-OpenSslRuntime'

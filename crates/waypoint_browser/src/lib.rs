@@ -21,6 +21,7 @@
 //!   them.
 
 mod captured_frame;
+mod frame_identity;
 pub use captured_frame::{
     CapturedFrame, CapturedFrames, RecordedControlIdentity, RecordedFieldCapture,
     RecordedFieldKind, RecordedFieldObservation, RecordedFieldWitness, RecordedTargetCapture,
@@ -49,6 +50,13 @@ use waypoint_applications::form_mapping::{BrowserCommand, FormField, FormFieldTy
 use waypoint_applications::receipt::ReceiptKind;
 
 use cdp::{BrowserProcess, Cdp, CdpError};
+
+struct InspectedForm {
+    schema: waypoint_applications::form_mapping::FormSchema,
+    walls: Vec<String>,
+    reviews: Vec<waypoint_applications::driver::CompletionReview>,
+    scope_identity: Option<String>,
+}
 
 fn is_stale_inspection_node(error: &CdpError) -> bool {
     is_disappeared_node_error(&error.0)
@@ -3001,7 +3009,12 @@ impl CdpDriver {
 
     fn inspect_current_once(&mut self) -> Result<LiveForm, DriverError> {
         let current_url = self.current_url()?;
-        let (schema, mut walls, reviews) = self.read_form(&current_url)?;
+        let InspectedForm {
+            schema,
+            mut walls,
+            reviews,
+            scope_identity,
+        } = self.read_form(&current_url)?;
         if current_url.starts_with("https://") || current_url.starts_with("http://") {
             let frame_tree = self.cdp.call("Page.getFrameTree", json!({})).ok();
             let frame = frame_tree
@@ -3039,7 +3052,12 @@ impl CdpDriver {
                 _ => walls.push("The main page response status could not be verified; manual review is required".into()),
             }
         }
-        Ok(LiveForm::from_inspection(schema, walls, reviews))
+        Ok(LiveForm::from_scoped_inspection(
+            schema,
+            walls,
+            reviews,
+            scope_identity,
+        ))
     }
 
     /// Inspect rendered visibility and derive a structural selector without changing the page.
@@ -3667,17 +3685,7 @@ impl CdpDriver {
     }
 
     /// Read the main document and a bounded number of accessible embedded documents.
-    fn read_form(
-        &mut self,
-        url: &str,
-    ) -> Result<
-        (
-            waypoint_applications::form_mapping::FormSchema,
-            Vec<String>,
-            Vec<waypoint_applications::driver::CompletionReview>,
-        ),
-        DriverError,
-    > {
+    fn read_form(&mut self, url: &str) -> Result<InspectedForm, DriverError> {
         let root = self.document_with_frames(true)?;
         let (mut schema, mut walls, mut reviews) = self.read_form_document(url, &root)?;
         // The queue owns only the root and the few documents actually inspected.
@@ -3685,6 +3693,10 @@ impl CdpDriver {
         let started = Instant::now();
         let previous_timeout = self.cdp.timeout;
         self.cdp.timeout = Duration::from_secs(1);
+        // Bind native identities across the bounded traversal. This is not a
+        // completeness witness: all existing frame/shadow barriers stay intact.
+        let scope_before =
+            document_has_embedded_scope(&root).then(|| self.frame_inspection_identity(&root));
         let inspected = (|| -> Result<(), DriverError> {
             let mut queue = std::collections::VecDeque::from([(root, String::new(), 0usize)]);
             let mut inspected_count = 0;
@@ -3897,11 +3909,44 @@ impl CdpDriver {
             }
             Ok(())
         })();
+        let scope_identity = if inspected.is_ok() {
+            match scope_before {
+                Some(Ok(before)) => {
+                    let after = self
+                        .document_with_frames(true)
+                        .and_then(|root| self.frame_inspection_identity(&root));
+                    match after {
+                        Ok(after) if before == after => before.digest().ok(),
+                        _ => None,
+                    }
+                    .or_else(|| {
+                        walls.push(frame_identity::FRAME_IDENTITY_REVIEW.into());
+                        None
+                    })
+                }
+                Some(Err(_)) => {
+                    // Some engines omit independently targeted descendants
+                    // from this session's Page tree. Unavailable identity is
+                    // not a complete census: retain the existing frame/shadow
+                    // barriers and the independently leased target path. Only
+                    // a previously verified identity changing adds a new wall.
+                    None
+                }
+                None => None,
+            }
+        } else {
+            None
+        };
         self.cdp.timeout = previous_timeout;
         inspected?;
         walls.sort();
         walls.dedup();
-        Ok((schema, walls, reviews))
+        Ok(InspectedForm {
+            schema,
+            walls,
+            reviews,
+            scope_identity,
+        })
     }
 
     fn read_form_document(

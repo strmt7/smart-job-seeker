@@ -260,6 +260,18 @@ used by development tools and tests. Do not add WSL or Docker as product require
 
 ## Real pitfalls already hit (don't rediscover these)
 
+- Native frame identity uses backend owner/document IDs and loader identities,
+  not transient frontend node handles. A parent session's `Page.getFrameTree`
+  can omit an independently targeted child. Unavailable census evidence is not
+  proof of a changed document or complete inspection; preserve existing review
+  barriers and the separately leased target path. Never discharge a frame
+  barrier from identity evidence alone. See `docs/g1/NATIVE_FRAME_IDENTITY_2026-11-13.md`.
+- Build helpers reject undeclared arguments before dependency setup. Use the
+  declared `-Workspace -Test -TestFilter` options for filtered workspace tests;
+  verify actual native test counts, not just exit zero. PowerShell previously
+  accepted an unknown flag and ran an ordinary build instead of the intended
+  test. The routing regression is in `apps/web_app/scripts/test-build-paths.ps1`.
+
 - A missing visual target differs from an ambiguous or contradicted target.
   Blind coverage rechecks must preserve the first observations, admit no expected
   label/value hints, and retain all native/image bindings. Compare singleton
