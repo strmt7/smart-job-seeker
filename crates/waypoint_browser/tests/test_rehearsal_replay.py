@@ -35,6 +35,69 @@ class Fixture:
 class ReplayTests(unittest.TestCase):
     def setUp(self):self.fixture=Fixture()
     def tearDown(self):self.fixture.close()
+    def test_version3_binds_anonymous_asset_roles_mime_and_native_get_context(self):
+        roles=[('script','Script','text/javascript'),('stylesheet','Stylesheet','text/css'),('font','Font','font/woff2'),
+               ('image','Image','image/svg+xml'),('json','Fetch','application/json'),('manifest','Manifest','application/manifest+json')]
+        for index,(kind,resource_type,mime) in enumerate(roles):
+            url='https://cdn.fixture.invalid/asset-'+str(index);body=('fictional-'+kind).encode()
+            self.fixture.add(url,str(index)+'.bin',body,headers=[{'name':'Content-Type','value':mime},{'name':'Vary','value':'Origin'}])
+            self.fixture.resources[-1].update(request_origin_absent=True,request_origin_absent_asset=kind)
+            archive=self.fixture.archive({'schema':3});request={'url':url,'method':'GET','headers':{'Accept':'*/*'}}
+            reply,reason=archive.response(request,resource_type);self.assertEqual(reason,'recorded_response');self.assertEqual(base64.b64decode(reply['body']),body)
+            if kind=='json':self.assertIsNotNone(archive.response(request,'XHR')[0])
+            for wrong in ['Document','Other','Media',None]+[role[1] for role in roles if role[0]!=kind]:
+                self.assertIsNone(archive.response(request,wrong)[0],(kind,wrong))
+            for headers in [{},{'Origin':'https://fixture.invalid'},{'Cookie':''},{'Authorization':''},{'Proxy-Authorization':''},
+                            {'Accept':'*/*','accept':'*/*'},{'Accept':'bad\nvalue'},{'Content-Length':'0'},{'Transfer-Encoding':'chunked'},
+                            {'Content-Type':'text/plain'},{'Access-Control-Request-Method':'GET'},{'Access-Control-Request-Headers':''}]:
+                self.assertIsNone(archive.response({**request,'headers':headers},resource_type)[0],(kind,headers))
+            for extra in [{'method':'POST'},{'method':'HEAD'},{'method':'OPTIONS'},{'postData':''},{'postDataEntries':[]},{'hasPostData':True}]:
+                self.assertIsNone(archive.response({**request,**extra},resource_type)[0],(kind,extra))
+
+    def test_version3_rejects_unproved_mime_schema_and_context_combinations(self):
+        url='https://cdn.fixture.invalid/image';self.fixture.add(url,'image.bin',b'image',content_type='image/png')
+        item=self.fixture.resources[-1];item.update(request_origin_absent=True,request_origin_absent_asset='image');original=json.loads(json.dumps(item))
+        for schema in [1,2]:
+            with self.assertRaisesRegex(replay.ReplayError,'unbound_replay_variant'):self.fixture.archive({'schema':schema})
+        changes=[{'request_origin_absent_asset':value} for value in [None,False,[],{},'document','unknown']]
+        changes += [{'request_origin_absent':False},{'request_origin':'https://fixture.invalid'},{'request_origin_absent_stylesheet':True},
+                    {'method':'POST'},{'request_body_sha256':digest(b'body')}]
+        changes += [{'headers':[{'name':'Content-Type','value':mime}]} for mime in ['text/html','text/css','image/','image/*','image/bad value']]
+        changes += [{'headers':[{'name':'Content-Type','value':'image/png'},{'name':'Vary','value':'Sec-Fetch-Dest'}]}]
+        for change in changes:
+            item.clear();item.update(original);item.update(change)
+            with self.subTest(change=change),self.assertRaises(replay.ReplayError):self.fixture.archive({'schema':3})
+        item.clear();item.update(original)
+        self.fixture.add(url,'other.bin',b'other',content_type='image/png');self.fixture.resources[-1].update(request_origin_absent=True,request_origin_absent_asset='image')
+        with self.assertRaisesRegex(replay.ReplayError,'ambiguous_replay_resource'):self.fixture.archive({'schema':3})
+
+    def test_version3_selects_disjoint_asset_bodies_and_does_not_admit_asset_redirect_origins(self):
+        url='https://cdn.fixture.invalid/shared'
+        for kind,mime,body in [('image','image/png',b'image'),('script','text/javascript',b'script')]:
+            self.fixture.add(url,kind+'.bin',body,content_type=mime);self.fixture.resources[-1].update(request_origin_absent=True,request_origin_absent_asset=kind)
+        self.fixture.add('https://redirect.fixture.invalid/style','redirect.bin',b'<!doctype html>',status=302,content_type='text/html')
+        self.fixture.resources[-1].update(request_origin_absent=True,request_origin_absent_asset='stylesheet')
+        for reverse in [False,True]:
+            if reverse:self.fixture.resources[1:]=reversed(self.fixture.resources[1:])
+            archive=self.fixture.archive({'schema':3});self.assertEqual(archive.document_origins,{'https://fixture.invalid'})
+            for role,body in [('Image',b'image'),('Script',b'script')]:
+                reply,_=archive.response({'url':url,'method':'GET','headers':{'Accept':'*/*'}},role);self.assertEqual(base64.b64decode(reply['body']),body)
+        (self.fixture.root/'image.bin').write_bytes(b'changed')
+        with self.assertRaisesRegex(replay.ReplayError,'replay_body_changed'):archive.response({'url':url,'method':'GET','headers':{'Accept':'*/*'}},'Image')
+        self.assertIsNotNone(archive.response({'url':url,'method':'GET','headers':{'Accept':'*/*'}},'Script')[0])
+
+    def test_anonymous_json_other_type_requires_an_actual_document_preload_declaration(self):
+        url='https://cdn.fixture.invalid/data'
+        html=('<!doctype html><html><head><link rel=preload as=fetch crossorigin=anonymous href="'+url+'"></head><body></body></html>').encode()
+        self.fixture.add('https://fixture.invalid/declared','declaration.html',html,content_type='text/html')
+        document=self.fixture.resources[-1]
+        self.fixture.add(url,'data.json',b'{}',content_type='application/json');self.fixture.resources[-1].update(request_origin_absent=True,request_origin_absent_asset='json')
+        archive=self.fixture.archive({'schema':3});self.assertIn(url,archive.fetch_preloads)
+        request={'url':url,'method':'GET','headers':{'Accept':'*/*'}}
+        self.assertIsNotNone(archive.response(request,'Other')[0])
+        document['status']=302;document.update(request_origin_absent=True,request_origin_absent_asset='stylesheet')
+        archive=self.fixture.archive({'schema':3});self.assertNotIn(url,archive.fetch_preloads)
+        self.assertIsNone(archive.response(request,'Other')[0]);self.assertIsNotNone(archive.response(request,'Fetch')[0])
     def origin_variants(self):
         url='https://cdn.fixture.invalid/shared.css'
         headers=[{'name':'Content-Type','value':'text/css'},{'name':'Vary','value':'Origin'}]
@@ -600,6 +663,28 @@ class DiscoveryTests(unittest.TestCase):
     def report(self):
         self.assertFalse(self.broker.host({'id':99,'method':'SmartJobseeker.discoveryReport','params':{}}))
         return self.emitted[-1]['result']
+    def test_anonymous_asset_contexts_are_typed_bounded_and_never_inferred_from_malformed_headers(self):
+        self.broker.host({'id':1,'method':'Page.navigate','sessionId':'page','params':{'url':self.fixture.archive().entry_url}})
+        for resource_type,kind in [('Image','image'),('Font','font'),('Script','script'),('Fetch','json'),('Manifest','manifest')]:
+            url='https://cdn.fixture.invalid/'+kind
+            self.frame(url=url,method='GET',resource_type=resource_type,headers={'Accept':'*/*'})
+            self.assertEqual(self.report()['asset_origin_absent_assets'][url],kind)
+            for index,headers in enumerate([{}, {'Accept':'bad\nvalue'}, {'Accept':'*/*','accept':'*/*'}, {'Content-Length':'0'},{'Origin':'null'}]):
+                bad=url+str(index);self.frame(url=bad,method='GET',resource_type=resource_type,headers=headers)
+                self.assertNotIn(bad,self.report()['asset_origin_absent_assets'])
+        self.assertEqual(self.report()['schema'],3)
+        for index,headers in enumerate([{'Cookie':''},{'Authorization':''},{'Proxy-Authorization':''}]):
+            url='https://cdn.fixture.invalid/private'+str(index);self.frame(url=url,method='GET',resource_type='Image',headers=headers);self.assertNotIn(url,self.report()['urls'])
+        url='https://cdn.fixture.invalid/image'
+        self.frame(url=url,method='GET',resource_type='Font',headers={'Accept':'*/*'})
+        self.assertNotIn(url,self.report()['asset_origin_absent_assets']);self.assertEqual(len(self.report()['asset_request_variants'][url]),2)
+        self.frame(url=url,method='GET',resource_type='Media',headers={'Accept':'*/*'})
+        self.assertNotIn(url,self.report()['urls']);self.assertNotIn(url,self.report()['asset_request_variants'])
+
+    def test_anonymous_asset_proposals_share_the_existing_total_budget(self):
+        self.broker.host({'id':1,'method':'Page.navigate','sessionId':'page','params':{'url':self.fixture.archive().entry_url}})
+        for index in range(140):self.frame(url='https://cdn.fixture.invalid/'+str(index),method='GET',resource_type='Image',headers={'Accept':'*/*'})
+        value=self.report();self.assertEqual(len(value['urls']),128);self.assertEqual(len(value['asset_origin_absent_assets']),128);self.assertEqual(value['omitted_requests'],12)
     def test_initial_document_accept_observation_is_exact_anonymous_and_single_use(self):
         self.frame(resource_type='Document',url='https://fixture.invalid/form',method='GET',headers={'Accept':'text/html,application/xhtml+xml;q=0.9'})
         report=self.report();self.assertEqual(report['entry_document_requests'],1)
@@ -799,6 +884,9 @@ class DiscoveryTests(unittest.TestCase):
         other='https://cdn.fixture.invalid/reused.css'
         self.frame(url=other,method='GET',resource_type='Stylesheet',headers={'Accept':'text/css'})
         self.frame(url=other,method='GET',resource_type='Script',headers={'Accept':'*/*'})
+        self.assertIn(other,self.report()['urls']);self.assertEqual(self.report()['schema'],3)
+        self.assertEqual(len(self.report()['asset_request_variants'][other]),2)
+        self.frame(url=other,method='GET',resource_type='Other',headers={})
         self.assertNotIn(other,self.report()['urls'])
 
     def test_origin_conflict_tombstones_share_the_fixed_proposal_budget(self):

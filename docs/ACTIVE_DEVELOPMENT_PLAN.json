@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "reviewed_on": "2026-11-13",
-  "reviewed_source": "14bb31ad19b13e87c3cab98ebbf3a629e270ed60",
+  "reviewed_source": "52462835c658ca33f15bd20cd9dcdab3f3167ebc",
   "goal": "Continue the existing active Smart Jobseeker product-development goal",
   "plan": "docs/COMPLETION_PLAN_2026-11-11.md",
   "assessment": "docs/REPO_STATE_REVIEW_2026-11-11.md",
@@ -157,16 +157,17 @@
         "docs/g1/CONTAINED_DIALOG_PROGRESSION_2026-11-13.md",
         "docs/g1/SCOPED_MAPPING_AND_DEEP_DISCOVERY_2026-11-13.md",
         "docs/g1/REQUEST_REPRESENTATION_VARIANTS_2026-11-13.md",
-        "docs/g1/INSPECTOR_REQUEST_CONTEXT_2026-11-13.md"
+        "docs/g1/INSPECTOR_REQUEST_CONTEXT_2026-11-13.md",
+        "docs/g1/ANONYMOUS_ASSET_CONTEXTS_2026-11-13.md"
       ],
       "execution_batch": "B",
       "steps": [
-        "Classify retained missing resources by actual native request context, response MIME/Vary and source permission; separate repairable public assets from server-dependent writes.",
-        "Repair demonstrated generic representation gaps only with exact independently collected context and bounded refusal tests, then native fixture and fresh permitted source qualification.",
-        "Qualify earlier and untouched saved workflows with independent requiredness/answer truth; keep delayed POSTs, missing server state and uncertain controls manual.",
-        "Retain context-readiness warnings, source/engine/model identity and resource teardown evidence; keep R02 and remaining acceptance criteria open."
+        "Measure saved-copy replay deltas without actions and bind them to native form/dialog/visual identities; retain exact source and scope, avoiding unchanged model reruns.",
+        "Use current contracts and primary research to choose a generic repair for demonstrated invalidation or representation gaps; preserve missing-resource visibility, external-write isolation and uncertain-state outcomes.",
+        "Qualify adversarial scripted-submit, stale, credential/body, wrong-target and changed-value cases before native earlier/untouched workflows. No unsupported server response may be invented.",
+        "Continue independent requiredness/answer/workflow truth collection with R02; preserve remaining acceptance and resource-lifecycle obligations."
       ],
-      "next_action": "Diagnose the remaining unsupported image/font/stylesheet request representations using retained native response Vary, MIME and request-context evidence. Establish bounded exact anonymous resource-context proof before any expansion; preserve credential, body, POST, unknown Origin and ambiguous-variant refusals. Current local12B saved-source run still stops on replay gaps before optional dialog action; do not repeatedly rerun it unchanged. Requiredness, custom controls and independent representative/held-out workflow truth remain open.",
+      "next_action": "Diagnose passive replay-gap growth blocking the saved-source optional-dialog stage: distinguish invalidated native form/dialog evidence from unrelated background requests using retained request types, sealed identities and bounded timing observations. Preserve all no-write, stale-evidence, submission and unknown-response refusals; do not declare missing responses harmless or loosen action gates without proof and adversarial qualification. Independently research the remaining stylesheet Sec-Fetch-* Vary context using actual native header evidence, without guessed/overridden headers. Keep server-dependent POSTs and unverified workflows manual.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "completed_scopes": [
         "Observed absent-Origin GET Stylesheet binding and strict capture/replay proof; malformed/conflicting/cross-type cases refused.",
@@ -178,7 +179,8 @@
         "Contained optional-dialog inventory, local semantic proposal, before/after visual review and sealed native closure witness; 7-case native adversarial qualification, two final fictional model intent checks, explicit saved-employer replay refusal and compiled record UI at four widths. No field/workflow or held-out completion credit.",
         "Shared eight-pass discovery ceiling with unchanged session budgets/early stopping; fictional native six-script chain observes the final form in7passes. Fresh permitted source gains4resources (34/42requests), stopsReviewRequired after6passes, retains10controls/3walls and all request/context barriers.",
         "Versioned independently captured disjoint request representations; native same-URL Origin/absent-Origin Stylesheet replay verifies both styles, 3 representations/2 URLs/5 simulated requests. Legacy deep and embedded checks pass. Fresh real saved source remains34URLs/42requests,10controls/3walls with delayed variant/POST/resource gaps; no workflow or held-out credit.",
-        "Native cause identified: CSS inspector activation creates an absent-Origin stylesheet request. Post-load inspection now occurs within discovery, with pending inspection explicitly review-required and visible in the client. Fresh source35representations/34URLs/43requests writesversion2 and removes that final-inventory mismatch;10controls/3walls and other resource/POST gaps remain. Three native inspector/variant cases, legacy native regressions, workspace1354/604ignored and four-width component checks pass. Changed-source local12B proposes optional decline but stopsbeforeaction on replaygap;0entries, noworkflow/heldout credit."
+        "Native cause identified: CSS inspector activation creates an absent-Origin stylesheet request. Post-load inspection now occurs within discovery, with pending inspection explicitly review-required and visible in the client. Fresh source35representations/34URLs/43requests writesversion2 and removes that final-inventory mismatch;10controls/3walls and other resource/POST gaps remain. Three native inspector/variant cases, legacy native regressions, workspace1354/604ignored and four-width component checks pass. Changed-source local12B proposes optional decline but stopsbeforeaction on replaygap;0entries, noworkflow/heldout credit.",
+        "Typed anonymous asset proof and version3 archives now support observed script/style/font/image/JSON/manifest categories with compatible MIME and exact native GET/header context. Document/preload provenance excludes asset redirects and non-document replies. Native script+SVG+JSON fixture renders2controls/0entries with0refusals; earlier inspector/deep/frame cases pass. Fresh source38representations/37URLs from43requests retains3images, visibly restores logo/background and reducesmissingresponse9to3;10controls/3walls remain, no workflow/held-out credit. Workspace1357passed/605ignored, portable72 and final focused/native/Clippy/build/fmt pass."
       ],
       "start_requirements": [
         "R02 input-binding protocol exists; full representative/held-out collection is not required to begin this rendering repair.",

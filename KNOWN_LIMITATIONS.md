@@ -10,6 +10,15 @@ frame/shadow traversal, candidate-file import, structured history and semantic
 fit assessment also exist. Their broad qualification and recovery limits remain
 open; the earlier statements that those mechanisms are absent are superseded.
 
+Current anonymous-asset continuation, 2026-11-13: typed request proof repairs the
+three rejected images below. Fresh source now has 38 representations for 37 URLs,
+with the employer logo/background rendered and missing-response refusals reduced
+from nine to three. The remaining stylesheet Vary context, delayed POST and
+non-document request still require review; ten controls and three walls remain.
+Font/manifest category unit coverage does not establish font decoding or native
+manifest-install behavior. No model run or full-workflow score was repeated.
+[Evidence](docs/g1/ANONYMOUS_ASSET_CONTEXTS_2026-11-13.md).
+
 Current inspector-context continuation, 2026-11-13: the stylesheet mismatch below
 is now repaired by observing post-load CSS inspection during collection. Fresh
 source with 35 representations for 34 URLs removes that refusal. Missing imagery,

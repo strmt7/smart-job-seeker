@@ -1,3 +1,14 @@
+## Anonymous asset request contexts — 2026-11-13
+
+Typed native anonymous-GET proof now preserves image, script and other supported
+asset categories using version 3 archives. The fresh saved employer page retains
+three formerly rejected images and visibly restores its logo/background. Missing
+response refusals decrease from nine to three; ten controls and three review walls
+remain. The native script/image/JSON fixture renders two fields with no refusals
+or entries. Workspace: 1,357 passed, 605 ignored; portable replay: 72 passed.
+Final focused/native, Clippy, build and format checks pass. No workflow, held-out
+or release-readiness claim. [Evidence](docs/g1/ANONYMOUS_ASSET_CONTEXTS_2026-11-13.md).
+
 ## Inspect stylesheet request contexts — 2026-11-13
 
 Discovery now observes the CSS-inspector request that final screenshots create.

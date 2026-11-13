@@ -123,6 +123,51 @@ pub enum AssetKind {
     Json,
     Manifest,
 }
+impl AssetKind {
+    pub(crate) fn accepts_mime(self, mime: &str) -> bool {
+        let Some((major, minor)) = mime.split_once('/') else {
+            return false;
+        };
+        if mime.len() > 256
+            || [major, minor].iter().any(|part| {
+                part.is_empty()
+                    || *part == "*"
+                    || !part
+                        .bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || b"!#$%&'*+.^_`|~-".contains(&c))
+            })
+        {
+            return false;
+        }
+        match self {
+            Self::Script => matches!(
+                mime,
+                "text/javascript"
+                    | "application/javascript"
+                    | "text/ecmascript"
+                    | "application/ecmascript"
+                    | "application/x-javascript"
+            ),
+            Self::Stylesheet => mime == "text/css",
+            Self::Font => {
+                mime.starts_with("font/")
+                    || matches!(
+                        mime,
+                        "application/font-woff"
+                            | "application/font-sfnt"
+                            | "application/vnd.ms-fontobject"
+                            | "application/x-font-ttf"
+                            | "application/octet-stream"
+                    )
+            }
+            Self::Image => mime.starts_with("image/"),
+            Self::Json | Self::Manifest => {
+                mime == "application/json"
+                    || mime.starts_with("application/") && mime.ends_with("+json")
+            }
+        }
+    }
+}
 
 #[cfg(any(windows, test))]
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -131,6 +176,8 @@ pub(crate) struct AssetRequestVariant {
     pub kinds: std::collections::BTreeSet<AssetKind>,
     pub request_origin: Option<String>,
     pub origin_absent_stylesheet: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_absent_asset: Option<AssetKind>,
 }
 #[cfg(any(windows, test))]
 #[derive(serde::Deserialize)]
@@ -146,6 +193,8 @@ pub(crate) struct Probe {
     pub asset_request_origins: std::collections::BTreeMap<String, String>,
     #[serde(default)]
     pub asset_origin_absent_stylesheets: std::collections::BTreeSet<String>,
+    #[serde(default)]
+    pub asset_origin_absent_assets: std::collections::BTreeMap<String, AssetKind>,
     #[serde(default)]
     pub asset_request_variants: std::collections::BTreeMap<String, Vec<AssetRequestVariant>>,
     #[serde(default)]
@@ -182,15 +231,27 @@ impl Probe {
             .fold(self.unmanaged_child_sessions, |a, b| a.saturating_add(*b))
     }
     pub(crate) fn valid(&self) -> bool {
-        matches!(self.schema, 1 | 2)
-            && (self.schema == 2 || self.asset_request_variants.is_empty())
+        matches!(self.schema, 1..=3)
+            && (self.schema >= 2 || self.asset_request_variants.is_empty())
+            && (self.schema == 3
+                || self.asset_origin_absent_assets.is_empty()
+                    && self
+                        .asset_request_variants
+                        .values()
+                        .flatten()
+                        .all(|v| v.origin_absent_asset.is_none()))
             && self.proposed_requests() <= 128
-            && serde_json::to_vec(&self.asset_request_variants).is_ok_and(|v| v.len() <= 128 * 1024)
+            && serde_json::to_vec(&(
+                &self.asset_request_variants,
+                &self.asset_origin_absent_assets,
+            ))
+            .is_ok_and(|v| v.len() <= 128 * 1024)
             && self.asset_request_variants.iter().all(|(url, variants)| {
                 self.assets.contains_key(url)
                     && !self.child_documents.contains(url)
                     && !self.asset_request_origins.contains_key(url)
                     && !self.asset_origin_absent_stylesheets.contains(url)
+                    && !self.asset_origin_absent_assets.contains_key(url)
                     && (2..=8).contains(&variants.len())
                     && variants
                         .iter()
@@ -204,13 +265,26 @@ impl Probe {
                             && (origin.is_some_and(|s| {
                                 waypoint_net::PublicRequestOrigin::parse(s).is_ok()
                             }) && !variant.origin_absent_stylesheet
+                                && variant.origin_absent_asset.is_none()
                                 || origin.is_none()
                                     && variant.origin_absent_stylesheet
+                                    && variant.origin_absent_asset.is_none()
                                     && variant.kinds.len() == 1
-                                    && variant.kinds.contains(&AssetKind::Stylesheet))
-                            && variants[..index]
-                                .iter()
-                                .all(|earlier| earlier.request_origin.as_deref() != origin)
+                                    && variant.kinds.contains(&AssetKind::Stylesheet)
+                                || origin.is_none()
+                                    && !variant.origin_absent_stylesheet
+                                    && variant.origin_absent_asset.is_some_and(|kind| {
+                                        variant.kinds.len() == 1 && variant.kinds.contains(&kind)
+                                    }))
+                            && variants[..index].iter().all(|earlier| {
+                                earlier.request_origin.as_deref() != origin
+                                    || earlier.origin_absent_asset.or(earlier
+                                        .origin_absent_stylesheet
+                                        .then_some(AssetKind::Stylesheet))
+                                        != variant.origin_absent_asset.or(variant
+                                            .origin_absent_stylesheet
+                                            .then_some(AssetKind::Stylesheet))
+                            })
                     })
             })
             && self.mode == "resource_discovery"
@@ -234,9 +308,18 @@ impl Probe {
             && self.asset_origin_absent_stylesheets.len() <= self.assets.len()
             && self.asset_origin_absent_stylesheets.iter().all(|url| {
                 !self.asset_request_origins.contains_key(url)
+                    && !self.asset_origin_absent_assets.contains_key(url)
                     && self.assets.get(url).is_some_and(|kinds| {
                         kinds.len() == 1 && kinds.contains(&AssetKind::Stylesheet)
                     })
+            })
+            && self.asset_origin_absent_assets.iter().all(|(url, kind)| {
+                !self.asset_request_origins.contains_key(url)
+                    && !self.asset_origin_absent_stylesheets.contains(url)
+                    && self
+                        .assets
+                        .get(url)
+                        .is_some_and(|kinds| kinds.len() == 1 && kinds.contains(kind))
             })
             && self.preload_projection_failures <= 512
             && self.entry_document_requests <= 128
@@ -398,6 +481,52 @@ pub(crate) fn render(
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn anonymous_asset_contexts_are_versioned_observed_and_nonoverlapping() {
+        let url = "https://cdn.fixture.invalid/logo";
+        let base = json!({"schema":3,"mode":"resource_discovery","urls":[url],"assets":{url:["image"]},"asset_origin_absent_assets":{url:"image"},"omitted_requests":0,"ineligible_requests":0,"pending_commands":0,"unsupported_targets":{},"unreplayed_transports":0,"unmanaged_child_sessions":0});
+        assert!(serde_json::from_value::<Probe>(base.clone())
+            .unwrap()
+            .valid());
+        for (field, value) in [
+            ("schema", json!(2)),
+            ("schema", json!(0)),
+            ("schema", json!(4)),
+            ("assets", json!({url:["font"]})),
+            (
+                "asset_request_origins",
+                json!({url:"https://fixture.invalid"}),
+            ),
+            ("asset_origin_absent_stylesheets", json!([url])),
+            (
+                "asset_origin_absent_assets",
+                json!({"https://unobserved.invalid/image":"image"}),
+            ),
+        ] {
+            let mut candidate = base.clone();
+            candidate[field] = value;
+            assert!(!serde_json::from_value::<Probe>(candidate).unwrap().valid());
+        }
+        let mut variants = base;
+        variants["asset_origin_absent_assets"] = json!({});
+        variants["assets"] = json!({url:["image","font"]});
+        variants["asset_request_variants"] = json!({url:[{"kinds":["image"],"request_origin":null,"origin_absent_stylesheet":false,"origin_absent_asset":"image"},{"kinds":["font"],"request_origin":null,"origin_absent_stylesheet":false,"origin_absent_asset":"font"}]});
+        assert!(serde_json::from_value::<Probe>(variants.clone())
+            .unwrap()
+            .valid());
+        for change in [
+            json!({"kinds":["font"]}),
+            json!({"request_origin":"https://fixture.invalid"}),
+            json!({"origin_absent_stylesheet":true}),
+            json!({"origin_absent_asset":"font"}),
+        ] {
+            let mut candidate = variants.clone();
+            for (field, value) in change.as_object().unwrap() {
+                candidate["asset_request_variants"][url][0][field] = value.clone();
+            }
+            assert!(!serde_json::from_value::<Probe>(candidate).unwrap().valid());
+        }
+    }
     #[test]
     fn asset_observations_require_a_bounded_typed_subset_of_the_frontier() {
         let value = json!({"schema":1,"mode":"resource_discovery","urls":["https://cdn.fixture.invalid/a.js"],

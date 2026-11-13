@@ -385,6 +385,120 @@ struct VariantHttp {
     requests: Arc<Mutex<Vec<VariantRequest>>>,
     dropped: Arc<AtomicBool>,
 }
+#[test]
+#[ignore = "explicit zero-capability engine; anonymous script/image/question capture and offline rendering"]
+fn anonymous_assets_collect_and_render_without_live_transport() {
+    use crate::capture_discovery::{DiscoveryStop, MAX_DISCOVERY_ROUNDS};
+    let (mut config, folder, python) = qualification_config();
+    let entry = "https://fixture.invalid/assets";
+    let cdn = "https://cdn.fixture.invalid";
+    let wire = |body: &str, mime: &str, vary: bool| {
+        format!(
+            "HTTP/1.1 200 Fictional\r\nContent-Type: {mime}\r\nContent-Length: {}\r\n{}\r\n{body}",
+            body.len(),
+            if vary { "Vary: Origin\r\n" } else { "" }
+        )
+        .into_bytes()
+    };
+    let html=format!("<!doctype html><html lang=en><meta charset=utf-8><link rel=icon href=data:,><title>Fictional asset capture</title><style>body{{font:18px Arial;margin:24px}}label{{display:block;margin:16px 0}}img{{width:160px;height:120px}}</style><h1>Application details</h1><img id=logo alt='Fictional blue symbol' src={cdn}/logo.svg><form id=fields><label>Email<input type=email id=email></label></form><script src={cdn}/questions.js></script></html>");
+    let script="fetch('https://fixture.invalid/questions',{credentials:'omit'}).then(r=>r.json()).then(q=>{const label=document.createElement('label');label.textContent=q.label;const input=document.createElement('input');input.id='office';input.required=true;label.append(input);document.getElementById('fields').append(label)})";
+    let responses=BTreeMap::from([
+        ("https://fixture.invalid/robots.txt".into(),wire("User-agent: *\nAllow: /","text/plain",false)),
+        (format!("{cdn}/robots.txt"),wire("User-agent: *\nAllow: /","text/plain",false)),
+        (entry.into(),wire(&html,"text/html",false)),
+        (format!("{cdn}/logo.svg"),wire("<svg xmlns='http://www.w3.org/2000/svg' width='16' height='12'><rect width='16' height='12' fill='#1267bf'/></svg>","image/svg+xml",true)),
+        (format!("{cdn}/questions.js"),wire(script,"text/javascript",true)),
+        ("https://fixture.invalid/questions".into(),wire("{\"label\":\"Preferred office\"}","application/json",true)),
+    ]);
+    let calls = Arc::new(Mutex::new(vec![]));
+    let dropped = Arc::new(AtomicBool::new(false));
+    let mut capture = CaptureSession::with_transport(
+        &folder.join("anonymous-asset-capture"),
+        entry,
+        vec![
+            CaptureOrigin {
+                origin: "https://fixture.invalid".into(),
+                source: "user_supplied_url".into(),
+            },
+            CaptureOrigin {
+                origin: cdn.into(),
+                source: "user_supplied_url".into(),
+            },
+        ],
+        PermissionRegistry::from_json(waypoint_policy::INITIAL_REGISTRY_JSON).unwrap(),
+        CaptureBudget::default(),
+        Arc::new(AtomicBool::new(false)),
+        Box::new(RecordedHttp {
+            responses,
+            requests: calls.clone(),
+            dropped: dropped.clone(),
+        }),
+    )
+    .unwrap();
+    let discovery = capture
+        .discover_resources(&python, config.clone(), MAX_DISCOVERY_ROUNDS, 700)
+        .unwrap();
+    std::fs::write(
+        folder.join("anonymous-asset-discovery.private.json"),
+        serde_json::to_vec_pretty(&discovery).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(discovery.stopped, DiscoveryStop::NoNewRequests);
+    assert_eq!(discovery.rounds.len(), 3);
+    let frozen = capture.freeze().unwrap();
+    assert!(dropped.load(Ordering::Acquire));
+    assert_eq!(frozen.report.recorded_resources, 4);
+    assert_eq!(calls.lock().unwrap().len(), 6);
+    let manifest: Value =
+        serde_json::from_slice(&std::fs::read(frozen.snapshot.root.join("replay.json")).unwrap())
+            .unwrap();
+    assert_eq!(manifest["schema"], 3);
+    config.schema = 2;
+    config.content_root = frozen.snapshot.root;
+    config.content_files = frozen.snapshot.files;
+    config.entry = frozen.snapshot.entry;
+    config.replay_manifest = Some(frozen.snapshot.manifest);
+    let (mut browser, ready) = CdpDriver::launch_rehearsal(&python, config).unwrap();
+    assert!(ready.appcontainer && ready.capabilities == 0);
+    let result = (|| -> Result<Value, String> {
+        let form = browser.open(entry).map_err(|e| e.to_string())?;
+        assert_eq!(form.schema.fields.len(), 2);
+        assert_eq!(form.schema.fields[1].label, "Preferred office");
+        assert!(form.schema.fields[1].required);
+        let observed=browser.cdp.call("Runtime.evaluate",serde_json::json!({"expression":"JSON.stringify({imageComplete:document.getElementById('logo').complete,width:document.getElementById('logo').naturalWidth,height:document.getElementById('logo').naturalHeight})","returnByValue":true})).map_err(|e|e.to_string())?;
+        let image: Value = serde_json::from_str(
+            observed["result"]["value"]
+                .as_str()
+                .ok_or("Image observation unavailable")?,
+        )
+        .map_err(|e| e.to_string())?;
+        assert_eq!(
+            image,
+            serde_json::json!({"imageComplete":true,"width":16,"height":12})
+        );
+        assert_eq!(
+            browser
+                .rehearsal_replay_report()
+                .map_err(|e| e.to_string())?["blocked"],
+            0
+        );
+        std::fs::write(
+            folder.join("anonymous-assets-screenshot.base64"),
+            browser.screenshot_base64().map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(
+            serde_json::json!({"complete":true,"manifest_schema":3,"rounds":3,"recorded_resources":4,"transport_requests":6,"native_fields":2,"image":image,"fields_entered":0,"external_delivery":"not_performed"}),
+        )
+    })();
+    browser.execute(&BrowserCommand::Close).unwrap();
+    std::fs::write(
+        folder.join("anonymous-assets.private.json"),
+        serde_json::to_vec_pretty(&result.as_ref().unwrap()).unwrap(),
+    )
+    .unwrap();
+    assert!(result.is_ok());
+}
 impl Transport for VariantHttp {
     fn get(
         &mut self,

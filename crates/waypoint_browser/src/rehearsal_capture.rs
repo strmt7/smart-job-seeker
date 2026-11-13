@@ -1,5 +1,6 @@
 //! Build an offline replay archive from already-obtained public resource bytes.
 //! No transport, browser action, permission decision, cookies or live fallback.
+use crate::capture_discovery::AssetKind;
 use serde_json::{json, Value};
 #[cfg(any(windows, test))]
 use std::io::Read;
@@ -57,6 +58,7 @@ pub(super) struct SnapshotRequestBinding {
     origin: bool,
     preflight: bool,
     stylesheet: bool,
+    asset: Option<AssetKind>,
     accept: bool,
     requested_with_absent: bool,
 }
@@ -65,6 +67,16 @@ pub(super) enum SnapshotScope {
     #[default]
     Ordinary,
     OriginAbsentStylesheet,
+    OriginAbsentAsset(AssetKind),
+}
+impl SnapshotScope {
+    pub(super) fn anonymous_asset(self) -> Option<AssetKind> {
+        match self {
+            Self::Ordinary => None,
+            Self::OriginAbsentStylesheet => Some(AssetKind::Stylesheet),
+            Self::OriginAbsentAsset(kind) => Some(kind),
+        }
+    }
 }
 pub(super) fn snapshot_origin_binding(
     response: &CapturedResponse,
@@ -105,6 +117,11 @@ pub(super) fn snapshot_binding_scoped(
                 && !names.contains("access-control-request-method")
         });
     let stylesheet = matches!(scope, SnapshotScope::OriginAbsentStylesheet);
+    let asset = match scope {
+        SnapshotScope::OriginAbsentAsset(kind) => Some(kind),
+        _ => None,
+    };
+    let anonymous_asset = scope.anonymous_asset();
     let mime: Vec<_> = response
         .headers
         .iter()
@@ -124,7 +141,7 @@ pub(super) fn snapshot_binding_scoped(
             )
         });
     let redirect = matches!(response.status, 301 | 302 | 303 | 307 | 308);
-    let anonymous_navigation = !stylesheet
+    let anonymous_navigation = anonymous_asset.is_none()
         && response.request_method == "GET"
         && origin_absent
         && preflight_absent
@@ -142,23 +159,28 @@ pub(super) fn snapshot_binding_scoped(
                 )
             })
         });
-    if stylesheet {
+    if let Some(kind) = anonymous_asset {
         let mime: Vec<_> = response
             .headers
             .iter()
             .filter(|h| h.name.eq_ignore_ascii_case("content-type"))
             .collect();
-        let css = mime.len() == 1
+        let accepted = mime.len() == 1
             && std::str::from_utf8(&mime[0].value).is_ok_and(|v| {
                 v.split(';')
                     .next()
-                    .is_some_and(|v| v.trim().eq_ignore_ascii_case("text/css"))
+                    .is_some_and(|v| kind.accepts_mime(&v.trim().to_ascii_lowercase()))
             });
         let anonymous = names.as_ref().is_some_and(|names| {
             !names.iter().any(|name| {
                 matches!(
                     name.as_str(),
-                    "cookie" | "authorization" | "proxy-authorization"
+                    "cookie"
+                        | "authorization"
+                        | "proxy-authorization"
+                        | "content-length"
+                        | "transfer-encoding"
+                        | "content-type"
                 )
             })
         });
@@ -166,9 +188,9 @@ pub(super) fn snapshot_binding_scoped(
             || !origin_absent
             || !preflight_absent
             || !anonymous
-            || !(css || matches!(response.status, 301 | 302 | 303 | 307 | 308))
+            || !(accepted || matches!(response.status, 301 | 302 | 303 | 307 | 308))
         {
-            return Err("Absent-Origin stylesheet requires observed style scope and native anonymous GET evidence".into());
+            return Err("Absent-Origin asset requires observed type, compatible MIME and native anonymous GET evidence".into());
         }
     }
     if response.headers.iter().any(|h| {
@@ -180,14 +202,16 @@ pub(super) fn snapshot_binding_scoped(
             })
     }) {
         return Ok(SnapshotRequestBinding {
-            origin: stylesheet,
+            origin: anonymous_asset.is_some(),
             stylesheet,
+            asset,
             ..Default::default()
         });
     }
     let mut binding = SnapshotRequestBinding {
-        origin: stylesheet,
+        origin: anonymous_asset.is_some(),
         stylesheet,
+        asset,
         ..Default::default()
     };
     for header in response
@@ -237,7 +261,7 @@ pub(super) fn snapshot_binding_scoped(
     }
     if binding.origin
         && !origin_present
-        && !stylesheet
+        && anonymous_asset.is_none()
         && (response.request_method != "GET"
             || !(html || redirect && (binding.accept || binding.requested_with_absent)))
     {
@@ -266,10 +290,12 @@ fn variants_disjoint(left: &Value, right: &Value) -> bool {
             .or_else(|| (item["request_origin_absent"] == true).then(String::new))
     };
     let kind = |item: &Value| {
-        if item["request_origin_absent_stylesheet"] == true {
-            Some("Stylesheet")
+        if let Some(kind) = item["request_origin_absent_asset"].as_str() {
+            Some(kind.to_owned())
+        } else if item["request_origin_absent_stylesheet"] == true {
+            Some("stylesheet".to_owned())
         } else if item["request_origin_absent"] == true {
-            Some("Document")
+            Some("document".to_owned())
         } else {
             None
         }
@@ -533,6 +559,9 @@ impl SnapshotBuilder {
         if binding.stylesheet {
             resource["request_origin_absent_stylesheet"] = json!(true);
         }
+        if let Some(kind) = binding.asset {
+            resource["request_origin_absent_asset"] = json!(kind);
+        }
         if binding.preflight {
             resource["request_preflight_absent"] = json!(true);
         }
@@ -576,7 +605,7 @@ impl SnapshotBuilder {
         if !self.files.contains_key("index.html") {
             return Err("Snapshot entry has not been captured".into());
         }
-        let manifest = json!({"schema":if self.resources.len()>self.urls.len() {2}else{1},"body_representation":"decoded_http","entry_url":self.entry_url,"resources":self.resources});
+        let manifest = json!({"schema":if self.resources.iter().any(|r|r.get("request_origin_absent_asset").is_some()) {3}else if self.resources.len()>self.urls.len() {2}else{1},"body_representation":"decoded_http","entry_url":self.entry_url,"resources":self.resources});
         let bytes =
             serde_json::to_vec_pretty(&manifest).map_err(|_| "Cannot encode replay manifest")?;
         if bytes.len() > 1024 * 1024 {
@@ -646,6 +675,85 @@ mod tests {
                 .push("origin".into());
         }
         value
+    }
+    #[test]
+    fn version3_anonymous_assets_require_native_get_proof_and_compatible_mime() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut capture = builder(temp.path());
+        capture
+            .add(
+                "https://fixture.invalid/form",
+                response("<!doctype html>", "text/html", ""),
+            )
+            .unwrap();
+        for (index, kind, mime) in [
+            (0, AssetKind::Script, "text/javascript"),
+            (1, AssetKind::Stylesheet, "text/css"),
+            (2, AssetKind::Font, "font/woff2"),
+            (3, AssetKind::Image, "image/svg+xml"),
+            (4, AssetKind::Json, "application/json"),
+            (5, AssetKind::Manifest, "application/manifest+json"),
+        ] {
+            let mut valid = response("fictional", mime, "Vary: Origin\r\n");
+            valid.request_header_names = Some(vec!["host".into(), "accept".into()]);
+            let scope = SnapshotScope::OriginAbsentAsset(kind);
+            assert!(snapshot_origin_binding(&valid).is_err());
+            assert!(snapshot_binding_scoped(&valid, scope).is_ok());
+            for names in [
+                None,
+                Some(vec!["host".into(), "HOST".into()]),
+                Some(vec!["accept".into()]),
+                Some(vec!["host".into(), "origin".into()]),
+            ] {
+                let mut bad = valid.clone();
+                bad.request_header_names = names;
+                assert!(snapshot_binding_scoped(&bad, scope).is_err());
+            }
+            for field in [
+                "cookie",
+                "authorization",
+                "proxy-authorization",
+                "access-control-request-method",
+                "access-control-request-headers",
+                "content-length",
+                "transfer-encoding",
+                "content-type",
+            ] {
+                let mut bad = valid.clone();
+                bad.request_header_names
+                    .as_mut()
+                    .unwrap()
+                    .push(field.into());
+                assert!(snapshot_binding_scoped(&bad, scope).is_err());
+            }
+            let mut bad = valid.clone();
+            bad.request_method = "POST".into();
+            assert!(snapshot_binding_scoped(&bad, scope).is_err());
+            for mime in ["text/html", "image/*", "image/"] {
+                let mut bad = response("unproved", mime, "Vary: Origin\r\n");
+                bad.request_header_names = valid.request_header_names.clone();
+                assert!(snapshot_binding_scoped(&bad, scope).is_err());
+            }
+            let mut other = response("fictional", mime, "Vary: Origin, Sec-Fetch-Dest\r\n");
+            other.request_header_names = valid.request_header_names.clone();
+            assert!(snapshot_binding_scoped(&other, scope).is_err());
+            capture
+                .add_scoped(
+                    &format!("https://cdn.fixture.invalid/{index}"),
+                    valid,
+                    scope,
+                )
+                .unwrap();
+        }
+        let snapshot = capture.finish().unwrap();
+        let manifest: Value =
+            serde_json::from_slice(&fs::read(snapshot.root.join("replay.json")).unwrap()).unwrap();
+        assert_eq!(manifest["schema"], 3);
+        assert_eq!(manifest["resources"].as_array().unwrap().len(), 7);
+        assert_eq!(
+            manifest["resources"][4]["request_origin_absent_asset"],
+            "image"
+        );
     }
     #[test]
     fn versioned_variants_require_independent_disjoint_binding_before_writing() {
