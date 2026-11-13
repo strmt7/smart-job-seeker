@@ -22,6 +22,8 @@
 
 mod captured_frame;
 mod frame_identity;
+#[cfg(all(test, windows))]
+mod inline_frame_qualification;
 pub use captured_frame::{
     CapturedFrame, CapturedFrames, RecordedControlIdentity, RecordedFieldCapture,
     RecordedFieldKind, RecordedFieldObservation, RecordedFieldWitness, RecordedTargetCapture,
@@ -56,6 +58,13 @@ struct InspectedForm {
     walls: Vec<String>,
     reviews: Vec<waypoint_applications::driver::CompletionReview>,
     scope_identity: Option<String>,
+}
+
+struct InspectedDocument {
+    schema: waypoint_applications::form_mapping::FormSchema,
+    walls: Vec<String>,
+    reviews: Vec<waypoint_applications::driver::CompletionReview>,
+    pending_frames: bool,
 }
 
 fn is_stale_inspection_node(error: &CdpError) -> bool {
@@ -3687,14 +3696,20 @@ impl CdpDriver {
     /// Read the main document and a bounded number of accessible embedded documents.
     fn read_form(&mut self, url: &str) -> Result<InspectedForm, DriverError> {
         let root = self.document_with_frames(true)?;
-        let (mut schema, mut walls, mut reviews) = self.read_form_document(url, &root)?;
+        let InspectedDocument {
+            mut schema,
+            mut walls,
+            mut reviews,
+            mut pending_frames,
+        } = self.read_form_document(url, &root)?;
+        let mut inline_inspections = frame_identity::InlineFrameInspections::default();
         // The queue owns only the root and the few documents actually inspected.
         // Each selector binds every frame and document along its path.
         let started = Instant::now();
         let previous_timeout = self.cdp.timeout;
         self.cdp.timeout = Duration::from_secs(1);
-        // Bind native identities across the bounded traversal. This is not a
-        // completeness witness: all existing frame/shadow barriers stay intact.
+        // Identity and completed document inspections are separate evidence.
+        // Every unresolved frame and all other review barriers remain visible.
         let scope_before =
             document_has_embedded_scope(&root).then(|| self.frame_inspection_identity(&root));
         let inspected = (|| -> Result<(), DriverError> {
@@ -3767,8 +3782,13 @@ impl CdpDriver {
                     });
                     let Some(child) = child else { continue };
                     inspected_count += 1;
-                    let (mut embedded, mut embedded_walls, mut embedded_reviews) =
-                        self.read_form_document(url, &child)?;
+                    let InspectedDocument {
+                        schema: mut embedded,
+                        walls: mut embedded_walls,
+                        reviews: mut embedded_reviews,
+                        pending_frames: child_pending,
+                    } = self.read_form_document(url, &child)?;
+                    pending_frames |= child_pending;
                     if schema.fields.len().saturating_add(embedded.fields.len()) > 160 {
                         return Err(DriverError("Form has too many controls for one inspection; manual review is needed".into()));
                     }
@@ -3887,8 +3907,14 @@ impl CdpDriver {
                         continue;
                     };
                     inspected_count += 1;
-                    let (mut embedded, mut embedded_walls, mut embedded_reviews) =
-                        self.read_form_document(url, &child)?;
+                    let InspectedDocument {
+                        schema: mut embedded,
+                        walls: mut embedded_walls,
+                        reviews: mut embedded_reviews,
+                        pending_frames: child_pending,
+                    } = self.read_form_document(url, &child)?;
+                    pending_frames |= child_pending;
+                    inline_inspections.inspected(frame_backend, document_backend);
                     if schema.fields.len().saturating_add(embedded.fields.len()) > 160 {
                         return Err(DriverError("Form has too many controls for one inspection; manual review is needed".into()));
                     }
@@ -3909,6 +3935,7 @@ impl CdpDriver {
             }
             Ok(())
         })();
+        let mut frame_completeness = None;
         let scope_identity = if inspected.is_ok() {
             match scope_before {
                 Some(Ok(before)) => {
@@ -3916,7 +3943,10 @@ impl CdpDriver {
                         .document_with_frames(true)
                         .and_then(|root| self.frame_inspection_identity(&root));
                     match after {
-                        Ok(after) if before == after => before.digest().ok(),
+                        Ok(after) if before == after => {
+                            frame_completeness = inline_inspections.certify(&before, &after);
+                            before.digest().ok()
+                        }
                         _ => None,
                     }
                     .or_else(|| {
@@ -3939,6 +3969,17 @@ impl CdpDriver {
         };
         self.cdp.timeout = previous_timeout;
         inspected?;
+        let scope_identity = if pending_frames {
+            match frame_completeness {
+                Some(evidence) => Some(evidence.digest()?),
+                None => {
+                    walls.push(UNINSPECTED_FRAME_REVIEW.into());
+                    scope_identity
+                }
+            }
+        } else {
+            scope_identity
+        };
         walls.sort();
         walls.dedup();
         Ok(InspectedForm {
@@ -3953,14 +3994,7 @@ impl CdpDriver {
         &mut self,
         url: &str,
         root: &Value,
-    ) -> Result<
-        (
-            waypoint_applications::form_mapping::FormSchema,
-            Vec<String>,
-            Vec<waypoint_applications::driver::CompletionReview>,
-        ),
-        DriverError,
-    > {
+    ) -> Result<InspectedDocument, DriverError> {
         let datalists = static_datalists(root);
         let mut controls = vec![];
         let mut hidden_selectors = std::collections::HashSet::new();
@@ -3984,6 +4018,7 @@ impl CdpDriver {
         let mut next_nodes = Vec::new();
         let mut next_references = Vec::new();
         let mut frame_nodes = Vec::new();
+        let mut pending_frames = false;
         let mut shadow_nodes = Vec::new();
         let mut text = String::new();
         let mut possible_next_step = false;
@@ -4779,12 +4814,8 @@ impl CdpDriver {
                         value.pointer("/model/width").and_then(Value::as_f64) == Some(0.0)
                             || value.pointer("/model/height").and_then(Value::as_f64) == Some(0.0)
                     });
-                    if !empty
-                        && !wall_flags
-                            .iter()
-                            .any(|reason| reason == UNINSPECTED_FRAME_REVIEW)
-                    {
-                        wall_flags.push(UNINSPECTED_FRAME_REVIEW.into());
+                    if !empty {
+                        pending_frames = true;
                     }
                 }
             }
@@ -5694,7 +5725,12 @@ impl CdpDriver {
             multi_step: possible_next_step,
             steps: 1,
         };
-        Ok((schema, walls, reviews))
+        Ok(InspectedDocument {
+            schema,
+            walls,
+            reviews,
+            pending_frames,
+        })
     }
 
     /* ------------------------------- actions -------------------------------- */

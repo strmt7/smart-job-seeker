@@ -1,5 +1,14 @@
 # Known limitations register (T050)
 
+The [inline-frame continuation](docs/g1/INLINE_FRAME_COMPLETENESS_2026-11-13.md)
+adds native inspection-completeness evidence and bounded same-origin field entry,
+including inherited documents. Fifteen native cases and the four-context radio
+integration pass; Windows workspace 1,371 passed / 611 ignored, Clippy/build/fmt
+pass. Local-model frame accuracy, stable logical frame evaluation keys,
+target-less child entry and whole-workflow/held-out evidence remain unfinished.
+The earlier unconfirmed shutdown remains an R01 finding; later clean runs do not
+explain its cause.
+
 The [native frame-identity continuation](docs/g1/NATIVE_FRAME_IDENTITY_2026-11-13.md)
 binds fresh loader/owner/document/ancestry evidence while preserving all frame
 review barriers. Local validation passes: 1,365 workspace tests, 610 ignored,

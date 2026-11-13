@@ -132,6 +132,7 @@ mod windows {
 
     pub struct RehearsalOwner {
         commands: Option<SyncSender<OwnerCommand>>,
+        failure: Arc<Mutex<Option<String>>>,
     }
 
     pub struct PipeTransport {
@@ -147,6 +148,27 @@ mod windows {
         }
     }
 
+    fn cleanup_error(state: &Arc<Mutex<Option<String>>>, fallback: &str) -> CdpError {
+        let detail = state.lock().ok().and_then(|state| state.clone());
+        CdpError(match detail {
+            Some(detail) => format!("{fallback}: {detail}"),
+            None => fallback.to_owned(),
+        })
+    }
+
+    #[test]
+    fn failed_cleanup_preserves_the_native_owner_failure() {
+        let state = Arc::new(Mutex::new(None));
+        assert_eq!(
+            cleanup_error(&state, "Cleanup not confirmed").0,
+            "Cleanup not confirmed"
+        );
+        failure(&state, "Native worker exit was incomplete");
+        assert_eq!(
+            cleanup_error(&state, "Cleanup not confirmed").0,
+            "Cleanup not confirmed: Native worker exit was incomplete"
+        );
+    }
     fn recover_after_failure(
         python: &std::path::Path,
         script: &std::path::Path,
@@ -507,6 +529,7 @@ mod windows {
             }
             let mut owner = Self {
                 commands: Some(commands.clone()),
+                failure: state.clone(),
             };
             let evidence = match startup.recv_timeout(Duration::from_secs(65)) {
                 Ok(Ok(evidence)) => evidence,
@@ -535,10 +558,10 @@ mod windows {
             let (reply, received) = mpsc::sync_channel(1);
             commands
                 .try_send(OwnerCommand::Stop(reply))
-                .map_err(|_| CdpError("Rehearsal owner is unavailable".into()))?;
+                .map_err(|_| cleanup_error(&self.failure, "Rehearsal owner is unavailable"))?;
             received
                 .recv_timeout(Duration::from_secs(8))
-                .map_err(|_| CdpError("Rehearsal cleanup was not confirmed".into()))?
+                .map_err(|_| cleanup_error(&self.failure, "Rehearsal cleanup was not confirmed"))?
                 .map_err(CdpError)
         }
     }

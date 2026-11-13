@@ -109,89 +109,18 @@ fn centered_radio_context_preserves_question_and_native_choice() {
                 return Err(DriverError("Radio fixture native field count/requiredness differs from the authored source".into()));
             }
             let selector = form.schema.fields[0].selector.clone();
-            if name == "same-origin" {
-                // This existing scope barrier is not repaired by a pixel crop.
-                // Preserve the refusal rather than treating visible fields as
-                // proof that every embedded scope was completely inspected.
-                if !form.independent_field_entry_blocked()
-                    || !form
+            if name == "same-origin"
+                && (form.independent_field_entry_blocked()
+                    || form
                         .walls
                         .iter()
                         .any(|wall| wall == crate::UNINSPECTED_FRAME_REVIEW)
-                {
-                    return Err(DriverError(
-                        "Same-origin scope qualification needs reassessment".into(),
-                    ));
-                }
-                let before = driver.observed_non_read_requests()?;
-                let mut reviewed = false;
-                let attempted = driver.rehearse_recorded_field_reviewed(
-                    &form,
-                    &selector,
-                    "Canada",
-                    &[],
-                    |_| {
-                        reviewed = true;
-                        Ok(())
-                    },
-                );
-                if attempted.is_ok()
-                    || reviewed
-                    || driver.inspect_current()?.schema != form.schema
-                    || driver.observed_non_read_requests()? != before
-                    || driver
-                        .trace
-                        .iter()
-                        .any(|event| event.starts_with("clicked"))
-                {
-                    return Err(DriverError(
-                        "Uninspected inline scope reached a radio interaction".into(),
-                    ));
-                }
-                let original = observed.map_err(|_| review())?;
-                driver
-                    .cdp
-                    .call(
-                        "Runtime.evaluate",
-                        json!({"expression":"document.querySelector('iframe').hidden = true"}),
-                    )
-                    .map_err(derr)?;
-                let hidden_root = driver.document_with_frames(true)?;
-                let hidden = driver.frame_inspection_identity(&hidden_root)?;
-                if hidden == original || driver.inspect_current()? == form {
-                    return Err(DriverError(
-                        "A hidden frame retained its old native scope identity".into(),
-                    ));
-                }
-                driver.cdp.call("Runtime.evaluate",json!({"expression":"document.querySelector('iframe').hidden = false; document.querySelector('iframe').replaceWith(document.querySelector('iframe').cloneNode(true))"})).map_err(derr)?;
-                let mut replacement = None;
-                for _ in 0..12 {
-                    driver
-                        .cdp
-                        .pump_checked(Duration::from_millis(100))
-                        .map_err(derr)?;
-                    let root = driver.document_with_frames(true)?;
-                    if let Ok(current) = driver.frame_inspection_identity(&root) {
-                        if current != original {
-                            replacement = Some(current);
-                            break;
-                        }
-                    }
-                }
-                let replacement = replacement.ok_or_else(review)?;
-                if driver.inspect_current()? == form
-                    || driver
-                        .trace
-                        .iter()
-                        .any(|event| event.starts_with("clicked"))
-                {
-                    return Err(DriverError(
-                        "A replaced frame retained the prior inspection".into(),
-                    ));
-                }
-                return Ok(
-                    json!({"document":name,"status":"needs_review","reason":"uninspected_inline_scope","fields_entered":0,"external_delivery":"not_performed","scope":"Existing refusal preserved; native identity changes only, no crop or model success credit","native_identity_changes":{"hidden":hidden.digest()?,"replacement":replacement.digest()?,"original":original.digest()?,"old_form_differs_from_fresh":true}}),
-                );
+                    || !selector.starts_with("waypoint-frame:"))
+            {
+                return Err(DriverError(
+                    "A fully inspected inline frame did not receive bounded entry eligibility"
+                        .into(),
+                ));
             }
             let mut before = None;
             phase = "rehearse_radio";

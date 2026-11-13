@@ -1,5 +1,5 @@
-//! Native frame identity only. This does not certify inspection completeness or
-//! discharge any embedded-document review barrier.
+//! Native frame identity and a separate bounded inline-inspection certificate.
+//! Identity alone never discharges an embedded-document review barrier.
 
 use super::*;
 use serde::Serialize;
@@ -16,6 +16,7 @@ struct FrameIdentity {
     loader: String,
     url: String,
     origin: String,
+    document_status: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -24,6 +25,85 @@ struct OwnerIdentity {
     document: Option<u64>,
     attributes: Vec<String>,
     ancestry: Vec<u64>,
+    rendering: Option<OwnerRendering>,
+    accessible_origin: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
+struct OwnerRendering {
+    access: Option<bool>,
+    needs_review: bool,
+}
+
+/// Records successful document inspections, never merely discovered frames.
+#[derive(Default)]
+pub(crate) struct InlineFrameInspections {
+    inspected: BTreeMap<u64, u64>,
+    invalid: bool,
+}
+
+#[derive(Serialize)]
+pub(crate) struct InlineFrameCompleteness {
+    native_identity: String,
+    inspected: BTreeMap<u64, u64>,
+}
+
+impl InlineFrameInspections {
+    pub(crate) fn inspected(&mut self, owner: u64, document: u64) {
+        if owner == 0 || document == 0 || self.inspected.insert(owner, document).is_some() {
+            self.invalid = true;
+        }
+    }
+
+    pub(crate) fn certify(
+        &self,
+        before: &FrameInspectionIdentity,
+        after: &FrameInspectionIdentity,
+    ) -> Option<InlineFrameCompleteness> {
+        if self.invalid || before != after {
+            return None;
+        }
+        let mut expected = BTreeMap::new();
+        for (frame_id, owner) in &before.owners {
+            match owner.rendering.as_ref()? {
+                OwnerRendering {
+                    access: None,
+                    needs_review: false,
+                } => (),
+                OwnerRendering {
+                    access: Some(true),
+                    needs_review: false,
+                } => {
+                    if !before.document_source_verified(frame_id, 4) {
+                        return None;
+                    }
+                    let document = owner.document?;
+                    if expected.insert(owner.backend, document).is_some() {
+                        return None;
+                    }
+                }
+                _ => return None,
+            }
+        }
+        // A pending visible frame cannot be certified by an empty or partial
+        // census. Opaque, uncertain and uninspected siblings remain barriers.
+        if expected.is_empty() || expected != self.inspected {
+            return None;
+        }
+        Some(InlineFrameCompleteness {
+            native_identity: before.digest().ok()?,
+            inspected: self.inspected.clone(),
+        })
+    }
+}
+
+impl InlineFrameCompleteness {
+    pub(crate) fn digest(&self) -> Result<String, DriverError> {
+        let bytes =
+            serde_json::to_vec(&json!({"kind":"inline_frame_inspection_v1","evidence":self}))
+                .map_err(|_| DriverError(FRAME_IDENTITY_REVIEW.into()))?;
+        Ok(waypoint_domain::sha256_hex(&bytes))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -60,11 +140,23 @@ fn frame_tree(tree: &Value) -> Result<BTreeMap<String, FrameIdentity>, DriverErr
         if frame.get("parentId").and_then(Value::as_str) != parent.as_deref() {
             return Err(DriverError(FRAME_IDENTITY_REVIEW.into()));
         }
+        let url = identity_text(frame, "url", 8192)?;
+        let inherited = url::Url::parse(&url).is_ok_and(|url| {
+            url.scheme() == "about"
+                && matches!(url.path(), "blank" | "srcdoc")
+                && url.query().is_none()
+        });
+        let loader = if frame["loaderId"].as_str() == Some("") && inherited {
+            String::new()
+        } else {
+            identity_text(frame, "loaderId", 256)?
+        };
         let identity = FrameIdentity {
             parent,
-            loader: identity_text(frame, "loaderId", 256)?,
-            url: identity_text(frame, "url", 8192)?,
+            loader,
+            url,
             origin: identity_text(frame, "securityOrigin", 8192)?,
+            document_status: None,
         };
         if frames.insert(id.clone(), identity).is_some() {
             return Err(DriverError(FRAME_IDENTITY_REVIEW.into()));
@@ -121,6 +213,8 @@ fn dom_owners(root: &Value) -> Result<BTreeMap<String, OwnerIdentity>, DriverErr
                 document,
                 attributes,
                 ancestry: ancestry.clone(),
+                rendering: None,
+                accessible_origin: None,
             };
             if owners.insert(frame, owner).is_some() {
                 return Err(DriverError(FRAME_IDENTITY_REVIEW.into()));
@@ -154,6 +248,89 @@ fn dom_owners(root: &Value) -> Result<BTreeMap<String, OwnerIdentity>, DriverErr
 }
 
 impl FrameInspectionIdentity {
+    fn observed_origin(&self, id: &str) -> Option<&str> {
+        let frame = self.frames.get(id)?;
+        let valid = |origin: &str| {
+            url::Url::parse(origin).is_ok_and(|url| {
+                matches!(url.scheme(), "http" | "https")
+                    && url.origin().ascii_serialization() == origin
+            })
+        };
+        let observed = self
+            .owners
+            .get(id)
+            .and_then(|owner| owner.accessible_origin.as_deref());
+        if valid(&frame.origin) {
+            if observed.is_some_and(|observed| observed != frame.origin) {
+                return None;
+            }
+            return Some(&frame.origin);
+        }
+        let url = url::Url::parse(&frame.url).ok()?;
+        if url.scheme() != "about"
+            || !matches!(url.path(), "srcdoc" | "blank")
+            || url.query().is_some()
+            || !matches!(frame.origin.as_str(), "://" | "null")
+        {
+            return None;
+        }
+        let owner = self.owners.get(id)?;
+        if owner.rendering.as_ref()?.access != Some(true) {
+            return None;
+        }
+        observed.filter(|origin| valid(origin))
+    }
+
+    fn document_source_verified(&self, id: &str, remaining: usize) -> bool {
+        let Some(frame) = self.frames.get(id) else {
+            return false;
+        };
+        let Some(origin) = self.observed_origin(id) else {
+            return false;
+        };
+        if let Some(parent_id) = &frame.parent {
+            if remaining == 0
+                || self.observed_origin(parent_id) != Some(origin)
+                || !self.document_source_verified(parent_id, remaining - 1)
+            {
+                return false;
+            }
+        }
+        if frame.url.starts_with("https://") || frame.url.starts_with("http://") {
+            return matches!(frame.document_status, Some(200..=299));
+        }
+        let Some(owner) = self.owners.get(id) else {
+            return false;
+        };
+        if frame.parent.is_none() || owner.document.is_none() {
+            return false;
+        }
+        let Ok(url) = url::Url::parse(&frame.url) else {
+            return false;
+        };
+        if url.scheme() != "about" || url.query().is_some() {
+            return false;
+        }
+        let attribute = |name: &str| {
+            owner
+                .attributes
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .find_map(|pair| (pair[0] == name).then_some(pair[1].as_str()))
+        };
+        match url.path() {
+            "srcdoc" => attribute("srcdoc").is_some(),
+            "blank" if attribute("srcdoc").is_none() => attribute("src").is_none_or(|src| {
+                src.trim().is_empty()
+                    || url::Url::parse(src.trim()).is_ok_and(|src| {
+                        src.scheme() == "about" && src.path() == "blank" && src.query().is_none()
+                    })
+            }),
+            _ => false,
+        }
+    }
+
     fn parse(root: &Value, tree: &Value) -> Result<Self, DriverError> {
         let frames = frame_tree(tree)?;
         let owners = dom_owners(root)?;
@@ -189,9 +366,32 @@ impl CdpDriver {
             .cdp
             .call("Page.getFrameTree", json!({}))
             .map_err(derr)?;
-        let identity = FrameInspectionIdentity::parse(root, &tree)?;
+        let mut identity = FrameInspectionIdentity::parse(root, &tree)?;
+        for (id, frame) in &mut identity.frames {
+            frame.document_status = self
+                .cdp
+                .events
+                .iter()
+                .rev()
+                .find_map(|(name, event)| {
+                    (name == "Network.responseReceived"
+                        && event.pointer("/params/frameId").and_then(Value::as_str) == Some(id)
+                        && event.pointer("/params/loaderId").and_then(Value::as_str)
+                            == Some(&frame.loader))
+                    .then(|| event.pointer("/params/status").and_then(Value::as_u64))
+                    .flatten()
+                })
+                .or_else(|| {
+                    self.document_status
+                        .as_ref()
+                        .filter(|(saved_frame, saved_loader, _)| {
+                            saved_frame == id && saved_loader == &frame.loader
+                        })
+                        .map(|(_, _, status)| *status)
+                });
+        }
         let started = Instant::now();
-        for (frame, owner) in &identity.owners {
+        for (frame, owner) in &mut identity.owners {
             if started.elapsed() > Duration::from_secs(8) {
                 return Err(DriverError(FRAME_IDENTITY_REVIEW.into()));
             }
@@ -204,8 +404,83 @@ impl CdpDriver {
             if observed["backendNodeId"].as_u64() != Some(owner.backend) {
                 return Err(DriverError(FRAME_IDENTITY_REVIEW.into()));
             }
+            let node = positive_id(&observed, "nodeId")?;
+            let (rendering, origin) = self.frame_owner_rendering(node)?;
+            owner.rendering = Some(rendering);
+            owner.accessible_origin = origin;
         }
         Ok(identity)
+    }
+
+    fn frame_owner_rendering(
+        &mut self,
+        node: u64,
+    ) -> Result<(OwnerRendering, Option<String>), DriverError> {
+        let resolved = self
+            .cdp
+            .call("DOM.resolveNode", json!({"nodeId":node}))
+            .map_err(derr)?;
+        let object = resolved
+            .pointer("/object/objectId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DriverError(FRAME_IDENTITY_REVIEW.into()))?
+            .to_owned();
+        let checked = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,
+            "functionDeclaration":r#"function() {
+                if (!this.isConnected) return null;
+                const box = this.getBoundingClientRect(), style = getComputedStyle(this);
+                let needs_review = false, accessible_origin=null, left=box.left, right=box.right, top=box.top, bottom=box.bottom;
+                for (let n=this, depth=0; n; n=n.parentElement) {
+                    if (++depth>64) return null;
+                    const s=getComputedStyle(n);
+                    if (Number(s.opacity)===0) needs_review=true;
+                    if (n!==this) {
+                        const r=n.getBoundingClientRect();
+                        if (['hidden','clip'].includes(s.overflowX)) {left=Math.max(left,r.left+n.clientLeft);right=Math.min(right,r.left+n.clientLeft+n.clientWidth);}
+                        if (['hidden','clip'].includes(s.overflowY)) {top=Math.max(top,r.top+n.clientTop);bottom=Math.min(bottom,r.top+n.clientTop+n.clientHeight);}
+                    }
+                }
+                if (!this.getClientRects().length || style.visibility==='hidden' || style.visibility==='collapse' || box.width<=0 || box.height<=0)
+                    return {access:null,needs_review,accessible_origin};
+                if (right<=left || bottom<=top || left>box.left+0.5 || right<box.right-0.5 || top>box.top+0.5 || bottom<box.bottom-0.5) needs_review=true;
+                let access=false;
+                try {access=this.contentDocument!==null;if(access){const origin=this.contentWindow.origin;if(typeof origin!=='string' || origin.length>8192)return null;accessible_origin=origin;}} catch (_) {}
+                let current = this, view = window, x = (box.left + box.right)/2, y = (box.top + box.bottom)/2;
+                for (let depth = 0; depth < 12; depth++) {
+                    if (x<0 || y<0 || x>=view.innerWidth || y>=view.innerHeight) return {access,needs_review:true,accessible_origin};
+                    const root = current.getRootNode();
+                    const hit = typeof root.elementFromPoint === 'function' ? root.elementFromPoint(x,y) : null;
+                    if (!hit || (hit!==current && !current.contains(hit))) return {access,needs_review:true,accessible_origin};
+                    if (root.nodeType===11 && root.host) {current=root.host;continue;}
+                    if (view===view.top) return {access,needs_review,accessible_origin};
+                    const owner=view.frameElement;
+                    if (!owner || view.parent.getComputedStyle(owner).transform!=='none') return {access,needs_review:true,accessible_origin};
+                    const bounds=owner.getBoundingClientRect();
+                    x+=bounds.left+owner.clientLeft;y+=bounds.top+owner.clientTop;
+                    current=owner;view=view.parent;
+                }
+                return {access,needs_review:true,accessible_origin};
+            }"#, "returnByValue":true}));
+        let released = self
+            .cdp
+            .call("Runtime.releaseObject", json!({"objectId":object}));
+        let checked = checked.map_err(derr)?;
+        released.map_err(derr)?;
+        let value = checked
+            .pointer("/result/value")
+            .filter(|value| value.get("access").is_some())
+            .ok_or_else(|| DriverError(FRAME_IDENTITY_REVIEW.into()))?;
+        if checked.get("exceptionDetails").is_some() {
+            return Err(DriverError(FRAME_IDENTITY_REVIEW.into()));
+        }
+        let origin = value
+            .get("accessible_origin")
+            .and_then(Value::as_str)
+            .filter(|origin| origin.len() <= 8192)
+            .map(str::to_owned);
+        let rendering = serde_json::from_value(value.clone())
+            .map_err(|_| DriverError(FRAME_IDENTITY_REVIEW.into()))?;
+        Ok((rendering, origin))
     }
 }
 
@@ -220,6 +495,170 @@ mod tests {
             ]}),
             json!({"frameTree":{"frame":{"id":"main","loaderId":"load-a","url":"https://example.invalid/","securityOrigin":"https://example.invalid"},"childFrames":[{"frame":{"id":"child","parentId":"main","loaderId":"load-b","url":"https://example.invalid/form","securityOrigin":"https://example.invalid"}}]}}),
         )
+    }
+
+    fn observed_fixture() -> FrameInspectionIdentity {
+        let (dom, tree) = fixture();
+        let mut observed = FrameInspectionIdentity::parse(&dom, &tree).unwrap();
+        observed.frames.get_mut("child").unwrap().document_status = Some(200);
+        observed.frames.get_mut("main").unwrap().document_status = Some(200);
+        observed.owners.get_mut("child").unwrap().rendering = Some(OwnerRendering {
+            access: Some(true),
+            needs_review: false,
+        });
+        observed
+    }
+
+    #[test]
+    fn inherited_empty_loader_is_explicit_and_still_needs_a_native_document() {
+        let (mut dom, mut tree) = fixture();
+        dom["children"][0]["attributes"] = json!(["src", "about:blank"]);
+        tree["frameTree"]["childFrames"][0]["frame"]["url"] = json!("about:blank");
+        tree["frameTree"]["childFrames"][0]["frame"]["loaderId"] = json!("");
+        let mut observed = FrameInspectionIdentity::parse(&dom, &tree).unwrap();
+        observed.frames.get_mut("main").unwrap().document_status = Some(200);
+        let owner = observed.owners.get_mut("child").unwrap();
+        owner.rendering = Some(OwnerRendering {
+            access: Some(true),
+            needs_review: false,
+        });
+        owner.accessible_origin = Some("https://example.invalid".into());
+        let mut ledger = InlineFrameInspections::default();
+        ledger.inspected(3, 4);
+        assert!(ledger.certify(&observed, &observed).is_some());
+        observed.owners.get_mut("child").unwrap().document = None;
+        assert!(ledger.certify(&observed, &observed).is_none());
+        tree["frameTree"]["childFrames"][0]["frame"]["loaderId"] = Value::Null;
+        assert!(FrameInspectionIdentity::parse(&dom, &tree).is_err());
+    }
+    #[test]
+    fn inline_inherited_documents_require_verified_parent_source_and_native_origin() {
+        let mut observed = observed_fixture();
+        observed.frames.get_mut("main").unwrap().document_status = Some(200);
+        let mut ledger = InlineFrameInspections::default();
+        ledger.inspected(3, 4);
+        for (url, attrs) in [
+            ("about:srcdoc", vec!["srcdoc", "<input>"]),
+            ("about:blank", vec!["src", "about:blank"]),
+        ] {
+            let mut inherited = observed.clone();
+            let child = inherited.frames.get_mut("child").unwrap();
+            child.url = url.into();
+            child.origin = "://".into();
+            inherited.owners.get_mut("child").unwrap().accessible_origin =
+                Some("https://example.invalid".into());
+            child.document_status = None;
+            inherited.owners.get_mut("child").unwrap().attributes =
+                attrs.into_iter().map(str::to_owned).collect();
+            assert!(ledger.certify(&inherited, &inherited).is_some());
+            inherited.frames.get_mut("main").unwrap().document_status = None;
+            assert!(ledger.certify(&inherited, &inherited).is_none());
+            inherited.frames.get_mut("main").unwrap().document_status = Some(200);
+            inherited.owners.get_mut("child").unwrap().accessible_origin = None;
+            assert!(ledger.certify(&inherited, &inherited).is_none());
+            inherited.owners.get_mut("child").unwrap().accessible_origin =
+                Some("https://other.invalid".into());
+            assert!(ledger.certify(&inherited, &inherited).is_none());
+        }
+        for (url, attrs) in [
+            ("about:srcdoc", vec![]),
+            ("about:blank", vec!["src", "https://other.invalid"]),
+            ("data:text/html,<input>", vec![]),
+        ] {
+            let mut unknown = observed.clone();
+            unknown.frames.get_mut("child").unwrap().url = url.into();
+            unknown.owners.get_mut("child").unwrap().attributes =
+                attrs.into_iter().map(str::to_owned).collect();
+            assert!(ledger.certify(&unknown, &unknown).is_none());
+        }
+    }
+    #[test]
+    fn inline_certificate_requires_exact_successful_document_inspections() {
+        let before = observed_fixture();
+        let mut ledger = InlineFrameInspections::default();
+        assert!(ledger.certify(&before, &before).is_none());
+        ledger.inspected(3, 4);
+        let complete = ledger.certify(&before, &before).unwrap();
+        assert_ne!(complete.digest().unwrap(), before.digest().unwrap());
+        let mut wrong = InlineFrameInspections::default();
+        wrong.inspected(3, 5);
+        assert!(wrong.certify(&before, &before).is_none());
+        ledger.inspected(3, 4);
+        assert!(ledger.certify(&before, &before).is_none());
+    }
+
+    #[test]
+    fn inline_certificate_never_promotes_opaque_unknown_or_changed_scopes() {
+        let before = observed_fixture();
+        let mut ledger = InlineFrameInspections::default();
+        ledger.inspected(3, 4);
+        let mut changed = before.clone();
+        changed.frames.get_mut("child").unwrap().loader = "next-loader".into();
+        assert!(ledger.certify(&before, &changed).is_none());
+        for rendering in [
+            None,
+            Some(OwnerRendering {
+                access: Some(false),
+                needs_review: false,
+            }),
+            Some(OwnerRendering {
+                access: Some(true),
+                needs_review: true,
+            }),
+            Some(OwnerRendering {
+                access: None,
+                needs_review: true,
+            }),
+        ] {
+            let mut unknown = before.clone();
+            unknown.owners.get_mut("child").unwrap().rendering = rendering;
+            assert!(ledger.certify(&unknown, &unknown).is_none());
+        }
+        let mut missing_document = before.clone();
+        missing_document.owners.get_mut("child").unwrap().document = None;
+        assert!(ledger
+            .certify(&missing_document, &missing_document)
+            .is_none());
+        for status in [None, Some(0), Some(404), Some(500)] {
+            let mut failed = before.clone();
+            failed.frames.get_mut("child").unwrap().document_status = status;
+            assert!(ledger.certify(&failed, &failed).is_none());
+        }
+        let mut changed_origin = before.clone();
+        changed_origin.frames.get_mut("child").unwrap().origin = "https://other.invalid".into();
+        assert!(ledger.certify(&changed_origin, &changed_origin).is_none());
+    }
+
+    #[test]
+    fn inline_certificate_accounts_for_every_sibling_and_hidden_owner() {
+        let mut before = observed_fixture();
+        let mut sibling = before.owners["child"].clone();
+        sibling.backend = 5;
+        sibling.document = Some(6);
+        before.owners.insert("sibling".into(), sibling);
+        before
+            .frames
+            .insert("sibling".into(), before.frames["child"].clone());
+        let mut ledger = InlineFrameInspections::default();
+        ledger.inspected(3, 4);
+        assert!(ledger.certify(&before, &before).is_none());
+        before.owners.get_mut("sibling").unwrap().rendering = Some(OwnerRendering {
+            access: None,
+            needs_review: false,
+        });
+        assert!(ledger.certify(&before, &before).is_some());
+        let mut changed = before.clone();
+        changed
+            .owners
+            .get_mut("sibling")
+            .unwrap()
+            .rendering
+            .as_mut()
+            .unwrap()
+            .access = Some(true);
+        assert!(ledger.certify(&before, &changed).is_none());
+        ledger.inspected(99, 100);
+        assert!(ledger.certify(&before, &before).is_none());
     }
 
     #[test]

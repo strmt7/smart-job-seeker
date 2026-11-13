@@ -1,3 +1,13 @@
+## Inline form entry - 2026-11-13
+
+Fully inspected same-origin inline documents now support bounded field entry,
+including inherited `srcdoc`/`about:blank` forms. Opaque, incomplete, covered,
+stale and unobserved/failed-response scopes retain review. Native qualification:
+15 cases, ten field readbacks, seven no-entry outcomes, all browsers closed;
+four-context radio integration also passes. Workspace 1,371 passed / 611 ignored;
+Clippy, build and fmt pass. [Evidence](g1/INLINE_FRAME_COMPLETENESS_2026-11-13.md).
+Local-model frame accuracy and whole-workflow/held-out qualification remain open.
+
 ## Embedded-document identity - 2026-11-13
 
 Native frame identity now participates in fresh inspection checks, including

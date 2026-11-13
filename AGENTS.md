@@ -260,6 +260,17 @@ used by development tools and tests. Do not add WSL or Docker as product require
 
 ## Real pitfalls already hit (don't rediscover these)
 
+- Inline-frame entry requires completed document inspections and current native
+  source/origin/rendering evidence; identity alone cannot clear a frame barrier.
+  Inherited `srcdoc`/`about:blank` frames may report `://` in the protocol origin.
+  Preserve that observation and require positive effective-origin/parent-source
+  evidence; never invent an HTTP success or infer an unknown network response.
+  See `docs/g1/INLINE_FRAME_COMPLETENESS_2026-11-13.md`.
+- Ordinary DOM reparenting can reload an iframe. An equal-schema stale-scope
+  fixture must feature-detect a state-preserving move and prove the unchanged
+  schema/review text on the actual engine. Do not weaken guards to make an
+  incorrectly authored mutation satisfy its premise.
+
 - Native frame identity uses backend owner/document IDs and loader identities,
   not transient frontend node handles. A parent session's `Page.getFrameTree`
   can omit an independently targeted child. Unavailable census evidence is not
