@@ -13,6 +13,13 @@ applications by the shipped local model. Search, documents, installation,
 recovery and whole-interface acceptance also remain open. A completion
 percentage or zero-defect claim would not be evidence-based.
 
+The [scoped mapping/deep discovery continuation](g1/SCOPED_MAPPING_AND_DEEP_DISCOVERY_2026-11-13.md)
+fixes the known contact-review output failure (0/3 to3/3 verified), retains the
+prior French6/7 and saved-employer4/6 outcomes, and discovers four more resources
+within existing time/byte/request budgets. Workspace1,350 passed/601ignored;
+resource variants, résumé vision, requiredness and unfamiliar workflows remain
+unqualified. R03 and R02 stay in progress; this does not establish release readiness.
+
 The [13 November dialog continuation](g1/CONTAINED_DIALOG_PROGRESSION_2026-11-13.md)
 adds native/local-vision optional closure only in isolated saved copies. Fictional
 intent checks pass; contact sensitivity remains 0/3 and the saved employer source

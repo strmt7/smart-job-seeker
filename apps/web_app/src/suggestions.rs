@@ -93,6 +93,19 @@ fn restore_model_selectors(
     }
 }
 
+// Grammar constrains identity/shape only; all semantic, sensitivity and native
+// validation below still applies, including for backends using the trait fallback.
+fn mapping_output_schema(descriptions: &[Value], keys: Option<&[&str]>) -> Value {
+    let ids: Vec<_> = descriptions.iter().map(|d| d["selector"].clone()).collect();
+    let selector = json!({"type":"string","enum":ids});
+    let mut schema = json!({"type":"object","properties":{"manual_review":{"type":"array","maxItems":descriptions.len(),"items":selector}},"required":["manual_review"],"additionalProperties":false});
+    if let Some(keys) = keys {
+        schema["properties"]["mappings"] = json!({"type":"array","maxItems":descriptions.len(),"items":{"type":"object","properties":{"selector":selector,"profile_key":{"type":"string","enum":keys}},"required":["selector","profile_key"],"additionalProperties":false}});
+        schema["required"] = json!(["mappings", "manual_review"]);
+    }
+    schema
+}
+
 // An autocomplete token identifies a data type, not whose data is requested.
 // The offline path only trusts it when the visible label also names the
 // applicant's own contact field. Unrecognized wording stays for review.
@@ -653,7 +666,12 @@ pub fn suggest_with_review(
             context_tags.push("form_choice");
         }
         inference.set_context_tags(&context_tags);
-        let response = match inference.generate_structured("form_mapping", &prompt, 1024) {
+        let response = match inference.generate_structured_with_schema(
+            "form_mapping",
+            &prompt,
+            1024,
+            &mapping_output_schema(descriptions, Some(&keys)),
+        ) {
             Ok((mut output, _)) => {
                 restore_model_selectors(&mut output, chunk, descriptions);
                 let mut record_review = |output: &Value, reviewed_fields: &[&waypoint_applications::form_mapping::FormField]| {
@@ -691,10 +709,11 @@ pub fn suggest_with_review(
                         } else {
                             sensitivity_repair_budget -= 1;
                             sensitivity_repairs_attempted += 1;
-                            match inference.generate_structured(
+                            match inference.generate_structured_with_schema(
                                 "form_sensitivity_review",
                                 &repair_prompt,
                                 512,
+                                &mapping_output_schema(small_descriptions, None),
                             ) {
                                 Ok((mut review, _)) => {
                                     restore_model_selectors(
@@ -1335,6 +1354,32 @@ fn validate_suggestions(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn mapping_grammar_binds_only_offered_ids_keys_and_required_review() {
+        let descriptions = vec![
+            serde_json::json!({"selector":"@waypoint-field-0"}),
+            serde_json::json!({"selector":"#input[name=\"Name & address\"]"}),
+        ];
+        let schema = super::mapping_output_schema(&descriptions, Some(&["email", "full_name"]));
+        let ids = serde_json::json!(["@waypoint-field-0", "#input[name=\"Name & address\"]"]);
+        assert_eq!(schema["properties"]["manual_review"]["items"]["enum"], ids);
+        assert_eq!(
+            schema["properties"]["mappings"]["items"]["properties"]["selector"]["enum"],
+            ids
+        );
+        assert_eq!(
+            schema["properties"]["mappings"]["items"]["properties"]["profile_key"]["enum"],
+            serde_json::json!(["email", "full_name"])
+        );
+        assert_eq!(
+            schema["required"],
+            serde_json::json!(["mappings", "manual_review"])
+        );
+        let review = super::mapping_output_schema(&descriptions, None);
+        assert!(review["properties"].get("mappings").is_none());
+        assert_eq!(review["properties"]["manual_review"]["maxItems"], 2);
+        assert_eq!(review["properties"]["manual_review"]["items"]["enum"], ids);
+    }
     #[test]
     #[ignore = "requires an already resident local model and resource preflight"]
     fn live_multilingual_ambiguity_and_eligibility_review() {

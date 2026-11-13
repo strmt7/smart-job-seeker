@@ -6,12 +6,12 @@ model mechanisms, but broad real-world application coverage and clean-host
 installation are not established. Older measured checkpoints retain their
 original source and fixture scopes.
 
-Latest verified hosted checkpoint: `ed5f9e9bded1c04f987a1e4fd15ea6c95dc65873`,
-with successful CI (43387268830), coverage (43387268763) and CodeQL (43387267976)
-verified in the 13 November continuation. The newer
-[contained dialog checkpoint](g1/CONTAINED_DIALOG_PROGRESSION_2026-11-13.md) has
-local native/model/client/workspace evidence, with replay and contact-review
-failures still open. The current source-bound queue records next work; historical
+Latest verified hosted checkpoint: `5b1c986370bc972c457785ffa16aeabf7aa9fcff`,
+with successful CI (43400124148), coverage (43400124204) and CodeQL (43400124363).
+The newer [scoped mapping/deep discovery batch](g1/SCOPED_MAPPING_AND_DEEP_DISCOVERY_2026-11-13.md)
+has local native/model/client/workspace evidence: the known contact case improves
+to3/3, while French6/7, saved-employer4/6 and its unverified résumé remain open.
+Resource variants and whole-workflow/held-out gates are incomplete. Historical
 measurements retain their original scopes.
 The original audit snapshot remains `4acb9a955bcb961ad7a27cb9538e77bb0e03a547`.
 Read the [repository assessment](REPO_STATE_REVIEW_2026-11-11.md) alongside this

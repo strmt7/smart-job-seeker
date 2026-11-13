@@ -75,6 +75,8 @@ mod letter_export;
 mod link_rank;
 mod local_advice;
 mod manual_job;
+#[cfg(windows)]
+mod mapping_diagnostics;
 mod model_install;
 mod model_preferences;
 mod model_start;

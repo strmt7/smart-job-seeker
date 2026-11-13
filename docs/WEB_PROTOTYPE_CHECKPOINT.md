@@ -1,3 +1,11 @@
+## Local-model mapping continuation — 2026-11-13
+
+The actual saved-copy record now shows three independently verified contact
+entries after a bounded native/visual dialog closure. The four-width headless
+check passes; salary stays manual. Deeper permitted capture and native response
+diagnostics expose remaining resource and résumé-vision limits.
+[Measured evidence](g1/SCOPED_MAPPING_AND_DEEP_DISCOVERY_2026-11-13.md).
+
 ## Contained dialog records — 2026-11-13
 
 The saved-copy interface now shows optional-dialog advice separately from

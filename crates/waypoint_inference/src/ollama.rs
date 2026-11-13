@@ -122,6 +122,8 @@ pub const KNOWN_SCHEMAS: &[(&str, &str)] = &[
 const PROBE_TIMEOUT_MS: u64 = 20_000;
 const GENERATE_TIMEOUT_MS: u64 = 300_000;
 
+type ResponseObserver = Box<dyn FnMut(&str, &Value) + Send>;
+
 pub struct OllamaInference {
     addr: SocketAddr,
     model: String,
@@ -130,6 +132,7 @@ pub struct OllamaInference {
     pub think: bool,
     cancel_flag: Arc<AtomicBool>,
     request_guard: Option<Arc<dyn Fn() -> Result<(), String> + Send + Sync>>,
+    response_observer: Option<ResponseObserver>,
 }
 
 impl OllamaInference {
@@ -144,6 +147,7 @@ impl OllamaInference {
             think: true,
             cancel_flag: Arc::new(AtomicBool::new(false)),
             request_guard: None,
+            response_observer: None,
         })
     }
 
@@ -164,6 +168,13 @@ impl OllamaInference {
         self.context_window = None;
         self.resident_context = true;
         self
+    }
+
+    /// Opt-in native generation diagnostics, before completion/JSON validation.
+    /// The caller must bound and protect retained data. No prompt is supplied;
+    /// observation never changes validation or grants permission to act.
+    pub fn set_response_observer(&mut self, observer: impl FnMut(&str, &Value) + Send + 'static) {
+        self.response_observer = Some(Box::new(observer));
     }
 
     /// Share an operation's cancellation without replacing its resource guard.
@@ -237,6 +248,74 @@ impl OllamaInference {
         }
         serde_json::from_slice(&bytes)
             .map_err(|e| InferenceError::StructuredOutputFailed(e.to_string()))
+    }
+    fn generate_formatted(
+        &mut self,
+        schema_name: &str,
+        prompt: &str,
+        max_output_tokens: u32,
+        format: Value,
+    ) -> Result<(Value, UsageReport), InferenceError> {
+        if self.cancelled() {
+            return Err(InferenceError::Cancelled);
+        }
+        if max_output_tokens == 0 {
+            return Err(InferenceError::BudgetExceeded);
+        }
+        // Measured pitfall (2026-09-26): with think:true + schema format on
+        // this runtime, reasoning consumed the entire budget (2238 thinking
+        // chars, response empty, done_reason=length). Structured generation
+        // therefore disables thinking by default; reasoning runs happen on
+        // plain prompts where the thinking field is expected. Callers who
+        // want reasoning before a structured result run two steps and pass
+        // their own synthesized context.
+        let mut body = serde_json::json!({
+            "model": self.model,
+            "prompt": prompt,
+            "stream": false,
+            "format": format,
+            "think": false,
+            "options": {"num_predict": max_output_tokens, "temperature": 0.0},
+        });
+        let context = if self.resident_context {
+            Some(
+                resident_context_from_ps(&self.get_json("/api/ps", 3000)?, &self.model)
+                    .map_err(InferenceError::RuntimeUnreachable)?,
+            )
+        } else {
+            self.context_window
+        };
+        if let Some(tokens) = context {
+            body["options"]["num_ctx"] = tokens.into();
+        }
+        let out = self.post_json("/api/generate", &body, GENERATE_TIMEOUT_MS)?;
+        if let Some(observer) = &mut self.response_observer {
+            observer(schema_name, &out);
+        }
+        if self.cancelled() {
+            return Err(InferenceError::Cancelled);
+        }
+        require_natural_stop(&out)?;
+        let text = out
+            .get("response")
+            .and_then(|r| r.as_str())
+            .ok_or_else(|| InferenceError::StructuredOutputFailed("no response field".into()))?;
+        let parsed: Value = serde_json::from_str(text.trim()).map_err(|e| {
+            InferenceError::StructuredOutputFailed(format!("model output not valid JSON: {e}"))
+        })?;
+        let usage = UsageReport {
+            prompt_tokens: out
+                .get("prompt_eval_count")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0),
+            completion_tokens: out.get("eval_count").and_then(|v| v.as_u64()).unwrap_or(0),
+            wall_time_ms: out
+                .get("total_duration")
+                .and_then(|v| v.as_u64())
+                .map(|ns| ns / 1_000_000)
+                .unwrap_or(0),
+        };
+        Ok((parsed, usage))
     }
 }
 
@@ -365,68 +444,25 @@ impl Inference for OllamaInference {
         prompt: &str,
         max_output_tokens: u32,
     ) -> Result<(Value, UsageReport), InferenceError> {
-        if self.cancelled() {
-            return Err(InferenceError::Cancelled);
-        }
-        if max_output_tokens == 0 {
-            return Err(InferenceError::BudgetExceeded);
-        }
         let format: Value = match KNOWN_SCHEMAS.iter().find(|(n, _)| *n == schema_name) {
             Some((_, schema_json)) => serde_json::from_str(schema_json)
                 .map_err(|e| InferenceError::StructuredOutputFailed(e.to_string()))?,
             None => Value::String("json".into()),
         };
-        // Measured pitfall (2026-09-26): with think:true + schema format on
-        // this runtime, reasoning consumed the entire budget (2238 thinking
-        // chars, response empty, done_reason=length). Structured generation
-        // therefore disables thinking by default; reasoning runs happen on
-        // plain prompts where the thinking field is expected. Callers who
-        // want reasoning before a structured result run two steps and pass
-        // their own synthesized context.
-        let mut body = serde_json::json!({
-            "model": self.model,
-            "prompt": prompt,
-            "stream": false,
-            "format": format,
-            "think": false,
-            "options": {"num_predict": max_output_tokens, "temperature": 0.0},
-        });
-        let context = if self.resident_context {
-            Some(
-                resident_context_from_ps(&self.get_json("/api/ps", 3000)?, &self.model)
-                    .map_err(InferenceError::RuntimeUnreachable)?,
-            )
-        } else {
-            self.context_window
-        };
-        if let Some(tokens) = context {
-            body["options"]["num_ctx"] = tokens.into();
+        self.generate_formatted(schema_name, prompt, max_output_tokens, format)
+    }
+
+    fn generate_structured_with_schema(
+        &mut self,
+        schema_name: &str,
+        prompt: &str,
+        max_output_tokens: u32,
+        schema: &Value,
+    ) -> Result<(Value, UsageReport), InferenceError> {
+        if schema["type"] != "object" || schema.to_string().len() > 16 * 1024 {
+            return Err(InferenceError::BudgetExceeded);
         }
-        let out = self.post_json("/api/generate", &body, GENERATE_TIMEOUT_MS)?;
-        if self.cancelled() {
-            return Err(InferenceError::Cancelled);
-        }
-        require_natural_stop(&out)?;
-        let text = out
-            .get("response")
-            .and_then(|r| r.as_str())
-            .ok_or_else(|| InferenceError::StructuredOutputFailed("no response field".into()))?;
-        let parsed: Value = serde_json::from_str(text.trim()).map_err(|e| {
-            InferenceError::StructuredOutputFailed(format!("model output not valid JSON: {e}"))
-        })?;
-        let usage = UsageReport {
-            prompt_tokens: out
-                .get("prompt_eval_count")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0),
-            completion_tokens: out.get("eval_count").and_then(|v| v.as_u64()).unwrap_or(0),
-            wall_time_ms: out
-                .get("total_duration")
-                .and_then(|v| v.as_u64())
-                .map(|ns| ns / 1_000_000)
-                .unwrap_or(0),
-        };
-        Ok((parsed, usage))
+        self.generate_formatted(schema_name, prompt, max_output_tokens, schema.clone())
     }
 
     fn cancel(&mut self) -> Result<(), InferenceError> {
@@ -1227,6 +1263,96 @@ mod tests {
         ] {
             assert!(require_natural_stop(&response).is_err());
         }
+    }
+
+    #[test]
+    fn native_observer_preserves_incomplete_and_invalid_responses_without_accepting_them() {
+        for (reason, text, accepted) in [
+            ("stop", "{\"ok\":true}", true),
+            ("length", "{broken", false),
+            ("stop", "not json", false),
+        ] {
+            let native = serde_json::json!({"response":text,"done":true,"done_reason":reason,"eval_count":512,"context":[7,8]});
+            let expected = native.clone();
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap();
+            let server = std::thread::spawn(move || {
+                let mut stream = accept_fixture(&listener);
+                read_fixture_request(&mut stream);
+                let body = native.to_string();
+                write!(stream,"HTTP/1.1 200 Fictional\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",body.len()).unwrap();
+            });
+            let observed = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let sink = observed.clone();
+            let mut inference = OllamaInference::new(&format!("http://{addr}"), "local").unwrap();
+            inference.set_response_observer(move |schema, native| {
+                sink.lock()
+                    .unwrap()
+                    .push((schema.to_owned(), native.clone()))
+            });
+            let result = inference.generate_structured("fictional_schema", "Fictional prompt", 512);
+            assert_eq!(result.is_ok(), accepted);
+            server.join().unwrap();
+            assert_eq!(
+                *observed.lock().unwrap(),
+                vec![("fictional_schema".into(), expected)]
+            );
+        }
+    }
+
+    #[test]
+    fn caller_schema_reaches_native_request_and_invalid_schema_never_connects() {
+        let schema = serde_json::json!({"type":"object","properties":{"field":{"type":"string","enum":["field-A"]}},"required":["field"],"additionalProperties":false});
+        let expected = schema.clone();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let mut stream = accept_fixture(&listener);
+            let request = read_fixture_request(&mut stream);
+            let split = find_headers_end(&request).unwrap();
+            let body: Value = serde_json::from_slice(&request[split + 4..]).unwrap();
+            assert_eq!(body["format"], expected);
+            assert_eq!(body["think"], false);
+            assert_eq!(body["options"]["num_predict"], 512);
+            let reply=serde_json::json!({"done":true,"done_reason":"stop","response":"{\"field\":\"field-A\"}"}).to_string();
+            write!(stream,"HTTP/1.1 200 Fictional\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{reply}",reply.len()).unwrap();
+        });
+        let mut inference = OllamaInference::new(&format!("http://{addr}"), "local").unwrap();
+        assert_eq!(
+            inference
+                .generate_structured_with_schema(
+                    "fictional_schema",
+                    "Fictional prompt",
+                    512,
+                    &schema
+                )
+                .unwrap()
+                .0["field"],
+            "field-A"
+        );
+        server.join().unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let mut inference = OllamaInference::new(
+            &format!("http://{}", listener.local_addr().unwrap()),
+            "local",
+        )
+        .unwrap();
+        for schema in [
+            Value::Null,
+            serde_json::json!({"type":"object","description":"x".repeat(17000)}),
+        ] {
+            assert!(matches!(
+                inference.generate_structured_with_schema(
+                    "fictional_schema",
+                    "Fictional",
+                    512,
+                    &schema
+                ),
+                Err(InferenceError::BudgetExceeded)
+            ));
+        }
+        assert!(matches!(listener.accept(),Err(e) if e.kind()==std::io::ErrorKind::WouldBlock));
     }
 
     #[test]

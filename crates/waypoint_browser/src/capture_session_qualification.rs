@@ -294,6 +294,91 @@ fn failed_entry_retains_bound_readback_without_approving_it() {
     run_coordinator(false, false, false, true);
 }
 
+#[test]
+#[ignore = "explicit zero-capability engine; fictional six-layer dependency discovery"]
+fn deep_discovery_renders_transitive_form_with_unchanged_session_budgets() {
+    use crate::capture_discovery::{DiscoveryStop, MAX_DISCOVERY_ROUNDS};
+    let (mut config, folder, python) = qualification_config();
+    let mut responses = BTreeMap::new();
+    let wire = |body: &str, mime: &str| {
+        format!(
+            "HTTP/1.1 200 Fictional\r\nContent-Type: {mime}\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        )
+        .into_bytes()
+    };
+    let entry = "https://fixture.invalid/deep";
+    responses.insert(
+        "https://fixture.invalid/robots.txt".into(),
+        wire("User-agent: *\nAllow: /", "text/plain"),
+    );
+    responses.insert(entry.into(),wire("<!doctype html><html lang=en><head><meta charset=utf-8><link rel=icon href=data:,><title>Fictional deep form</title></head><body><h1>Fictional deep form</h1><script src=/layer1.js></script></body></html>","text/html"));
+    for index in 1..=6 {
+        let script = if index < 6 {
+            format!("(()=>{{const next=document.createElement('script');next.src='/layer{}.js';next.async=false;document.head.append(next);}})();",index+1)
+        } else {
+            "document.body.insertAdjacentHTML('beforeend','<label>Contact email<input id=deepemail type=email required></label>');".into()
+        };
+        responses.insert(
+            format!("https://fixture.invalid/layer{index}.js"),
+            wire(&script, "text/javascript"),
+        );
+    }
+    let requests = Arc::new(Mutex::new(vec![]));
+    let dropped = Arc::new(AtomicBool::new(false));
+    let mut capture = CaptureSession::with_transport(
+        &folder.join("deep-capture"),
+        entry,
+        vec![CaptureOrigin {
+            origin: "https://fixture.invalid".into(),
+            source: "user_supplied_url".into(),
+        }],
+        PermissionRegistry::from_json(waypoint_policy::INITIAL_REGISTRY_JSON).unwrap(),
+        CaptureBudget::default(),
+        Arc::new(AtomicBool::new(false)),
+        Box::new(RecordedHttp {
+            responses,
+            requests: requests.clone(),
+            dropped: dropped.clone(),
+        }),
+    )
+    .unwrap();
+    let discovery = capture
+        .discover_resources(&python, config.clone(), MAX_DISCOVERY_ROUNDS, 500)
+        .unwrap();
+    assert_eq!(discovery.stopped, DiscoveryStop::NoNewRequests);
+    assert_eq!(discovery.rounds.len(), 7);
+    assert!(discovery.rounds.iter().all(|r| r.review_outcomes == 0
+        && r.ineligible_requests == 0
+        && r.omitted_requests == 0
+        && r.pending_commands == 0));
+    let frozen = capture.freeze().unwrap();
+    assert!(dropped.load(Ordering::Acquire));
+    assert_eq!(frozen.report.recorded_resources, 7);
+    assert_eq!(requests.lock().unwrap().len(), 8);
+    config.schema = 2;
+    config.content_root = frozen.snapshot.root;
+    config.content_files = frozen.snapshot.files;
+    config.entry = frozen.snapshot.entry;
+    config.replay_manifest = Some(frozen.snapshot.manifest);
+    let (mut browser, ready) = CdpDriver::launch_rehearsal(&python, config).unwrap();
+    assert!(ready.appcontainer && ready.capabilities == 0);
+    let form = browser.open(entry).unwrap();
+    assert_eq!(form.schema.fields.len(), 1);
+    assert_eq!(form.schema.fields[0].label, "Contact email");
+    assert_eq!(form.schema.fields[0].selector, "#deepemail");
+    assert!(!form.independent_field_entry_blocked());
+    let replay = browser.rehearsal_replay_report().unwrap();
+    assert_eq!(replay["blocked"], 0);
+    std::fs::write(
+        folder.join("deep-discovery-screenshot.base64"),
+        browser.screenshot_base64().unwrap(),
+    )
+    .unwrap();
+    browser.execute(&BrowserCommand::Close).unwrap();
+    std::fs::write(folder.join("deep-discovery.private.json"),serde_json::to_vec_pretty(&serde_json::json!({"complete":true,"rounds":7,"recorded_resources":7,"transport_requests":8,"native_fields":1,"fields_entered":0,"external_delivery":"not_performed"})).unwrap()).unwrap();
+}
+
 fn qualification_config() -> (RehearsalConfig, PathBuf, PathBuf) {
     let target =
         std::fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target")).unwrap();

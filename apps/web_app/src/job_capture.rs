@@ -719,7 +719,12 @@ fn worker(request: Request) -> Result<Value, String> {
     let entry = capture.capture_entry();
     if matches!(entry, CaptureOutcome::Recorded { .. }) {
         phase(&request, "resources")?;
-        capture.discover_resources(&python, config, 4, 1500)?;
+        capture.discover_resources(
+            &python,
+            config,
+            waypoint_browser::capture_discovery::MAX_DISCOVERY_ROUNDS,
+            1500,
+        )?;
     }
     let report =
         serde_json::to_value(capture.report()).map_err(|_| "Cannot encode capture result")?;

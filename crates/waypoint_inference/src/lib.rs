@@ -99,6 +99,19 @@ pub trait Inference {
         max_output_tokens: u32,
     ) -> Result<(serde_json::Value, UsageReport), InferenceError>;
 
+    /// A caller-bound schema can constrain identifiers to those actually offered.
+    /// Backends without native schema support retain normal generation; callers
+    /// must independently validate every result in either case.
+    fn generate_structured_with_schema(
+        &mut self,
+        schema_name: &str,
+        prompt: &str,
+        max_output_tokens: u32,
+        _schema: &serde_json::Value,
+    ) -> Result<(serde_json::Value, UsageReport), InferenceError> {
+        self.generate_structured(schema_name, prompt, max_output_tokens)
+    }
+
     fn cancel(&mut self) -> Result<(), InferenceError> {
         Err(InferenceError::Cancelled)
     }

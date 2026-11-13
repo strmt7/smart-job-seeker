@@ -1,6 +1,10 @@
 //! Render-only resource discovery; no candidate-entry driver or live fallback.
 use serde::{Deserialize, Serialize};
 
+/// Sequential dependency layers, still bounded by the session's time, byte,
+/// resource and request budgets. Empty/no-progress rounds stop immediately.
+pub const MAX_DISCOVERY_ROUNDS: u8 = 8;
+
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PublicControl {

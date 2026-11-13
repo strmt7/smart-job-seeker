@@ -310,8 +310,10 @@ impl CaptureSession {
         mut render: impl FnMut(Snapshot, u64) -> Result<crate::capture_discovery::Probe, String>,
     ) -> Result<crate::capture_discovery::DiscoverySummary, String> {
         use crate::capture_discovery::{DiscoveryRound, DiscoveryStop, DiscoverySummary};
-        if !(1..=4).contains(&rounds) || self.discovery.is_some() {
-            return Err("Discovery needs one fresh bounded run of one to four rounds".into());
+        if !(1..=crate::capture_discovery::MAX_DISCOVERY_ROUNDS).contains(&rounds)
+            || self.discovery.is_some()
+        {
+            return Err("Discovery needs one fresh bounded run of one to eight rounds".into());
         }
         let mut summary = DiscoverySummary {
             rounds: vec![],
@@ -2719,6 +2721,67 @@ mod tests {
             .path()
             .join("capture-discovery-03/replay.json")
             .exists());
+    }
+    #[test]
+    fn deep_discovery_preserves_session_budgets_and_finishes_only_after_observation() {
+        use crate::capture_discovery::{DiscoveryStop, MAX_DISCOVERY_ROUNDS};
+        let urls: Vec<_> = (1..=6)
+            .map(|n| format!("https://fixture.invalid/layer{n}.js"))
+            .collect();
+        for resource_limit in [4, 96] {
+            let mut rows = vec![
+                ("https://fixture.invalid/robots.txt", robots("")),
+                (ENTRY, html()),
+            ];
+            rows.extend(
+                urls.iter()
+                    .map(|u| (u.as_str(), response(200, "fixture", "text/javascript"))),
+            );
+            let mut h = harness(
+                rows,
+                "user_supplied_url",
+                CaptureBudget {
+                    resources: resource_limit,
+                    ..CaptureBudget::default()
+                },
+            );
+            let mut round = 0;
+            let summary = h
+                .session
+                .discover_with_probe(MAX_DISCOVERY_ROUNDS, |_, remaining| {
+                    assert!(remaining <= CaptureBudget::default().seconds);
+                    round += 1;
+                    Ok(probe(if round <= urls.len() {
+                        vec![urls[round - 1].as_str()]
+                    } else {
+                        vec![]
+                    }))
+                })
+                .unwrap();
+            if resource_limit == 96 {
+                assert_eq!(summary.stopped, DiscoveryStop::NoNewRequests);
+                assert_eq!(summary.rounds.len(), 7);
+                assert_eq!(h.session.report().recorded_resources, 7);
+                assert_eq!(h.calls.lock().unwrap().len(), 8);
+            } else {
+                assert_eq!(summary.stopped, DiscoveryStop::ReviewRequired);
+                assert_eq!(h.session.report().recorded_resources, 4);
+                assert_eq!(h.calls.lock().unwrap().len(), 5);
+                // The same resource budget bounds retained outcomes too.
+                // The rejected fifth proposal is counted without another fetch.
+                assert_eq!(h.session.report().omitted_proposals, 1);
+                assert_eq!(summary.rounds.len(), 4);
+                assert_eq!(summary.rounds.last().unwrap().review_outcomes, 1);
+            }
+        }
+        for rounds in [0, MAX_DISCOVERY_ROUNDS + 1] {
+            let mut h = ready();
+            assert!(h
+                .session
+                .discover_with_probe(rounds, |_, _| panic!("invalid budget rendered a page"))
+                .is_err());
+            assert!(h.calls.lock().unwrap().is_empty());
+        }
     }
     #[test]
     fn discovery_denials_and_browser_failures_never_retry_or_fall_back() {

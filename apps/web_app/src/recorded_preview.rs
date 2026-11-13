@@ -499,10 +499,12 @@ impl RehearsalVision {
         &mut self,
         form: &waypoint_applications::driver::LiveForm,
         profile: &Value,
-    ) -> Result<crate::form_preview::FormPreview, String> {
+    ) -> Result<crate::visual_review::RecordedFactPlan, String> {
         crate::check_inference_memory()?;
         let model = self.model.as_mut().ok_or("The local model needs review")?;
-        crate::visual_review::propose_recorded_facts(model, self.addr, form, profile)
+        Ok(crate::visual_review::propose_recorded_facts(
+            model, self.addr, form, profile,
+        ))
     }
 
     fn plan_attachments(
@@ -743,7 +745,11 @@ impl Rehearsal {
         let profile_sha =
             waypoint_domain::sha256_hex(include_bytes!("../data/rehearsal-profile.json"));
         let schema_sha = waypoint_domain::sha256_hex(form.schema.schema_hash_input().as_bytes());
-        let (mappings, review_selectors) = match self.vision.plan_profile(form, profile) {
+        let (plan, diagnostics) = match self.vision.plan_profile(form, profile) {
+            Ok(result) => (result.plan, Some(result.diagnostics)),
+            Err(error) => (Err(error), None),
+        };
+        let (mappings, review_selectors) = match plan {
             Ok(plan) if plan.schema == form.schema => {
                 let warnings: Vec<_> = plan
                     .manual_review
@@ -754,7 +760,7 @@ impl Rehearsal {
                 self.fact_plans.push(json!({"view":view,"status":"proposed","source":"bundled_fictional_profile",
                     "profile_sha256":profile_sha,"schema_sha256":schema_sha,"proposed_fields":plan.suggestions.len(),
                     "manual_fields":plan.model_review_selectors.len(),"warnings":warnings,
-                    "omitted_warnings":plan.manual_review.len().saturating_sub(12)}));
+                    "omitted_warnings":plan.manual_review.len().saturating_sub(12),"diagnostics":diagnostics}));
                 (plan.suggestions, plan.model_review_selectors)
             }
             result => {
@@ -763,7 +769,7 @@ impl Rehearsal {
                     .unwrap_or_else(|| "The form changed during profile matching".into());
                 self.fact_plans.push(json!({"view":view,"status":"needs_review","source":"bundled_fictional_profile",
                     "profile_sha256":profile_sha,"schema_sha256":schema_sha,"reason":bounded_text(&reason),
-                    "diagnostic":reason.chars().take(512).collect::<String>()}));
+                    "diagnostic":reason.chars().take(512).collect::<String>(),"diagnostics":diagnostics}));
                 // Other actors can still propose independent documents. No
                 // exact-label fallback becomes a contact-entry plan here.
                 (Vec::new(), std::collections::HashSet::new())

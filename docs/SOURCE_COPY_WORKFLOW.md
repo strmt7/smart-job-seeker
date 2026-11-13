@@ -1,5 +1,13 @@
 # Background source-page copies
 
+Saved-copy discovery now allows up to eight sequential passes within the existing
+time/request/byte limits and stops early without new resources. Contact mapping
+uses output vocabularies derived from the actual field references and available
+profile keys; semantic/native/visual checks still control every entry. Bounded
+native-response diagnostics remain in private application records. Incomplete
+reviews, unknown answers and unsupported flows still require review.
+[Current measured scope](g1/SCOPED_MAPPING_AND_DEEP_DISCOVERY_2026-11-13.md).
+
 Checkpoint: 2026-11-11. In a job's **Details and records**, **Save page copy**
 now runs the public-resource coordinator in the background. The interface shows
 stages, supports stopping, recovers an active task after reload and exposes its

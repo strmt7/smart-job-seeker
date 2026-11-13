@@ -10,6 +10,14 @@ frame/shadow traversal, candidate-file import, structured history and semantic
 fit assessment also exist. Their broad qualification and recovery limits remain
 open; the earlier statements that those mechanisms are absent are superseded.
 
+Current scoped-mapping continuation, 2026-11-13: the missing review array and
+runaway invented-selector repair are fixed with offered-ID schemas; the known
+optional/contact case now verifies 3/3, salary blank. French remains 6/7 and the
+saved employer remains 4/6 with one unverified résumé attempt. All are development
+cases; no held-out or full-workflow pass. Deeper bounded discovery records four
+more resources, but request variants, requiredness and custom controls still need
+review. [Evidence](docs/g1/SCOPED_MAPPING_AND_DEEP_DISCOVERY_2026-11-13.md).
+
 Current dialog continuation, 2026-11-13: bounded native/local-vision optional
 closure works on fictional isolated copies; legal/uncertain actions remain manual.
 The saved employer page still stops before the proposed action because of delayed

@@ -1,3 +1,14 @@
+## Scoped model output and deeper discovery — 2026-11-13
+
+Offered-ID output schemas fix an observed missing-review/runaway-selector response:
+the local12B optional/contact fixture improves from 0/3 to 3/3 verified, salary
+blank. Earlier French 6/7 and saved-employer 4/6 remain unchanged; the latter still
+has one unverified résumé attempt. Bounded private native response diagnostics
+retain actual completion evidence. Eight bounded discovery passes add four real
+resources; request variants and review walls remain. Workspace 1,350 passed/601
+ignored; native, Clippy/build/fmt and four-width record checks pass locally.
+No whole-workflow/held-out completion or release. [Evidence](docs/g1/SCOPED_MAPPING_AND_DEEP_DISCOVERY_2026-11-13.md).
+
 ## Contained dialog progression — 2026-11-13
 
 Isolated saved copies now support bounded local-model optional-dialog proposals,
