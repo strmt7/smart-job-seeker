@@ -452,7 +452,7 @@ class BrokerTests(unittest.TestCase):
             'requestId':'refused','resourceType':'XHR','request':request}}
         self.broker.browser(event)
         sample=self.broker.report()['refused_request_samples'][0]
-        self.assertEqual(sample,dict(url_sha256=digest(url.encode()),method='POST',resource_type='XHR',
+        self.assertEqual({k:v for k,v in sample.items() if k not in ('first_observed_ms','last_observed_ms')},dict(url_sha256=digest(url.encode()),method='POST',resource_type='XHR',
             reason='response_not_recorded',origin_state='present',preflight_headers_present=True,observations=1))
         self.assertEqual(self.broker.report()['blocked'],0)
         self.assertEqual(self.sent[-1]['method'],'Fetch.failRequest');self.ack()
@@ -472,9 +472,26 @@ class BrokerTests(unittest.TestCase):
         self.assertEqual(self.broker.report()['omitted_refusal_samples'],5)
         other=replay.Broker(self.fixture.archive(),self.sent.append,self.emitted.append)
         other.observe_refusal({'url':'bad','method':{},'headers':{'Origin':7,'origin':'secret'}},{},'unsupported_url')
-        self.assertEqual(other.report()['refused_request_samples'],[dict(url_sha256=None,method='Other',
+        values=other.report()['refused_request_samples']
+        self.assertEqual([{k:v for k,v in s.items() if k not in ('first_observed_ms','last_observed_ms')} for s in values],[dict(url_sha256=None,method='Other',
             resource_type='Other',reason='unsupported_url',origin_state='malformed',
             preflight_headers_present=False,observations=1)])
+
+    def test_refusal_timings_use_relative_monotonic_observation_time(self):
+        archive=self.fixture.archive()
+        with patch.object(replay.time,'monotonic',side_effect=[100,100.125,100.75,100.875]):
+            broker=replay.Broker(archive,self.sent.append,self.emitted.append)
+            request={'url':'https://fixture.invalid/unknown','method':'GET','headers':{}}
+            broker.observe_refusal(request,'Image','response_not_recorded')
+            broker.observe_refusal(request,'Image','response_not_recorded')
+            report=broker.report()
+        sample=report['refused_request_samples'][0]
+        self.assertEqual((sample['first_observed_ms'],sample['last_observed_ms'],sample['observations']),(125,750,2))
+        self.assertEqual(report['elapsed_ms'],875);self.assertEqual(report['blocked'],0)
+        self.assertNotIn('https://fixture.invalid/unknown',json.dumps(report))
+        with patch.object(replay.time,'monotonic',side_effect=[100,99]):
+            broker=replay.Broker(archive,self.sent.append,self.emitted.append)
+            with self.assertRaisesRegex(replay.ReplayError,'replay_clock_changed'):broker.report()
 
     def test_child_page_waits_for_interception_before_resuming(self):
         self.bind();event={'method':'Target.attachedToTarget','params':{'sessionId':'child','waitingForDebugger':True,'targetInfo':{'type':'iframe','targetId':'frame-target'}}}

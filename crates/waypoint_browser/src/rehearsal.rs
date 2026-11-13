@@ -252,8 +252,7 @@ mod windows {
             let spawn = std::thread::Builder::new()
                 .name("smart-jobseeker-rehearsal-owner".into())
                 .spawn(move || {
-                    let _admission = admission;
-                    let work = || -> Result<(), String> {
+                    let work = || -> Result<Option<SyncSender<Result<(), String>>>, String> {
                         let runtime = tokio::runtime::Builder::new_current_thread()
                             .enable_all()
                             .build()
@@ -459,35 +458,46 @@ mod windows {
                             return Err("Rehearsal cleanup or worker exit was incomplete".into());
                         }
                         if let Some((_, reply)) = stopping {
-                            let _ = reply.send(Ok(()));
+                            Ok(Some(reply))
                         } else {
                             failure(
                                 &worker_state,
                                 "Rehearsal browser ended without a close request",
                             );
+                            Ok(None)
                         }
-                        Ok(())
                     };
-                    if let Err(error) = work() {
-                        failure(&worker_state, error.clone());
-                        let _ = ready.try_send(Err(error));
-                        // The old process group has already dropped and closed
-                        // its owned tree. A fresh bounded worker queries durable
-                        // identities; it never kills by an old PID.
-                        if let Err(recovery) = recover_after_failure(&python, &script) {
-                            if let Ok(mut slot) = worker_state.lock() {
-                                if let Some(error) = slot.as_mut() {
-                                    error.push_str("; ");
-                                    error.push_str(&recovery);
+                    let completed = match work() {
+                        Ok(reply) => reply,
+                        Err(error) => {
+                            failure(&worker_state, error.clone());
+                            let _ = ready.try_send(Err(error));
+                            // The old process group has already dropped and closed
+                            // its owned tree. A fresh bounded worker queries durable
+                            // identities; it never kills by an old PID.
+                            if let Err(recovery) = recover_after_failure(&python, &script) {
+                                if let Ok(mut slot) = worker_state.lock() {
+                                    if let Some(error) = slot.as_mut() {
+                                        error.push_str("; ");
+                                        error.push_str(&recovery);
+                                    }
                                 }
                             }
+                            None
                         }
-                    }
+                    };
                     // Only this newly created controller directory is removed here.
                     // The worker owns its separate AppContainer profile lifecycle.
                     let _ = std::fs::remove_file(owned_folder.join("rehearsal_worker.py"));
                     let _ = std::fs::remove_file(owned_folder.join("rehearsal_replay.py"));
                     let _ = std::fs::remove_dir(&owned_folder);
+                    // A successful Close must permit the next isolated session
+                    // immediately, after process and controller cleanup. Sending
+                    // the reply inside work() raced this admission release.
+                    drop(admission);
+                    if let Some(reply) = completed {
+                        let _ = reply.send(Ok(()));
+                    }
                 });
             if let Err(error) = spawn {
                 let _ = std::fs::remove_file(folder.join("rehearsal_worker.py"));
@@ -589,6 +599,36 @@ mod windows {
     #[cfg(test)]
     mod qualification {
         use super::*;
+
+        #[test]
+        #[ignore = "explicit isolated engine and fictional snapshot; immediate session reuse"]
+        fn confirmed_shutdown_releases_admission_before_return() {
+            let (config, folder, python) =
+                crate::capture_session::qualification::qualification_config();
+            let mut samples = Vec::new();
+            for _ in 0..3 {
+                let (mut owner, pipe, ready) =
+                    RehearsalOwner::start(&python, config.clone()).unwrap();
+                assert!(ready.appcontainer && ready.capabilities == 0);
+                assert!(ACTIVE.load(Ordering::Acquire));
+                assert!(RehearsalOwner::start(&python, config.clone()).is_err());
+                let closed = owner.shutdown();
+                let released = !ACTIVE.load(Ordering::Acquire);
+                samples.push(
+                    serde_json::json!({"closed":closed.is_ok(),"admission_released":released}),
+                );
+                // Retain each observation before an assertion can terminate the run.
+                crate::rehearsal_capture::write_new(
+                    &folder,
+                    &format!("shutdown-reuse-{}.private.json", samples.len()),
+                    &serde_json::to_vec(&samples).unwrap(),
+                )
+                .unwrap();
+                closed.unwrap();
+                assert!(released, "Successful Close retained the session admission");
+                drop(pipe);
+            }
+        }
 
         #[test]
         #[ignore = "requires an explicitly supplied headless engine and fictional snapshot"]

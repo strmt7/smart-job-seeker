@@ -1,3 +1,13 @@
+## Visible field capture and session reuse — 2026-11-13
+
+Field screenshots no longer request an inactive responsive image during review.
+Isolated sessions acknowledge Close after releasing their admission. Validation:
+1,357 workspace tests passed (609 opt-in tests ignored), 73 portable replay tests
+passed, and native dialog/lifecycle/capture checks, Clippy, build and formatting
+passed. The local 12B model visually matches the optional control; a later blocked
+POST keeps closure unverified and fields blank. No whole-workflow or held-out
+pass, and no release. [Evidence](docs/g1/VISIBLE_VIEWPORT_CAPTURE_2026-11-13.md).
+
 ## Anonymous asset request contexts — 2026-11-13
 
 Typed native anonymous-GET proof now preserves image, script and other supported

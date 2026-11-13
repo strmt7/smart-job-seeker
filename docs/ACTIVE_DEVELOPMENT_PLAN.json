@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "reviewed_on": "2026-11-13",
-  "reviewed_source": "52462835c658ca33f15bd20cd9dcdab3f3167ebc",
+  "reviewed_source": "3aaeff9dcb79fb998c8e005d43099c07074cf35f",
   "goal": "Continue the existing active Smart Jobseeker product-development goal",
   "plan": "docs/COMPLETION_PLAN_2026-11-11.md",
   "assessment": "docs/REPO_STATE_REVIEW_2026-11-11.md",
@@ -43,7 +43,8 @@
         "docs/g1/DEFERRED_FIT_2026-11-11.md",
         "docs/g1/DEFERRED_FORM_INSPECTION_2026-11-11.md",
         "docs/g1/SEMANTIC_PROFILE_REHEARSAL_2026-11-13.md",
-        "docs/g1/BLIND_VISUAL_COVERAGE_2026-11-13.md"
+        "docs/g1/BLIND_VISUAL_COVERAGE_2026-11-13.md",
+        "docs/g1/VISIBLE_VIEWPORT_CAPTURE_2026-11-13.md"
       ],
       "next_action": "Prepare and qualify lazy private model/cache admission after native eligibility and efficient verified qualification-cache reuse. Retain native worker failure diagnostics and sufficient RAM-admitted aggregate job capacity measured with model/browser/helpers. Native-call interruption, cleanup latency and uncollected-session idle expiry remain open.",
       "execution_batch": "A",
@@ -57,7 +58,8 @@
         "Owned model inventory, local 8bd00015; scoped local passing evidence only.",
         "Fit preflight/cancellation, guarded context observation and manual Stop; scoped local workspace/native/client evidence, not all-handler readiness.",
         "Owned/deferred form inspection with task-bound Stop; passing local native/browser/client checks, not universal native-call interruption.",
-        "Qualification reuses existing verified workspace model caches without another8GB copy; this is development harness evidence, not product-wide lazy admission or cache lifecycle completion."
+        "Qualification reuses existing verified workspace model caches without another8GB copy; this is development harness evidence, not product-wide lazy admission or cache lifecycle completion.",
+        "2026-11-13: reproduced and repaired Close acknowledgement before admission release; three immediate isolated sessions and concurrent-refusal assertions pass, as does consumer-failure recovery. This does not complete cancellation latency, idle expiry or long-running leak qualification."
       ],
       "open_checkpoint": "Native-observation and cleanup latency, uncollected inspection-session expiry, and broader admitted-workload behavior remain unqualified.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package."
@@ -139,7 +141,9 @@
         "crates/waypoint_net/src/http.rs",
         "crates/waypoint_net/src/lib.rs",
         "apps/web_app/web/source-copy.js",
-        "apps/web_app/tests/source-copy-ui.test.js"
+        "apps/web_app/tests/source-copy-ui.test.js",
+        "crates/waypoint_browser/src/recorded_dialog_qualification.rs",
+        "crates/waypoint_browser/src/rehearsal.rs"
       ],
       "acceptance": [
         "Repair eligible resource/context gaps without relaxing source or write boundaries",
@@ -158,16 +162,17 @@
         "docs/g1/SCOPED_MAPPING_AND_DEEP_DISCOVERY_2026-11-13.md",
         "docs/g1/REQUEST_REPRESENTATION_VARIANTS_2026-11-13.md",
         "docs/g1/INSPECTOR_REQUEST_CONTEXT_2026-11-13.md",
-        "docs/g1/ANONYMOUS_ASSET_CONTEXTS_2026-11-13.md"
+        "docs/g1/ANONYMOUS_ASSET_CONTEXTS_2026-11-13.md",
+        "docs/g1/VISIBLE_VIEWPORT_CAPTURE_2026-11-13.md"
       ],
       "execution_batch": "B",
       "steps": [
-        "Measure saved-copy replay deltas without actions and bind them to native form/dialog/visual identities; retain exact source and scope, avoiding unchanged model reruns.",
+        "Retain the now-measured screenshot cause and native viewport repair; use bounded relative refusal timings to classify new gaps without suppressing them. No unchanged blocked-case model rerun.",
         "Use current contracts and primary research to choose a generic repair for demonstrated invalidation or representation gaps; preserve missing-resource visibility, external-write isolation and uncertain-state outcomes.",
         "Qualify adversarial scripted-submit, stale, credential/body, wrong-target and changed-value cases before native earlier/untouched workflows. No unsupported server response may be invented.",
         "Continue independent requiredness/answer/workflow truth collection with R02; preserve remaining acceptance and resource-lifecycle obligations."
       ],
-      "next_action": "Diagnose passive replay-gap growth blocking the saved-source optional-dialog stage: distinguish invalidated native form/dialog evidence from unrelated background requests using retained request types, sealed identities and bounded timing observations. Preserve all no-write, stale-evidence, submission and unknown-response refusals; do not declare missing responses harmless or loosen action gates without proof and adversarial qualification. Independently research the remaining stylesheet Sec-Fetch-* Vary context using actual native header evidence, without guessed/overridden headers. Keep server-dependent POSTs and unverified workflows manual.",
+      "next_action": "Keep the post-dialog XHR POST outcome manual; do not manufacture a cookie/validation reply or ignore replay counters. Independently research the remaining stylesheet Sec-Fetch-* Vary using actual native header evidence and strict typed request proof, without guessed/overridden headers. In parallel preparation with R02, prioritize independently frozen requiredness/answer/workflow truth and varied eligible sources over rerunning this unchanged blocked case. Preserve all no-write, native identity, visual and uncertain-state guards.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "completed_scopes": [
         "Observed absent-Origin GET Stylesheet binding and strict capture/replay proof; malformed/conflicting/cross-type cases refused.",
@@ -180,7 +185,8 @@
         "Shared eight-pass discovery ceiling with unchanged session budgets/early stopping; fictional native six-script chain observes the final form in7passes. Fresh permitted source gains4resources (34/42requests), stopsReviewRequired after6passes, retains10controls/3walls and all request/context barriers.",
         "Versioned independently captured disjoint request representations; native same-URL Origin/absent-Origin Stylesheet replay verifies both styles, 3 representations/2 URLs/5 simulated requests. Legacy deep and embedded checks pass. Fresh real saved source remains34URLs/42requests,10controls/3walls with delayed variant/POST/resource gaps; no workflow or held-out credit.",
         "Native cause identified: CSS inspector activation creates an absent-Origin stylesheet request. Post-load inspection now occurs within discovery, with pending inspection explicitly review-required and visible in the client. Fresh source35representations/34URLs/43requests writesversion2 and removes that final-inventory mismatch;10controls/3walls and other resource/POST gaps remain. Three native inspector/variant cases, legacy native regressions, workspace1354/604ignored and four-width component checks pass. Changed-source local12B proposes optional decline but stopsbeforeaction on replaygap;0entries, noworkflow/heldout credit.",
-        "Typed anonymous asset proof and version3 archives now support observed script/style/font/image/JSON/manifest categories with compatible MIME and exact native GET/header context. Document/preload provenance excludes asset redirects and non-document replies. Native script+SVG+JSON fixture renders2controls/0entries with0refusals; earlier inspector/deep/frame cases pass. Fresh source38representations/37URLs from43requests retains3images, visibly restores logo/background and reducesmissingresponse9to3;10controls/3walls remain, no workflow/held-out credit. Workspace1357passed/605ignored, portable72 and final focused/native/Clippy/build/fmt pass."
+        "Typed anonymous asset proof and version3 archives now support observed script/style/font/image/JSON/manifest categories with compatible MIME and exact native GET/header context. Document/preload provenance excludes asset redirects and non-document replies. Native script+SVG+JSON fixture renders2controls/0entries with0refusals; earlier inspector/deep/frame cases pass. Fresh source38representations/37URLs from43requests retains3images, visibly restores logo/background and reducesmissingresponse9to3;10controls/3walls remain, no workflow/held-out credit. Workspace1357passed/605ignored, portable72 and final focused/native/Clippy/build/fmt pass.",
+        "2026-11-13: timed passive/sweep evidence isolates an inactive responsive-image request to beyond-viewport context clipping. Visible field crops now stay within native-validated viewport bounds; four raw responsive cases, production context/detail capture, native dialog and lifecycle/viewport/caret regressions pass. Local12B now visually matches optional decline and the saved image shows the dialog gone; a new blocked POST keeps closure unverified, zero entries/advances. Workspace1357/609ignored, portable73, final browser112/23ignored, Clippy/build/fmt pass. No workflow/held-out credit."
       ],
       "start_requirements": [
         "R02 input-binding protocol exists; full representative/held-out collection is not required to begin this rendering repair.",
@@ -598,90 +604,86 @@
     "build_state": "Last focused test compile failed; three stale start callers remain in current source. No current full-workspace pass claimed."
   },
   "working_tree_checkpoint": {
-    "baseline_head": "dad203acbfbd5aa29dfcd8fc57b5f87c21d59dbd",
-    "validated_changes": "Controlled scriptless native Document Accept observation; typed anonymous public document transport and actual outgoing header evidence; strict document-variant replay and bounded repeated Vary preservation. Production previously unsupported source now archives30 resources/10 native controls, with all remaining dialog/custom/asset barriers explicit.",
+    "baseline_head": "3aaeff9dcb79fb998c8e005d43099c07074cf35f",
+    "validated_changes": "Visible-viewport field crops eliminate a measured inactive responsive image request; isolated Close acknowledgement follows process/controller cleanup and admission release; bounded monotonic replay-refusal observations retain strict guards.",
     "validated_source_sha256": {
-      "apps/web_app/src/job_capture.rs": "79efb1c9c19efee7ea25343bf9c59c9fda278a114f197cf2a2d299c28ca9b745",
-      "crates/waypoint_browser/src/capture_discovery.rs": "713a1bcba4d8ceeb5dd468b43c64762f14a7db6eb10cade56ea400bad3eeaba7",
-      "crates/waypoint_browser/src/capture_session.rs": "ea230205fe72e6d3fe03a1842f172d45645529c5374d642b16bb55d12910b2bb",
-      "crates/waypoint_browser/src/capture_session_qualification.rs": "c75a910bc40e85636db492d671ad8418fe69ebfbb276e73f7f2d79170f407464",
-      "crates/waypoint_browser/src/rehearsal_capture.rs": "f3407eb7d1e404a62f94e1901258abb72588aaa06a96337cbc21af87ee4811d8",
-      "crates/waypoint_browser/src/rehearsal_replay.py": "31f3b194ff60ee824cb6b8c3d2332ae623a04f2ceacb3bfb2851623a9a9e9997",
-      "crates/waypoint_browser/tests/test_rehearsal_replay.py": "e8e8e8954a40ca4b4248aefcf3b77d13c1adc0274b364583953e05738a572287",
-      "crates/waypoint_net/src/http.rs": "c58502c3f49e6f6fc9aa41eb6fc0e4fdd5477c14023df9e2cc9ebc10e3ff7c02",
-      "crates/waypoint_net/src/lib.rs": "facc5e3f514d0098a221ee372b4ed473c823e3382d247d9c7079ae283738087b"
+      "crates/waypoint_browser/src/capture_session.rs": "fde4fad0dd5497e990afbd848dbcf85b9bcbf7f16c387725a4c1dd78c9f909e6",
+      "crates/waypoint_browser/src/capture_session_qualification.rs": "a50118f949eb6d7b02a11be97341f695dbeea721c59e374f035feac3f2e346cf",
+      "crates/waypoint_browser/src/lib.rs": "4bbd3173669a01b189822db6c96085b90f6ade94ddc6a5ee777cc285ce7c8819",
+      "crates/waypoint_browser/src/recorded_dialog.rs": "e00b385b6fe658319634841fe93869d13f12d365e313168840d37e5a62cea1b4",
+      "crates/waypoint_browser/src/recorded_dialog_qualification.rs": "8e2f62e9adf92d4dc64175845afcba3c41d73abed25491217073a0f0923bfa7d",
+      "crates/waypoint_browser/src/rehearsal.rs": "ca4eef95161e198cf20b63b8706313741ee8c4783cd08b788e9197f1940364d6",
+      "crates/waypoint_browser/src/rehearsal_replay.py": "0d86dab7b0a200727e02d20845b1966a55c083c646eb9e6e55877e1bfd74e038",
+      "crates/waypoint_browser/tests/test_rehearsal_replay.py": "611c62e685277b5201cd35f1a17b5e606531869f19d1fe3d53f4e97f6193dd6f"
     },
-    "app_sha256": "91c4829480da475f6b18817d86200a9b77f6ee3fc77c6add9f33e9203de47bdd",
-    "build_state": "Windows build, workspace1341 passed/599 opt-in ignored, Clippy warnings-denied/fmt pass. Portable broker61; native network19/1 ignored and browser104/13 ignored are workspace subsets. Final contained root/frame fixture1 and legacy failed-entry fixture1 pass separately. Actual compiled record1360/900/480/320 widths and wide/narrow screenshots inspected.",
+    "app_sha256": "085ebeee9d078aeb6e06d4bb0f76ead2e40936e0964d53e3961310b3a1c0bd35",
+    "build_state": "Workspace1357passed/609ignored across43 result groups, Windows build and final Clippy/fmt pass; browser112passed/23ignored and portable replay73passed. Native responsive/dialog/reuse/failure-recovery/viewport/caret checks pass. Final passive-probe count assertion is test-only and received focused compilation/Clippy after the workspace and model runs.",
     "model_qualification": {
-      "new_runs": 0,
-      "reason": "Fresh source has dialog/custom/obscured barriers; zero eligible views and zero model scores. Earlier local12B reports retain their source/config; no new GPU measurement."
+      "new_runs": 1,
+      "model": "gemma4:12b-it-q4_K_M",
+      "result": "target/viewport-dialog-model-28blxk6o/result.private.json",
+      "scope": "Saved-public development only: visually matched optional control, resulting image shows dialog gone; new blocked XHR POST invalidates closure. Zero fields/advances, no independent model/workflow/held-out score. Source/binary/controller identities retained.",
+      "minimum_available_host_ram_bytes": 21250514944,
+      "owned_tree_drained": true,
+      "shared_unchanged": true
     },
-    "evidence": "docs/g1/OBSERVED_DOCUMENT_REPRESENTATION_2026-11-13.md",
-    "private_evidence": [
-      "target/document-representation-nhq26xaj/",
-      "target/representation-native-3snn3qv3/",
-      "target/capture-replay-qualification-wiha30w6/",
-      "target/capture-replay-qualification-3082mfxq/",
-      "target/representation-review-ui-2pkir1cn/"
-    ],
+    "evidence": "docs/g1/VISIBLE_VIEWPORT_CAPTURE_2026-11-13.md",
+    "private_evidence": "target/dialog-replay-deltas-0gh9_2nw/",
     "host_checkpoint": {
-      "private_evidence": "target/development-host-3ab93c77c38a4655a94611b2e402a4db.private.json",
-      "available_ram_bytes": 32225746944,
+      "private_evidence": "target/development-host-5cbcb990964d447e94c788f8488c214f.private.json",
+      "available_ram_bytes": 30568566784,
       "matching_processes": 0,
       "resident_models": 0,
       "persistent_registrations": 0,
-      "scope": "Read-only process/model/service/task/startup audit and native owned-tree teardown; not sustained leak proof or exhaustive registry inventory."
+      "scope": "Scoped read-only host audit and native tree teardown; not sustained leak proof or exhaustive registry inventory."
     }
   },
   "dependency_semantics": "depends_on are completion prerequisites; start_requirements admit bounded implementation before the whole prerequisite package completes. Containment, UI consistency and resource ownership apply continuously.",
   "last_validated_checkpoint": {
-    "baseline_head": "dad203acbfbd5aa29dfcd8fc57b5f87c21d59dbd",
-    "validated_changes": "Controlled scriptless native Document Accept observation; typed anonymous public document transport and actual outgoing header evidence; strict document-variant replay and bounded repeated Vary preservation. Production previously unsupported source now archives30 resources/10 native controls, with all remaining dialog/custom/asset barriers explicit.",
+    "baseline_head": "3aaeff9dcb79fb998c8e005d43099c07074cf35f",
+    "validated_changes": "Visible-viewport field crops eliminate a measured inactive responsive image request; isolated Close acknowledgement follows process/controller cleanup and admission release; bounded monotonic replay-refusal observations retain strict guards.",
     "validated_source_sha256": {
-      "apps/web_app/src/job_capture.rs": "79efb1c9c19efee7ea25343bf9c59c9fda278a114f197cf2a2d299c28ca9b745",
-      "crates/waypoint_browser/src/capture_discovery.rs": "713a1bcba4d8ceeb5dd468b43c64762f14a7db6eb10cade56ea400bad3eeaba7",
-      "crates/waypoint_browser/src/capture_session.rs": "ea230205fe72e6d3fe03a1842f172d45645529c5374d642b16bb55d12910b2bb",
-      "crates/waypoint_browser/src/capture_session_qualification.rs": "c75a910bc40e85636db492d671ad8418fe69ebfbb276e73f7f2d79170f407464",
-      "crates/waypoint_browser/src/rehearsal_capture.rs": "f3407eb7d1e404a62f94e1901258abb72588aaa06a96337cbc21af87ee4811d8",
-      "crates/waypoint_browser/src/rehearsal_replay.py": "31f3b194ff60ee824cb6b8c3d2332ae623a04f2ceacb3bfb2851623a9a9e9997",
-      "crates/waypoint_browser/tests/test_rehearsal_replay.py": "e8e8e8954a40ca4b4248aefcf3b77d13c1adc0274b364583953e05738a572287",
-      "crates/waypoint_net/src/http.rs": "c58502c3f49e6f6fc9aa41eb6fc0e4fdd5477c14023df9e2cc9ebc10e3ff7c02",
-      "crates/waypoint_net/src/lib.rs": "facc5e3f514d0098a221ee372b4ed473c823e3382d247d9c7079ae283738087b"
+      "crates/waypoint_browser/src/capture_session.rs": "fde4fad0dd5497e990afbd848dbcf85b9bcbf7f16c387725a4c1dd78c9f909e6",
+      "crates/waypoint_browser/src/capture_session_qualification.rs": "a50118f949eb6d7b02a11be97341f695dbeea721c59e374f035feac3f2e346cf",
+      "crates/waypoint_browser/src/lib.rs": "4bbd3173669a01b189822db6c96085b90f6ade94ddc6a5ee777cc285ce7c8819",
+      "crates/waypoint_browser/src/recorded_dialog.rs": "e00b385b6fe658319634841fe93869d13f12d365e313168840d37e5a62cea1b4",
+      "crates/waypoint_browser/src/recorded_dialog_qualification.rs": "8e2f62e9adf92d4dc64175845afcba3c41d73abed25491217073a0f0923bfa7d",
+      "crates/waypoint_browser/src/rehearsal.rs": "ca4eef95161e198cf20b63b8706313741ee8c4783cd08b788e9197f1940364d6",
+      "crates/waypoint_browser/src/rehearsal_replay.py": "0d86dab7b0a200727e02d20845b1966a55c083c646eb9e6e55877e1bfd74e038",
+      "crates/waypoint_browser/tests/test_rehearsal_replay.py": "611c62e685277b5201cd35f1a17b5e606531869f19d1fe3d53f4e97f6193dd6f"
     },
-    "app_sha256": "91c4829480da475f6b18817d86200a9b77f6ee3fc77c6add9f33e9203de47bdd",
-    "build_state": "Windows build, workspace1341 passed/599 opt-in ignored, Clippy warnings-denied/fmt pass. Portable broker61; native network19/1 ignored and browser104/13 ignored are workspace subsets. Final contained root/frame fixture1 and legacy failed-entry fixture1 pass separately. Actual compiled record1360/900/480/320 widths and wide/narrow screenshots inspected.",
+    "app_sha256": "085ebeee9d078aeb6e06d4bb0f76ead2e40936e0964d53e3961310b3a1c0bd35",
+    "build_state": "Workspace1357passed/609ignored across43 result groups, Windows build and final Clippy/fmt pass; browser112passed/23ignored and portable replay73passed. Native responsive/dialog/reuse/failure-recovery/viewport/caret checks pass. Final passive-probe count assertion is test-only and received focused compilation/Clippy after the workspace and model runs.",
     "model_qualification": {
-      "new_runs": 0,
-      "reason": "Fresh source has dialog/custom/obscured barriers; zero eligible views and zero model scores. Earlier local12B reports retain their source/config; no new GPU measurement."
+      "new_runs": 1,
+      "model": "gemma4:12b-it-q4_K_M",
+      "result": "target/viewport-dialog-model-28blxk6o/result.private.json",
+      "scope": "Saved-public development only: visually matched optional control, resulting image shows dialog gone; new blocked XHR POST invalidates closure. Zero fields/advances, no independent model/workflow/held-out score. Source/binary/controller identities retained.",
+      "minimum_available_host_ram_bytes": 21250514944,
+      "owned_tree_drained": true,
+      "shared_unchanged": true
     },
-    "evidence": "docs/g1/OBSERVED_DOCUMENT_REPRESENTATION_2026-11-13.md",
-    "private_evidence": [
-      "target/document-representation-nhq26xaj/",
-      "target/representation-native-3snn3qv3/",
-      "target/capture-replay-qualification-wiha30w6/",
-      "target/capture-replay-qualification-3082mfxq/",
-      "target/representation-review-ui-2pkir1cn/"
-    ],
+    "evidence": "docs/g1/VISIBLE_VIEWPORT_CAPTURE_2026-11-13.md",
+    "private_evidence": "target/dialog-replay-deltas-0gh9_2nw/",
     "host_checkpoint": {
-      "private_evidence": "target/development-host-3ab93c77c38a4655a94611b2e402a4db.private.json",
-      "available_ram_bytes": 32225746944,
+      "private_evidence": "target/development-host-5cbcb990964d447e94c788f8488c214f.private.json",
+      "available_ram_bytes": 30568566784,
       "matching_processes": 0,
       "resident_models": 0,
       "persistent_registrations": 0,
-      "scope": "Read-only process/model/service/task/startup audit and native owned-tree teardown; not sustained leak proof or exhaustive registry inventory."
+      "scope": "Scoped read-only host audit and native tree teardown; not sustained leak proof or exhaustive registry inventory."
     }
   },
   "current_hosted_checks": {
-    "head": "106624baf43f777d9fb3ad11b6acd21d58496565",
+    "head": "3aaeff9dcb79fb998c8e005d43099c07074cf35f",
     "all_completed_successfully": true,
     "run_ids": {
-      "ci": 43374746402,
-      "coverage": 43374746424,
-      "codeql": 43374746296
+      "ci": 43427969795,
+      "coverage": 43427969768,
+      "codeql": 43427969204
     },
-    "private_receipts": "target/value-coverage-yuqxh46c/hosted-current.private.json",
-    "scope": "Live rechecked 2026-11-13; published baseline only. New local context/truncation changes do not yet have hosted validation."
+    "private_receipts": "target/dialog-replay-deltas-0gh9_2nw/hosted-current.private.json",
+    "scope": "Live rechecked 2026-11-13 via gh run view; published baseline only, not this newer local checkpoint."
   },
   "immediate_slices": [
     {

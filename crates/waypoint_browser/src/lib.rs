@@ -2435,7 +2435,11 @@ impl CdpDriver {
         if !left.is_finite() || !top.is_finite() || width <= 0.0 || height <= 0.0 {
             return Err(DriverError("Field capture is outside the page".into()));
         }
-        let captured = self.capture_png(json!({"format":"png","captureBeyondViewport":true,"clip":{"x":left,"y":top,"width":width,"height":height,"scale":scale}}))?;
+        // The control and context are already bounded by the visible viewport.
+        // Beyond-viewport capture can fetch inactive responsive backgrounds for
+        // a narrow clip even when final layout metrics are unchanged. Keep inspection in the current
+        // viewport rather than creating new resource gaps while reviewing it.
+        let captured = self.capture_png(json!({"format":"png","captureBeyondViewport":false,"clip":{"x":left,"y":top,"width":width,"height":height,"scale":scale}}))?;
         let data = captured
             .get("data")
             .and_then(Value::as_str)

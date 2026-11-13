@@ -342,3 +342,7 @@ impl CdpDriver {
         })
     }
 }
+
+#[cfg(all(test, windows))]
+#[path = "recorded_dialog_qualification.rs"]
+mod passive_qualification;

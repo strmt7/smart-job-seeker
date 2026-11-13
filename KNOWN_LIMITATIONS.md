@@ -10,6 +10,13 @@ frame/shadow traversal, candidate-file import, structured history and semantic
 fit assessment also exist. Their broad qualification and recovery limits remain
 open; the earlier statements that those mechanisms are absent are superseded.
 
+Current viewport continuation, 2026-11-13: field clipping no longer introduces an
+inactive responsive-image request. The local 12B run on the changed source passes its
+pre-action visual gate, and the saved-copy image shows the optional dialog gone.
+A new blocked XHR POST still invalidates native closure; zero fields/advances and
+no workflow score. The cold inspector gaps and all other review requirements
+remain. [Evidence](docs/g1/VISIBLE_VIEWPORT_CAPTURE_2026-11-13.md).
+
 Current anonymous-asset continuation, 2026-11-13: typed request proof repairs the
 three rejected images below. Fresh source now has 38 representations for 37 URLs,
 with the employer logo/background rendered and missing-response refusals reduced

@@ -10,6 +10,7 @@ from html.parser import HTMLParser
 import json
 from pathlib import Path, PurePosixPath
 import re
+import time
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 MAX_BODY = 8 * 1024**2
@@ -573,6 +574,7 @@ class Broker:
         if type(discovery) is not bool:
             raise ReplayError('invalid_discovery_mode')
         self.archive, self.send, self.emit = archive, send, emit
+        self.started = time.monotonic()
         self.entry_request_accept, self.entry_document_requests = None, 0
         self.discovery = discovery
         self.discovery_session, self.discovery_frames = None, set()
@@ -590,8 +592,13 @@ class Broker:
         self.refusal_samples, self.omitted_refusal_samples = {}, 0
         self.outline_requested, self.outline = False, None
 
+    def elapsed_ms(self):
+        elapsed=time.monotonic()-self.started
+        if elapsed<0:raise ReplayError('replay_clock_changed')
+        return int(elapsed*1000)
+
     def report(self):
-        return {'schema': 1, 'mode': 'offline_response_replay', **self.counts,
+        return {'schema': 1, 'mode': 'offline_response_replay', 'elapsed_ms':self.elapsed_ms(), **self.counts,
                 'active_sessions':len(self.sessions), 'active_targets':len(self.targets),
                 'retired_sessions':len(self.retired_sessions), 'retired_commands':len(self.retired_replies),
                 'pending_detachments':sum(action[0]=='detach' for action in self.pending.values()),
@@ -625,12 +632,15 @@ class Broker:
             origin_state = 'absent' if not origins else 'present' if len(origins) == 1 and isinstance(origins[0], str) else 'malformed'
             preflight = any(k.lower() in ('access-control-request-headers', 'access-control-request-method') for k in headers)
         key = (url_sha256, method, resource_type, reason, origin_state, preflight)
+        observed_ms=self.elapsed_ms()
         if key in self.refusal_samples:
             self.refusal_samples[key]['observations'] += 1
+            self.refusal_samples[key]['last_observed_ms'] = observed_ms
         elif len(self.refusal_samples) < 32:
             self.refusal_samples[key] = dict(url_sha256=url_sha256, method=method, resource_type=resource_type,
                                             reason=reason, origin_state=origin_state,
-                                            preflight_headers_present=preflight, observations=1)
+                                            preflight_headers_present=preflight, observations=1,
+                                            first_observed_ms=observed_ms,last_observed_ms=observed_ms)
         else:
             self.omitted_refusal_samples += 1
 

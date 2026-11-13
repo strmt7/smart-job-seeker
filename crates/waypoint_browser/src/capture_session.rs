@@ -23,7 +23,7 @@ use waypoint_policy::{Operation, PermissionRegistry};
 
 #[cfg(all(test, windows))]
 #[path = "capture_session_qualification.rs"]
-mod qualification;
+pub(crate) mod qualification;
 
 const ROBOTS_BYTES: usize = 512 * 1024;
 const HEADER_ALLOWANCE: usize = 128 * 1024;

@@ -13,6 +13,13 @@ applications by the shipped local model. Search, documents, installation,
 recovery and whole-interface acceptance also remain open. A completion
 percentage or zero-defect claim would not be evidence-based.
 
+The [visible-viewport continuation](g1/VISIBLE_VIEWPORT_CAPTURE_2026-11-13.md)
+repairs a screenshot-induced resource gap and session-reuse race. A fresh local 12B
+run passes optional-control visual review but stops on a later blocked POST, with
+zero entries. Workspace tests pass (1,357 passed, 609 ignored), along with native capture,
+lifecycle and dialog regressions, Clippy, build, formatting and 73 portable replay
+tests. Broader readiness remains open.
+
 The [scoped mapping/deep discovery continuation](g1/SCOPED_MAPPING_AND_DEEP_DISCOVERY_2026-11-13.md)
 fixes the known contact-review output failure (0/3 to3/3 verified), retains the
 prior French6/7 and saved-employer4/6 outcomes, and discovers four more resources

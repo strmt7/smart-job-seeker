@@ -752,7 +752,7 @@ fn inspector_stylesheet_request_context_is_observed_without_entry() {
             && r["reason"] == "origin_variant_not_recorded"));
 }
 
-fn qualification_config() -> (RehearsalConfig, PathBuf, PathBuf) {
+pub(crate) fn qualification_config() -> (RehearsalConfig, PathBuf, PathBuf) {
     let target =
         std::fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target")).unwrap();
     let path = std::fs::canonicalize(
