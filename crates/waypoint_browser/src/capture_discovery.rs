@@ -124,6 +124,14 @@ pub enum AssetKind {
 }
 
 #[cfg(any(windows, test))]
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AssetRequestVariant {
+    pub kinds: std::collections::BTreeSet<AssetKind>,
+    pub request_origin: Option<String>,
+    pub origin_absent_stylesheet: bool,
+}
+#[cfg(any(windows, test))]
 #[derive(serde::Deserialize)]
 pub(crate) struct Probe {
     schema: u8,
@@ -137,6 +145,8 @@ pub(crate) struct Probe {
     pub asset_request_origins: std::collections::BTreeMap<String, String>,
     #[serde(default)]
     pub asset_origin_absent_stylesheets: std::collections::BTreeSet<String>,
+    #[serde(default)]
+    pub asset_request_variants: std::collections::BTreeMap<String, Vec<AssetRequestVariant>>,
     #[serde(default)]
     pub entry_request_accept: Option<String>,
     #[serde(default)]
@@ -156,13 +166,50 @@ pub(crate) struct Probe {
 }
 #[cfg(any(windows, test))]
 impl Probe {
+    pub fn proposed_requests(&self) -> usize {
+        self.asset_request_variants
+            .values()
+            .fold(self.urls.len(), |total, v| {
+                total.saturating_add(v.len().saturating_sub(1))
+            })
+    }
     pub fn unsupported(&self) -> u64 {
         self.unsupported_targets
             .values()
             .fold(self.unmanaged_child_sessions, |a, b| a.saturating_add(*b))
     }
     pub(crate) fn valid(&self) -> bool {
-        self.schema == 1
+        matches!(self.schema, 1 | 2)
+            && (self.schema == 2 || self.asset_request_variants.is_empty())
+            && self.proposed_requests() <= 128
+            && serde_json::to_vec(&self.asset_request_variants).is_ok_and(|v| v.len() <= 128 * 1024)
+            && self.asset_request_variants.iter().all(|(url, variants)| {
+                self.assets.contains_key(url)
+                    && !self.child_documents.contains(url)
+                    && !self.asset_request_origins.contains_key(url)
+                    && !self.asset_origin_absent_stylesheets.contains(url)
+                    && (2..=8).contains(&variants.len())
+                    && variants
+                        .iter()
+                        .flat_map(|v| v.kinds.iter().copied())
+                        .collect::<std::collections::BTreeSet<_>>()
+                        == self.assets[url]
+                    && variants.iter().enumerate().all(|(index, variant)| {
+                        let origin = variant.request_origin.as_deref();
+                        !variant.kinds.is_empty()
+                            && self.assets[url].is_superset(&variant.kinds)
+                            && (origin.is_some_and(|s| {
+                                waypoint_net::PublicRequestOrigin::parse(s).is_ok()
+                            }) && !variant.origin_absent_stylesheet
+                                || origin.is_none()
+                                    && variant.origin_absent_stylesheet
+                                    && variant.kinds.len() == 1
+                                    && variant.kinds.contains(&AssetKind::Stylesheet))
+                            && variants[..index]
+                                .iter()
+                                .all(|earlier| earlier.request_origin.as_deref() != origin)
+                    })
+            })
             && self.mode == "resource_discovery"
             && self.urls.len() <= 128
             && self.urls.iter().all(|u| u.len() <= 4096)

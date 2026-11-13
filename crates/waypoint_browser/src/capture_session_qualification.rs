@@ -379,6 +379,152 @@ fn deep_discovery_renders_transitive_form_with_unchanged_session_budgets() {
     std::fs::write(folder.join("deep-discovery.private.json"),serde_json::to_vec_pretty(&serde_json::json!({"complete":true,"rounds":7,"recorded_resources":7,"transport_requests":8,"native_fields":1,"fields_entered":0,"external_delivery":"not_performed"})).unwrap()).unwrap();
 }
 
+type VariantRequest = (String, Option<String>);
+struct VariantHttp {
+    responses: BTreeMap<VariantRequest, Vec<u8>>,
+    requests: Arc<Mutex<Vec<VariantRequest>>>,
+    dropped: Arc<AtomicBool>,
+}
+impl Transport for VariantHttp {
+    fn get(
+        &mut self,
+        url: &str,
+        _: u64,
+        max: usize,
+        origin: Option<&waypoint_net::PublicRequestOrigin>,
+        accept: Option<&waypoint_net::PublicDocumentAccept>,
+    ) -> Result<CapturedResponse, ()> {
+        let key = (url.to_owned(), origin.map(|o| o.as_str().to_owned()));
+        self.requests.lock().unwrap().push(key.clone());
+        let bytes = self.responses.remove(&key).ok_or(())?;
+        let mut value = waypoint_net::read_asset_response(&mut Cursor::new(bytes), "GET", max)
+            .map_err(|_| ())?;
+        value.request_header_names = Some(vec!["host".into(), "accept".into()]);
+        value.request_accept = Some(
+            accept
+                .map(waypoint_net::PublicDocumentAccept::as_str)
+                .unwrap_or("*/*")
+                .into(),
+        );
+        value.request_origin = origin.cloned();
+        if origin.is_some() {
+            value
+                .request_header_names
+                .as_mut()
+                .unwrap()
+                .push("origin".into());
+        }
+        Ok(value)
+    }
+}
+impl Drop for VariantHttp {
+    fn drop(&mut self) {
+        self.dropped.store(true, Ordering::Release);
+    }
+}
+#[test]
+#[ignore = "explicit zero-capability engine; independently captured Origin stylesheet variants"]
+fn observed_request_variants_collect_and_render_independent_styles() {
+    use crate::capture_discovery::{DiscoveryStop, MAX_DISCOVERY_ROUNDS};
+    let (mut config, folder, python) = qualification_config();
+    let entry = "https://fixture.invalid/variants";
+    let style = "https://cdn.fixture.invalid/shared.css";
+    let wire = |body: &str, mime: &str, extra: &str| {
+        format!("HTTP/1.1 200 Fictional\r\nContent-Type: {mime}\r\nContent-Length: {}\r\n{extra}\r\n{body}",body.len()).into_bytes()
+    };
+    let mut responses = BTreeMap::new();
+    for origin in ["https://fixture.invalid", "https://cdn.fixture.invalid"] {
+        responses.insert(
+            (format!("{origin}/robots.txt"), None),
+            wire("User-agent: *\nAllow: /", "text/plain", ""),
+        );
+    }
+    let html=format!("<!doctype html><html lang=en><head><meta charset=utf-8><link rel=icon href=data:,><title>Fictional request variants</title><link rel=stylesheet crossorigin=anonymous href={style}><link rel=stylesheet href={style}></head><body><h1>Fictional request variants</h1><label>Email<input type=email id=email></label></body></html>");
+    responses.insert((entry.into(), None), wire(&html, "text/html", ""));
+    responses.insert(
+        (style.into(), Some("https://fixture.invalid".into())),
+        wire(
+            "input{border:3px solid rgb(1,2,3);font:18px Arial}",
+            "text/css",
+            "Vary: Origin\r\nAccess-Control-Allow-Origin: *\r\n",
+        ),
+    );
+    responses.insert(
+        (style.into(), None),
+        wire(
+            "input{background:rgb(4,5,6);color:white;padding:8px}",
+            "text/css",
+            "Vary: Origin\r\nAccess-Control-Allow-Origin: *\r\n",
+        ),
+    );
+    let requests = Arc::new(Mutex::new(vec![]));
+    let dropped = Arc::new(AtomicBool::new(false));
+    let mut capture = CaptureSession::with_transport(
+        &folder.join("variant-capture"),
+        entry,
+        vec![
+            CaptureOrigin {
+                origin: "https://fixture.invalid".into(),
+                source: "user_supplied_url".into(),
+            },
+            CaptureOrigin {
+                origin: "https://cdn.fixture.invalid".into(),
+                source: "user_supplied_url".into(),
+            },
+        ],
+        PermissionRegistry::from_json(waypoint_policy::INITIAL_REGISTRY_JSON).unwrap(),
+        CaptureBudget::default(),
+        Arc::new(AtomicBool::new(false)),
+        Box::new(VariantHttp {
+            responses,
+            requests: requests.clone(),
+            dropped: dropped.clone(),
+        }),
+    )
+    .unwrap();
+    let discovery = capture
+        .discover_resources(&python, config.clone(), MAX_DISCOVERY_ROUNDS, 700)
+        .unwrap();
+    assert_eq!(discovery.stopped, DiscoveryStop::NoNewRequests);
+    assert_eq!(discovery.rounds.len(), 2);
+    assert_eq!(discovery.rounds[0].proposed, 2);
+    assert_eq!(discovery.rounds[0].newly_recorded, 2);
+    let frozen = capture.freeze().unwrap();
+    assert!(dropped.load(Ordering::Acquire));
+    assert_eq!(frozen.report.recorded_resources, 3);
+    assert_eq!(frozen.report.recorded_urls, 2);
+    assert_eq!(requests.lock().unwrap().len(), 5);
+    let manifest: Value =
+        serde_json::from_slice(&std::fs::read(frozen.snapshot.root.join("replay.json")).unwrap())
+            .unwrap();
+    assert_eq!(manifest["schema"], 2);
+    config.schema = 2;
+    config.content_root = frozen.snapshot.root;
+    config.content_files = frozen.snapshot.files;
+    config.entry = frozen.snapshot.entry;
+    config.replay_manifest = Some(frozen.snapshot.manifest);
+    let (mut browser, ready) = CdpDriver::launch_rehearsal(&python, config).unwrap();
+    assert!(ready.appcontainer && ready.capabilities == 0);
+    let form = browser.open(entry).unwrap();
+    assert_eq!(form.schema.fields.len(), 1);
+    assert_eq!(form.schema.fields[0].label, "Email");
+    assert!(!form.independent_field_entry_blocked());
+    let observed=browser.cdp.call("Runtime.evaluate",serde_json::json!({"expression":"JSON.stringify({border:getComputedStyle(document.getElementById('email')).borderTopColor,background:getComputedStyle(document.getElementById('email')).backgroundColor})","returnByValue":true})).unwrap();
+    let styles: Value =
+        serde_json::from_str(observed["result"]["value"].as_str().unwrap()).unwrap();
+    assert_eq!(styles["border"], "rgb(1, 2, 3)");
+    assert_eq!(styles["background"], "rgb(4, 5, 6)");
+    let replay = browser.rehearsal_replay_report().unwrap();
+    assert_eq!(replay["blocked"], 0);
+    std::fs::write(
+        folder.join("request-variants-screenshot.base64"),
+        browser.screenshot_base64().unwrap(),
+    )
+    .unwrap();
+    browser.execute(&BrowserCommand::Close).unwrap();
+    std::fs::write(folder.join("request-variants.private.json"),serde_json::to_vec_pretty(&serde_json::json!({"complete":true,"manifest_schema":2,"rounds":2,"recorded_resources":3,"recorded_urls":2,"transport_requests":5,"native_fields":1,"styles":styles,"fields_entered":0,"external_delivery":"not_performed"})).unwrap()).unwrap();
+}
+
 fn qualification_config() -> (RehearsalConfig, PathBuf, PathBuf) {
     let target =
         std::fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target")).unwrap();

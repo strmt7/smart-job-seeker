@@ -109,6 +109,7 @@ pub struct CaptureReport {
     pub requests: usize,
     pub received_body_bytes: usize,
     pub recorded_resources: usize,
+    pub recorded_urls: usize,
     pub records: Vec<CaptureRecord>,
     pub elapsed_ms: u128,
     pub omitted_proposals: usize,
@@ -155,6 +156,47 @@ pub struct AssetObservation {
     framing: &'static str,
 }
 
+#[cfg(any(windows, test))]
+impl AssetOrigin {
+    fn resource_scope(&self) -> ResourceScope<'_> {
+        ResourceScope {
+            origin: &self.origin,
+            assets: Some(&self.kinds),
+            request_origin: self.request_origin.as_ref(),
+            request_scope: if self.origin_absent_stylesheet {
+                SnapshotScope::OriginAbsentStylesheet
+            } else {
+                SnapshotScope::Ordinary
+            },
+        }
+    }
+}
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+struct CapturedRequestIdentity {
+    url: String,
+    origin: Option<String>,
+    document_accept: Option<String>,
+    origin_absent_stylesheet: bool,
+}
+fn request_identity(
+    url: &str,
+    scope: Option<&ResourceScope<'_>>,
+    accept: Option<&waypoint_net::PublicDocumentAccept>,
+) -> CapturedRequestIdentity {
+    CapturedRequestIdentity {
+        url: url.into(),
+        origin: scope
+            .and_then(|s| s.request_origin)
+            .map(|s| s.as_str().to_owned()),
+        document_accept: if scope.is_none_or(|s| s.assets.is_none()) {
+            accept.map(|a| a.as_str().to_owned())
+        } else {
+            None
+        },
+        origin_absent_stylesheet: scope
+            .is_some_and(|s| matches!(s.request_scope, SnapshotScope::OriginAbsentStylesheet)),
+    }
+}
 struct ResourceScope<'a> {
     origin: &'a str,
     assets: Option<&'a BTreeSet<AssetKind>>,
@@ -225,7 +267,7 @@ pub struct CaptureSession {
     document_accept: Option<waypoint_net::PublicDocumentAccept>,
     robots: BTreeMap<String, Robots>,
     visited: BTreeSet<String>,
-    recorded: BTreeSet<String>,
+    recorded: BTreeSet<CapturedRequestIdentity>,
     records: Vec<CaptureRecord>,
     omitted: usize,
     robots_records: Vec<RobotsRecord>,
@@ -329,7 +371,8 @@ impl CaptureSession {
         } else {
             let mut attempted = BTreeMap::new();
             let mut attempted_absent_stylesheets = BTreeSet::new();
-            let mut attempted_kinds: BTreeMap<String, BTreeSet<AssetKind>> = BTreeMap::new();
+            let mut attempted_kinds: BTreeMap<CapturedRequestIdentity, BTreeSet<AssetKind>> =
+                BTreeMap::new();
             let mut review_seen = false;
             for round in 0..rounds {
                 summary.form_outline = None;
@@ -378,6 +421,11 @@ impl CaptureSession {
                         if p.valid()
                             && p.asset_request_origins
                                 .values()
+                                .all(|origin| self.document_origins.contains(origin))
+                            && p.asset_request_variants
+                                .values()
+                                .flatten()
+                                .filter_map(|v| v.request_origin.as_ref())
                                 .all(|origin| self.document_origins.contains(origin)) =>
                     {
                         p
@@ -396,7 +444,7 @@ impl CaptureSession {
                 summary.form_outline_snapshot_sha256 = probe.outline_snapshot_sha256.clone();
                 summary.form_outline_round = summary.form_outline.as_ref().map(|_| round + 1);
                 let mut result = DiscoveryRound {
-                    proposed: probe.urls.len(),
+                    proposed: probe.proposed_requests(),
                     newly_recorded: 0,
                     review_outcomes: 0,
                     omitted_requests: probe.omitted_requests,
@@ -406,28 +454,38 @@ impl CaptureSession {
                     unreplayed_transports: probe.unreplayed_transports,
                     preload_projection_failures: probe.preload_projection_failures,
                 };
-                let requests = probe.child_documents.iter().chain(
+                let requests = probe.child_documents.iter().map(|url| (url, None)).chain(
                     probe
                         .urls
                         .iter()
-                        .filter(|url| !probe.child_documents.contains(*url)),
+                        .filter(|url| !probe.child_documents.contains(*url))
+                        .flat_map(|url| match probe.asset_request_variants.get(url) {
+                            Some(variants) => variants
+                                .iter()
+                                .map(|variant| (url, Some(variant)))
+                                .collect::<Vec<_>>(),
+                            None => vec![(url, None)],
+                        }),
                 );
-                for url in requests {
+                for (url, variant) in requests {
                     let embedded = if probe.child_documents.contains(url) {
                         self.embedded_origin(url, round + 1)
                     } else {
                         None
                     };
-                    let asset = probe.assets.get(url).and_then(|kinds| {
-                        self.asset_origin(
-                            url,
-                            kinds,
-                            round + 1,
-                            probe.asset_request_origins.get(url).map(String::as_str),
-                            probe.asset_origin_absent_stylesheets.contains(url),
-                        )
+                    let kinds = variant.map(|v| &v.kinds).or_else(|| probe.assets.get(url));
+                    let request_origin = variant
+                        .and_then(|v| v.request_origin.as_deref())
+                        .or_else(|| probe.asset_request_origins.get(url).map(String::as_str));
+                    let absent = variant.is_some_and(|v| v.origin_absent_stylesheet)
+                        || probe.asset_origin_absent_stylesheets.contains(url);
+                    let asset = kinds.and_then(|kinds| {
+                        self.asset_origin(url, kinds, round + 1, request_origin, absent)
                     });
-                    if let Some(previous) = attempted.get(url) {
+                    let active_scope = asset.as_ref().map(AssetOrigin::resource_scope);
+                    let request_key =
+                        request_identity(url, active_scope.as_ref(), self.document_accept.as_ref());
+                    if let Some(previous) = attempted.get(&request_key) {
                         let new_binding = *previous
                             == (CaptureOutcome::NeedsReview {
                                 reason: CaptureGap::OriginNotDeclared,
@@ -443,16 +501,16 @@ impl CaptureSession {
                                 reason: CaptureGap::AssetUnavailable,
                             })
                             && asset.is_some()
-                            && probe.assets.get(url).is_some_and(|kinds| {
+                            && kinds.is_some_and(|kinds| {
                                 attempted_kinds
-                                    .get(url)
+                                    .get(&request_key)
                                     .is_none_or(|previous| !kinds.is_subset(previous))
                             });
                         let new_absence = *previous
                             == CaptureOutcome::NeedsReview {
                                 reason: CaptureGap::RepresentationUnsupported,
                             }
-                            && probe.asset_origin_absent_stylesheets.contains(url)
+                            && absent
                             && !attempted_absent_stylesheets.contains(url);
                         if !new_binding && !new_kind && !new_absence {
                             continue;
@@ -469,19 +527,17 @@ impl CaptureSession {
                         self.capture_embedded(url, scope)
                     } else if let Some(scope) = asset {
                         self.capture_asset(url, scope)
-                    } else if probe.asset_request_origins.contains_key(url)
-                        || probe.asset_origin_absent_stylesheets.contains(url)
-                    {
+                    } else if request_origin.is_some() || absent {
                         CaptureOutcome::NeedsReview {
                             reason: CaptureGap::OriginNotDeclared,
                         }
                     } else {
                         self.capture(url)
                     };
-                    attempted.insert(url.clone(), outcome);
-                    if let Some(kinds) = probe.assets.get(url) {
+                    attempted.insert(request_key.clone(), outcome);
+                    if let Some(kinds) = kinds {
                         attempted_kinds
-                            .entry(url.clone())
+                            .entry(request_key)
                             .or_default()
                             .extend(kinds.iter().copied());
                     }
@@ -638,19 +694,7 @@ impl CaptureSession {
             self.sources
                 .insert(scope.origin.clone(), scope.source.clone());
         }
-        let outcome = self.capture_scoped(
-            url,
-            Some(ResourceScope {
-                origin: &scope.origin,
-                assets: Some(&scope.kinds),
-                request_origin: scope.request_origin.as_ref(),
-                request_scope: if scope.origin_absent_stylesheet {
-                    SnapshotScope::OriginAbsentStylesheet
-                } else {
-                    SnapshotScope::Ordinary
-                },
-            }),
-        );
+        let outcome = self.capture_scoped(url, Some(scope.resource_scope()));
         if temporary {
             self.sources.remove(&scope.origin);
         }
@@ -902,7 +946,11 @@ impl CaptureSession {
             return Err(CaptureGap::ArchiveRejected);
         }
         let mut next = resource_url(raw)?;
-        if self.recorded.contains(next.as_str()) {
+        if self.recorded.contains(&request_identity(
+            next.as_str(),
+            scope.as_ref(),
+            self.document_accept.as_ref(),
+        )) {
             return Ok(CaptureOutcome::AlreadyRecorded);
         }
         if !self.entry_recorded && next.as_str() != self.entry {
@@ -1009,7 +1057,8 @@ impl CaptureSession {
                             .ok()
                     })
                     .flatten();
-            if self.recorded.contains(&url) {
+            let identity = request_identity(&url, scope.as_ref(), self.document_accept.as_ref());
+            if self.recorded.contains(&identity) {
                 continue;
             }
             let request_scope = scope
@@ -1022,7 +1071,7 @@ impl CaptureSession {
             if let Some(origin) = document_origin {
                 self.document_origins.insert(origin);
             }
-            self.recorded.insert(url);
+            self.recorded.insert(identity);
         }
         if is_entry {
             self.entry_recorded = true;
@@ -1065,6 +1114,7 @@ impl CaptureSession {
             requests: self.requests,
             received_body_bytes: self.received,
             recorded_resources: self.recorded.len(),
+            recorded_urls: self.recorded.iter().map(|r|r.url.as_str()).collect::<BTreeSet<_>>().len(),
             records: self
                 .records
                 .iter()
@@ -2721,6 +2771,73 @@ mod tests {
             .path()
             .join("capture-discovery-03/replay.json")
             .exists());
+    }
+    #[test]
+    fn collection_records_disjoint_contexts_of_one_url_in_one_or_later_rounds() {
+        use crate::capture_discovery::DiscoveryStop;
+        const STYLE: &str = "https://fixture.invalid/shared.css";
+        for sequential in [false, true] {
+            let mut present = response(200, "input{color:green}", "text/css");
+            present.headers.push(waypoint_net::Header {
+                name: "Vary".into(),
+                value: b"Origin".to_vec(),
+            });
+            let mut absent = response(200, "input{background:white}", "text/css");
+            absent.headers.push(waypoint_net::Header {
+                name: "Vary".into(),
+                value: b"Origin".to_vec(),
+            });
+            absent.request_header_names = Some(vec!["host".into(), "accept".into()]);
+            absent.request_accept = Some("*/*".into());
+            let mut h = harness(
+                vec![
+                    ("https://fixture.invalid/robots.txt", robots("")),
+                    (ENTRY, html()),
+                    (STYLE, present),
+                    (STYLE, absent),
+                ],
+                "user_supplied_url",
+                CaptureBudget::default(),
+            );
+            let mut round = 0;
+            let summary=h.session.discover_with_probe(4,|_,_| {
+                round+=1;
+                if round>if sequential {2}else{1} {return Ok(probe(vec![]));}
+                let mut value=serde_json::json!({"schema":1,"mode":"resource_discovery","urls":[STYLE],"assets":{STYLE:["stylesheet"]},"omitted_requests":0,"ineligible_requests":0,"pending_commands":0,"unsupported_targets":{},"unreplayed_transports":0,"unmanaged_child_sessions":0});
+                if sequential {
+                    if round==1 {value["asset_request_origins"]=serde_json::json!({STYLE:ORIGIN});}else {value["asset_origin_absent_stylesheets"]=serde_json::json!([STYLE]);}
+                }else {
+                    value["schema"]=serde_json::json!(2);
+                    value["asset_request_variants"]=serde_json::json!({STYLE:[{"kinds":["stylesheet"],"request_origin":ORIGIN,"origin_absent_stylesheet":false},{"kinds":["stylesheet"],"request_origin":null,"origin_absent_stylesheet":true}]});
+                }
+                Ok(serde_json::from_value(value).unwrap())
+            }).unwrap();
+            assert_eq!(summary.stopped, DiscoveryStop::NoNewRequests);
+            assert_eq!(summary.rounds.len(), if sequential { 3 } else { 2 });
+            assert_eq!(h.session.report().recorded_resources, 3);
+            assert_eq!(h.session.report().recorded_urls, 2);
+            assert_eq!(h.calls.lock().unwrap().len(), 4);
+            let frozen = h.session.freeze().unwrap();
+            let manifest: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(frozen.snapshot.root.join("replay.json")).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(manifest["schema"], 2);
+        }
+    }
+    #[test]
+    fn unadmitted_or_conflicting_variant_metadata_never_reaches_transport() {
+        use crate::capture_discovery::DiscoveryStop;
+        const STYLE: &str = "https://fixture.invalid/shared.css";
+        for origin in ["https://unadmitted.invalid", ORIGIN] {
+            let mut h = ready();
+            let result=h.session.discover_with_probe(2,|_,_| {
+                let value=serde_json::json!({"schema":2,"mode":"resource_discovery","urls":[STYLE],"assets":{STYLE:["stylesheet"]},"asset_request_variants":{STYLE:[{"kinds":["stylesheet"],"request_origin":origin,"origin_absent_stylesheet":false},{"kinds":["stylesheet"],"request_origin":ORIGIN,"origin_absent_stylesheet":false}]},"omitted_requests":0,"ineligible_requests":0,"pending_commands":0,"unsupported_targets":{},"unreplayed_transports":0,"unmanaged_child_sessions":0});
+                Ok(serde_json::from_value(value).unwrap())
+            }).unwrap();
+            assert_eq!(result.stopped, DiscoveryStop::BrowserFailed);
+            assert_eq!(h.calls.lock().unwrap().len(), 2);
+        }
     }
     #[test]
     fn deep_discovery_preserves_session_budgets_and_finishes_only_after_observation() {

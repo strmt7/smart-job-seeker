@@ -35,6 +35,58 @@ class Fixture:
 class ReplayTests(unittest.TestCase):
     def setUp(self):self.fixture=Fixture()
     def tearDown(self):self.fixture.close()
+    def origin_variants(self):
+        url='https://cdn.fixture.invalid/shared.css'
+        headers=[{'name':'Content-Type','value':'text/css'},{'name':'Vary','value':'Origin'}]
+        self.fixture.add(url,'origin.css',b'input{color:green}',headers=headers)
+        self.fixture.resources[-1]['request_origin']='https://fixture.invalid'
+        self.fixture.add(url,'absent.css',b'input{background:white}',headers=headers)
+        self.fixture.resources[-1].update(request_origin_absent=True,request_origin_absent_stylesheet=True)
+        return url
+
+    def test_version2_selects_independent_origin_bodies_without_order_or_context_fallback(self):
+        url=self.origin_variants()
+        with self.assertRaisesRegex(replay.ReplayError,'ambiguous_replay_resource'):self.fixture.archive()
+        for reverse in [False,True]:
+            if reverse:self.fixture.resources[1:]=reversed(self.fixture.resources[1:])
+            archive=self.fixture.archive({'schema':2})
+            for headers,expected in [({'Origin':'https://fixture.invalid'},b'input{color:green}'),({'Accept':'text/css'},b'input{background:white}')]:
+                result,reason=archive.response({'url':url,'method':'GET','headers':headers},'Stylesheet')
+                self.assertEqual(reason,'recorded_response');self.assertEqual(base64.b64decode(result['body']),expected)
+            for headers in [{'Origin':'https://other.invalid'},{'Origin':'https://fixture.invalid','origin':'https://fixture.invalid'},
+                            {'Origin':'https://fixture.invalid','Cookie':''},{'Accept':'text/css','Authorization':'fictional'},
+                            {'Accept':'text/css','Access-Control-Request-Headers':'x-unknown'}]:
+                result,_=archive.response({'url':url,'method':'GET','headers':headers},'Stylesheet');self.assertIsNone(result)
+            for extra in [{'postData':''},{'hasPostData':True},{'postDataEntries':[]}]:
+                result,_=archive.response({'url':url,'method':'GET','headers':{'Origin':'https://fixture.invalid'},**extra},'Stylesheet');self.assertIsNone(result)
+            result,_=archive.response({'url':url,'method':'GET','headers':{'Accept':'text/css'}},'Script');self.assertIsNone(result)
+        (self.fixture.root/'absent.css').write_bytes(b'changed')
+        result,_=archive.response({'url':url,'method':'GET','headers':{'Origin':'https://fixture.invalid'}},'Stylesheet');self.assertIsNotNone(result)
+        with self.assertRaisesRegex(replay.ReplayError,'replay_body_changed'):
+            archive.response({'url':url,'method':'GET','headers':{'Accept':'text/css'}},'Stylesheet')
+
+    def test_version2_rejects_overlapping_duplicate_and_excessive_candidates(self):
+        self.origin_variants();original=list(self.fixture.resources)
+        for candidate in [dict(original[1]),{k:v for k,v in original[1].items() if k!='request_origin'}]:
+            if 'request_origin' not in candidate:candidate['headers']=[{'name':'Content-Type','value':'text/css'}]
+            self.fixture.resources=[*original,candidate]
+            with self.assertRaisesRegex(replay.ReplayError,'ambiguous_replay_resource'):self.fixture.archive({'schema':2})
+        self.fixture.resources=[original[0]]
+        for i in range(9):
+            self.fixture.resources.append({**original[1],'request_origin':'https://site'+str(i)+'.invalid'})
+        with self.assertRaisesRegex(replay.ReplayError,'ambiguous_replay_resource'):self.fixture.archive({'schema':2})
+
+    def test_version2_accept_variants_remain_documents_and_never_match_unknown_accept(self):
+        url=self.fixture.resources[0]['url'];headers=[{'name':'Content-Type','value':'text/html'},{'name':'Vary','value':'Origin, Accept'}]
+        self.fixture.resources[0].update(headers=headers,request_origin_absent=True,request_accept='text/html')
+        self.fixture.add(url,'alternate.html',b'<!doctype html>Alternate document',headers=headers)
+        self.fixture.resources[-1].update(request_origin_absent=True,request_accept='application/xhtml+xml')
+        archive=self.fixture.archive({'schema':2})
+        for accept in ['text/html','application/xhtml+xml']:
+            result,_=archive.response({'url':url,'method':'GET','headers':{'Accept':accept}},'Document');self.assertIsNotNone(result)
+        for kind,accept in [('Document','*/*'),('Other','text/html'),('XHR','text/html')]:
+            result,_=archive.response({'url':url,'method':'GET','headers':{'Accept':accept}},kind);self.assertIsNone(result)
+
     def test_public_document_accept_has_no_header_injection_or_unbounded_media_ranges(self):
         self.assertTrue(replay.public_document_accept('text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,*/*;q=0.8,application/signed-exchange;v=b3'))
         for value in [None,True,1,[],{},'', ' text/html', 'text/html ', 'text/html,\r\nX: injected',
@@ -48,7 +100,7 @@ class ReplayTests(unittest.TestCase):
         archive=self.fixture.archive()
         request={'url':item['url'],'method':'GET','headers':{'Accept':'*/*'}}
         self.assertEqual(archive.response(request,'Document')[1],'recorded_response')
-        self.assertEqual(archive.resources[('GET',item['url'],digest(b''))]['request_accept'],'*/*')
+        self.assertEqual(archive.resources[('GET',item['url'],digest(b''))][0]['request_accept'],'*/*')
         for headers in [{},{'Accept':'text/html'},{'Accept':' */*'},{'Accept':'*/*','accept':'*/*'},
                         {'Accept':'*/*','Cookie':'private'},{'Accept':'*/*','Authorization':'private'},
                         {'Accept':'*/*','X-Requested-With':'XMLHttpRequest'},
@@ -63,7 +115,7 @@ class ReplayTests(unittest.TestCase):
     def test_requested_with_absence_alone_does_not_invent_an_accept_policy(self):
         item=self.fixture.resources[0];item.update(request_origin_absent=True,request_x_requested_with_absent=True)
         item['headers'].append({'name':'Vary','value':'X-Requested-With'})
-        archive=self.fixture.archive();self.assertNotIn('request_accept',archive.resources[('GET',item['url'],digest(b''))])
+        archive=self.fixture.archive();self.assertNotIn('request_accept',archive.resources[('GET',item['url'],digest(b''))][0])
         request={'url':item['url'],'method':'GET','headers':{'Accept':'text/html'}}
         self.assertEqual(archive.response(request,'Document')[1],'recorded_response')
         for value in ['', 'XMLHttpRequest']:
@@ -88,7 +140,7 @@ class ReplayTests(unittest.TestCase):
         redirect={**item,'url':'https://fixture.invalid/redirect','status':302,
             'headers':[{'name':'Content-Type','value':'text/plain'},{'name':'Vary','value':'Accept'}]}
         self.fixture.resources.append(redirect)
-        self.assertEqual(self.fixture.archive().resources[('GET',item['url'],digest(b''))]['request_accept'],'*/*')
+        self.assertEqual(self.fixture.archive().resources[('GET',item['url'],digest(b''))][0]['request_accept'],'*/*')
     def test_origin_bound_variant_requires_get_document_and_absent_origin(self):
         item=self.fixture.resources[0]
         item['headers'].append({'name':'Vary','value':'Accept-Encoding, Origin'})
@@ -722,7 +774,7 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(self.report()['urls'],[])
         self.assertEqual(len(self.broker.conflicting_proposals),1)
 
-    def test_stylesheet_absence_requires_native_headers_and_conflicts_are_tombstoned(self):
+    def test_stylesheet_absence_preserves_disjoint_origins_and_tombstones_unbound_conflicts(self):
         self.broker.host({'id':1,'method':'Page.navigate','sessionId':'page','params':{'url':self.fixture.archive().entry_url}})
         url='https://cdn.fixture.invalid/style.css'
         self.frame(url=url,method='GET',resource_type='Stylesheet',headers={'Accept':'text/css'})
@@ -734,11 +786,13 @@ class DiscoveryTests(unittest.TestCase):
             self.assertNotIn(other,self.report()['asset_origin_absent_stylesheets'])
         self.frame(url=url,method='GET',resource_type='Stylesheet',headers={'Origin':'https://fixture.invalid'})
         report=self.report()
-        self.assertNotIn(url,report['urls'])
-        self.assertNotIn(url,report['assets'])
-        self.assertNotIn(url,report['asset_origin_absent_stylesheets'])
+        self.assertIn(url,report['urls']);self.assertEqual(report['schema'],2)
+        self.assertNotIn(url,report['asset_request_origins']);self.assertNotIn(url,report['asset_origin_absent_stylesheets'])
+        self.assertEqual(report['asset_request_variants'][url],[
+            {'kinds':['stylesheet'],'request_origin':None,'origin_absent_stylesheet':True},
+            {'kinds':['stylesheet'],'request_origin':'https://fixture.invalid','origin_absent_stylesheet':False}])
         self.frame(url=url,method='GET',resource_type='Stylesheet',headers={'Accept':'text/css'})
-        self.assertNotIn(url,self.report()['urls'])
+        self.assertEqual(self.report()['asset_request_variants'][url],report['asset_request_variants'][url])
         other='https://cdn.fixture.invalid/reused.css'
         self.frame(url=other,method='GET',resource_type='Stylesheet',headers={'Accept':'text/css'})
         self.frame(url=other,method='GET',resource_type='Script',headers={'Accept':'*/*'})
@@ -773,6 +827,31 @@ class DiscoveryTests(unittest.TestCase):
         self.frame(url=url,method='GET',resource_type='Other')
         self.frame(url='https://cdn.fixture.invalid/unpublished',method='GET',resource_type='Other')
         self.assertEqual(self.report()['assets'],{url:['json']})
+    def test_context_variants_count_against_the_total_request_budget(self):
+        self.broker.host({'id':1,'method':'Page.navigate','sessionId':'page','params':{'url':self.fixture.archive().entry_url}})
+        for i in range(64):
+            url='https://cdn.fixture.invalid/variant'+str(i)+'.css'
+            self.frame(url=url,method='GET',resource_type='Stylesheet',headers={'Origin':'https://fixture.invalid'})
+            self.frame(url=url,method='GET',resource_type='Stylesheet',headers={'Accept':'text/css'})
+        self.frame(url='https://cdn.fixture.invalid/overflow.css',method='GET',resource_type='Stylesheet',headers={'Accept':'text/css'})
+        report=self.report();self.assertEqual(len(report['urls']),64)
+        self.assertEqual(sum(len(v) for v in report['asset_request_variants'].values()),128)
+        self.assertGreater(report['omitted_requests'],0)
+
+    def test_variant_mismatch_can_propose_only_proven_anonymous_context(self):
+        url='https://cdn.fixture.invalid/captured.css'
+        self.fixture.add(url,'captured.css',b'input{color:green}',content_type='text/css',headers=[{'name':'Content-Type','value':'text/css'},{'name':'Vary','value':'Origin'}])
+        self.fixture.resources[-1]['request_origin']='https://fixture.invalid'
+        archive=self.fixture.archive();self.broker=replay.Broker(archive,self.sent.append,self.emitted.append,discovery=True)
+        self.broker.sessions['page']='page';self.broker.host({'id':1,'method':'Page.navigate','sessionId':'page','params':{'url':archive.entry_url}})
+        self.frame(url=url,method='GET',resource_type='Stylesheet',headers={'Accept':'text/css'})
+        self.assertEqual(self.report()['asset_origin_absent_stylesheets'],[url])
+        for headers in [{'Accept':'text/css','Cookie':''},{'Accept':'text/css','Authorization':'fictional'},{'Accept':'text/css','accept':'text/css'},{}]:
+            self.frame(url=url+'?case='+str(len(headers)),method='GET',resource_type='Stylesheet',headers=headers)
+        self.frame(url=url,method='POST',resource_type='Stylesheet',headers={'Accept':'text/css'})
+        self.assertGreater(self.report()['ineligible_requests'],0)
+        self.assertNotIn('asset_request_variants',self.broker.report())
+
     def test_unreadable_preload_projection_is_visible_and_does_not_destroy_legacy_replay(self):
         data=b'\xff'
         (self.fixture.root/'index.html').write_bytes(data)

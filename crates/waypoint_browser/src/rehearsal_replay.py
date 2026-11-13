@@ -243,6 +243,19 @@ def public_document_accept(value):
     return True
 
 
+def variants_disjoint(left, right):
+    def origin(item):
+        return item.get('request_origin', '' if item.get('request_origin_absent') else None)
+    def kind(item):
+        return 'Stylesheet' if item.get('request_origin_absent_stylesheet') else 'Document' if item.get('request_origin_absent') else None
+    a,b=origin(left),origin(right)
+    if a is not None and b is not None and a!=b:return True
+    a,b=kind(left),kind(right)
+    if a is not None and b is not None and a!=b:return True
+    a,b=left.get('request_accept'),right.get('request_accept')
+    return a is not None and b is not None and a!=b
+
+
 class Archive:
     def __init__(self, root, name, files, entry):
         self.root = Path(root)
@@ -266,10 +279,11 @@ class Archive:
         except (RecursionError, UnicodeDecodeError, json.JSONDecodeError):
             raise ReplayError('invalid_replay_json') from None
         if (not isinstance(value, dict) or set(value) != {'schema', 'body_representation', 'entry_url', 'resources'}
-                or type(value['schema']) is not int or value['schema'] != 1
+                or type(value['schema']) is not int or value['schema'] not in (1,2)
                 or value['body_representation'] != 'decoded_http'
                 or not isinstance(value['resources'], list) or not 1 <= len(value['resources']) <= 512):
             raise ReplayError('invalid_replay_manifest')
+        self.schema = value['schema']
         self.entry_url = value['entry_url']
         if not isinstance(self.entry_url,str) or len(self.entry_url)>4096:
             raise ReplayError('invalid_replay_entry')
@@ -363,11 +377,13 @@ class Archive:
                         for h in normalized))):
                 raise ReplayError('unbound_replay_variant')
             key = (item['method'], url, item['request_body_sha256'])
-            if key in self.resources:
+            candidates=self.resources.setdefault(key,[])
+            candidate={**item,'headers':normalized}
+            if candidates and (self.schema==1 or len(candidates)>=8 or any(not variants_disjoint(other,candidate) for other in candidates)):
                 raise ReplayError('ambiguous_replay_resource')
-            self.resources[key] = {**item, 'headers': normalized}
+            candidates.append(candidate)
         self.document_origins = set()
-        for item in self.resources.values():
+        for item in (item for group in self.resources.values() for item in group):
             if not any(h['name'].lower() == 'content-type' and h['value'].split(';')[0].strip().lower()
                        in ('text/html', 'application/xhtml+xml') for h in item['headers']):
                 continue
@@ -380,7 +396,7 @@ class Archive:
         self.fetch_preloads = set()
         self.preload_projection_failures = 0
         preload_bytes = 0
-        for item in self.resources.values():
+        for item in (item for group in self.resources.values() for item in group):
             if item['method'] != 'GET' or not any(h['name'].lower() == 'content-type' and h['value'].split(';')[0].strip().lower() == 'text/html' for h in item['headers']):
                 continue
             parser = FetchPreloads(item['url'])
@@ -393,7 +409,8 @@ class Archive:
                 size = len(url.encode())
                 if url not in self.fetch_preloads and len(self.fetch_preloads) < 128 and preload_bytes + size <= 128 * 1024:
                     self.fetch_preloads.add(url); preload_bytes += size
-        first = self.resources.get(('GET', initial, hashlib.sha256(b'').hexdigest()))
+        entries=[item for item in self.resources.get(('GET',initial,hashlib.sha256(b'').hexdigest()),[]) if item['body_file']==entry]
+        first=entries[0] if len(entries)==1 else None
         if (not first or first['body_file'] != entry or not 200 <= first['status'] < 300
                 or not any(h['name'].lower() == 'content-type' and h['value'].split(';')[0].lower() in ('text/html', 'application/xhtml+xml') for h in first['headers'])):
             raise ReplayError('invalid_replay_entry')
@@ -458,43 +475,61 @@ class Archive:
             if request.get('hasPostData'):
                 return None, 'opaque_request_body'
             data = b''
-        item = self.resources.get((method, url, hashlib.sha256(data).hexdigest()))
-        if item is None:
-            return None, 'response_not_recorded'
+        candidates = self.resources.get((method,url,hashlib.sha256(data).hexdigest()),[])
+        if not candidates:
+            return None,'response_not_recorded'
+        if len(candidates)>1:
+            names=[str(key).lower() for key in headers]
+            if any(name in names for name in ('cookie','authorization','proxy-authorization')):
+                return None,'credential_variant_not_recorded'
+            if request.get('hasPostData') or 'postData' in request or 'postDataEntries' in request:
+                return None,'opaque_request_body'
+        matched=[]; reasons=[]
+        for item in candidates:
+            reason=self.match_variant(item,request,resource_type,method,headers)
+            if reason is None:matched.append(item)
+            else:reasons.append(reason)
+        if len(matched)!=1:
+            return None, ('ambiguous_replay_resource' if matched else reasons[0] if len(candidates)==1 else 'request_variant_not_recorded')
+        item=matched[0]
+        return {'responseCode':item['status'],'responseHeaders':item['headers'],
+                'body':base64.b64encode(self.body(item['body_file'],item['body_sha256'])).decode('ascii')},'recorded_response'
+
+    @staticmethod
+    def match_variant(item,request,resource_type,method,headers):
         if item.get('request_origin') or item.get('request_origin_absent') or item.get('request_preflight_absent'):
             names = [key.lower() for key in headers if isinstance(key, str)]
             if (len(headers) > 128 or len(names) != len(headers) or len(set(names)) != len(names)
                     or any(not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]{1,256}", key)
                            or not isinstance(value, str) or len(value) > 8192
                            or any(ord(c) < 32 or ord(c) == 127 for c in value) for key, value in headers.items())):
-                return None, 'origin_variant_not_recorded'
+                return 'origin_variant_not_recorded'
             if item.get('request_origin') and [value for key, value in headers.items() if key.lower() == 'origin'] != [item['request_origin']]:
-                return None, 'origin_variant_not_recorded'
+                return 'origin_variant_not_recorded'
             if item.get('request_accept') or item.get('request_x_requested_with_absent'):
                 if resource_type != 'Document' or method != 'GET':
-                    return None, 'document_variant_not_recorded'
+                    return 'document_variant_not_recorded'
                 if request.get('hasPostData') or 'postData' in request or 'postDataEntries' in request:
-                    return None, 'document_body_variant_not_recorded'
+                    return 'document_body_variant_not_recorded'
                 if any(name in names for name in ('cookie', 'authorization', 'proxy-authorization',
                             'content-length', 'transfer-encoding', 'content-type', 'access-control-request-headers',
                             'access-control-request-method')):
-                    return None, 'document_headers_variant_not_recorded'
+                    return 'document_headers_variant_not_recorded'
                 if item.get('request_accept') and [value for key, value in headers.items()
                         if key.lower() == 'accept'] != [item['request_accept']]:
-                    return None, 'document_accept_variant_not_recorded'
+                    return 'document_accept_variant_not_recorded'
                 if item.get('request_x_requested_with_absent') and 'x-requested-with' in names:
-                    return None, 'document_requested_with_variant_not_recorded'
+                    return 'document_requested_with_variant_not_recorded'
             if item.get('request_origin_absent_stylesheet') and not origin_absent_stylesheet(request, resource_type):
-                return None, 'origin_variant_not_recorded'
+                return 'origin_variant_not_recorded'
             if item.get('request_origin_absent') and not item.get('request_origin_absent_stylesheet') and (resource_type != 'Document' or 'origin' in names):
-                return None, 'origin_variant_not_recorded'
+                return 'origin_variant_not_recorded'
             # Fetch adds these forbidden headers to OPTIONS preflights, not GET.
             # Explicit or malformed evidence still refuses the recorded variant.
             if item.get('request_preflight_absent') and any(name in names for name in
                     ('access-control-request-headers', 'access-control-request-method')):
-                return None, 'preflight_variant_not_recorded'
-        return {'responseCode': item['status'], 'responseHeaders': item['headers'],
-                'body': base64.b64encode(self.body(item['body_file'], item['body_sha256'])).decode('ascii')}, 'recorded_response'
+                return 'preflight_variant_not_recorded'
+        return None
 
 
 class Broker:
@@ -509,6 +544,7 @@ class Broker:
         self.proposals, self.proposal_bytes, self.omitted_proposals, self.ineligible_requests = {}, 0, 0, 0
         self.asset_proposals, self.asset_request_origins, self.conflicting_proposals = {}, {}, set()
         self.asset_origin_absent_stylesheets = set()
+        self.asset_request_variants = {}
         self.next_id, self.pending, self.attaching, self.sessions, self.targets = INTERNAL_ID, {}, {}, {}, {}
         self.session_targets, self.session_parents = {}, {}
         self.retired_sessions, self.retired_replies = set(), set()
@@ -599,12 +635,13 @@ class Broker:
         if message['method'] == 'SmartJobseeker.discoveryReport':
             if not self.discovery:
                 raise ReplayError('not_resource_discovery')
-            self.emit({'id': message['id'], 'result': {**self.report(), 'mode':'resource_discovery',
+            self.emit({'id': message['id'], 'result': {**self.report(), 'schema':2 if self.asset_request_variants else 1, 'mode':'resource_discovery',
                 'urls':sorted(self.proposals),
                 'child_documents':sorted(url for url, child in self.proposals.items() if child),
                 'assets':{url:sorted(kinds) for url,kinds in sorted(self.asset_proposals.items())},
                 'asset_request_origins':dict(sorted(self.asset_request_origins.items())),
                 'asset_origin_absent_stylesheets':sorted(self.asset_origin_absent_stylesheets),
+                'asset_request_variants':dict(sorted(self.asset_request_variants.items())),
                 'preload_projection_failures':self.archive.preload_projection_failures,
                 'omitted_requests':self.omitted_proposals,
                 'ineligible_requests':self.ineligible_requests, 'pending_commands':len(self.pending),
@@ -703,14 +740,19 @@ class Broker:
         raise ReplayError('discovery_command_refused')
 
     def propose(self, request, reason, child_document, asset_kind=None, resource_type=None):
-        if reason!='response_not_recorded' or request.get('method')!='GET':
+        if reason not in ('response_not_recorded','origin_variant_not_recorded','request_variant_not_recorded') or request.get('method')!='GET':
             self.ineligible_requests += 1
             return
-        # Never forward request headers, bodies, cookies or authentication.
-        if (request.get('hasPostData') or 'postData' in request or 'postDataEntries' in request
-                or any(str(k).lower() in ('cookie','authorization','proxy-authorization') and v
-                       for k,v in request.get('headers',{}).items())):
-            self.ineligible_requests += 1
+        # Only independently observed anonymous GET contexts can become variants.
+        headers=request.get('headers',{})
+        names=[key.lower() for key in headers if isinstance(key,str)] if isinstance(headers,dict) else []
+        if (not isinstance(headers,dict) or len(headers)>128 or len(names)!=len(headers) or len(set(names))!=len(names)
+                or any(not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]{1,256}",key)
+                       or not isinstance(value,str) or len(value)>8192 or any(ord(c)<32 or ord(c)==127 for c in value)
+                       for key,value in headers.items())
+                or request.get('hasPostData') or 'postData' in request or 'postDataEntries' in request
+                or any(key in names for key in ('cookie','authorization','proxy-authorization'))):
+            self.ineligible_requests+=1
             return
         url=request_url(request['url'])
         if url in self.conflicting_proposals:
@@ -729,21 +771,51 @@ class Broker:
                 self.ineligible_requests += 1
                 return
         absent_style = asset_kind == 'stylesheet' and origin_absent_stylesheet(request, resource_type)
-        if url in self.proposals and (self.asset_request_origins.get(url) != origin
-                or (url in self.asset_origin_absent_stylesheets) != absent_style):
-            self.ineligible_requests += 1
-            self.conflicting_proposals.add(url)
-            self.proposal_bytes -= len(url.encode('utf-8'))
-            del self.proposals[url]
-            self.asset_proposals.pop(url, None)
-            self.asset_request_origins.pop(url, None)
-            self.asset_origin_absent_stylesheets.discard(url)
+        if reason!='response_not_recorded' and origin is None and not absent_style:
+            self.ineligible_requests+=1
             return
         if url in self.proposals:
-            self.proposals[url] |= child_document
-            if asset_kind is not None:self.asset_proposals.setdefault(url,set()).add(asset_kind)
+            variants=self.asset_request_variants.get(url)
+            if variants is None:
+                variants=[{'kinds':sorted(self.asset_proposals.get(url,set())),
+                    'request_origin':self.asset_request_origins.get(url),
+                    'origin_absent_stylesheet':url in self.asset_origin_absent_stylesheets}]
+            same=next((v for v in variants if v['request_origin']==origin and v['origin_absent_stylesheet']==absent_style),None)
+            if same is not None:
+                if asset_kind is not None:
+                    same['kinds']=sorted(set(same['kinds'])|{asset_kind})
+                    self.asset_proposals.setdefault(url,set()).add(asset_kind)
+                self.proposals[url]|=child_document
+                return
+            # Different recorded Origins, including proven Stylesheet absence,
+            # are distinct. Unbound absence or mixed document/asset roles are not.
+            known=origin if origin is not None else '' if absent_style else None
+            compatible=(asset_kind is not None and not child_document and not self.proposals[url] and known is not None
+                and all((v['request_origin'] if v['request_origin'] is not None else '' if v['origin_absent_stylesheet'] else None) not in (None,known) for v in variants))
+            if compatible:
+                count=len(self.proposals)+sum(len(v)-1 for v in self.asset_request_variants.values())
+                if len(variants)>=8 or count>=128:
+                    self.omitted_proposals+=1
+                    return
+                proposed=[*variants,{'kinds':[asset_kind],'request_origin':origin,'origin_absent_stylesheet':absent_style}]
+                proposed.sort(key=lambda v:(v['request_origin'] or '',v['origin_absent_stylesheet']))
+                metadata={**self.asset_request_variants,url:proposed}
+                if len(json.dumps(metadata).encode('utf-8'))>128*1024:
+                    self.omitted_proposals+=1
+                    return
+                self.asset_request_variants[url]=proposed
+                self.asset_request_origins.pop(url,None)
+                self.asset_origin_absent_stylesheets.discard(url)
+                self.asset_proposals.setdefault(url,set()).add(asset_kind)
+                return
+            self.ineligible_requests+=1
+            self.conflicting_proposals.add(url)
+            self.proposal_bytes-=len(url.encode('utf-8'))
+            del self.proposals[url]
+            self.asset_proposals.pop(url,None);self.asset_request_origins.pop(url,None)
+            self.asset_origin_absent_stylesheets.discard(url);self.asset_request_variants.pop(url,None)
             return
-        if len(url)>4096 or len(self.proposals)+len(self.conflicting_proposals)>=128 or self.proposal_bytes+len(url.encode('utf-8'))>128*1024:
+        if len(url)>4096 or len(self.proposals)+len(self.conflicting_proposals)+sum(len(v)-1 for v in self.asset_request_variants.values())>=128 or self.proposal_bytes+len(url.encode('utf-8'))>128*1024:
             self.omitted_proposals += 1
             return
         self.proposals[url]=child_document

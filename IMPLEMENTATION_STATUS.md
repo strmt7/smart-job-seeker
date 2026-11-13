@@ -1,3 +1,13 @@
+## Independent request representations — 2026-11-13
+
+Saved archives can retain disjoint, independently collected representations of a
+URL. Native same-URL explicit/absent-Origin stylesheet replay verifies both
+bodies; legacy deep and embedded checks pass. Workspace: 1,354 passed, 602 ignored;
+portable replay: 66 passed. Windows build, final Clippy and fmt pass. The fresh
+real source still has 10 controls/3 walls and delayed resource/context gaps;
+no new workflow, model/GPU or held-out pass. R03 remains active.
+[Evidence](docs/g1/REQUEST_REPRESENTATION_VARIANTS_2026-11-13.md).
+
 ## Scoped model output and deeper discovery — 2026-11-13
 
 Offered-ID output schemas fix an observed missing-review/runaway-selector response:

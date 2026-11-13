@@ -256,6 +256,32 @@ pub(super) fn write_new(root: &Path, name: &str, bytes: &[u8]) -> Result<String,
         .map_err(|_| "Cannot save snapshot resource")?;
     Ok(waypoint_domain::sha256_hex(bytes))
 }
+// Existing binding predicates must be provably disjoint. Unbound responses
+// cannot be made more specific retrospectively or chosen by list order.
+fn variants_disjoint(left: &Value, right: &Value) -> bool {
+    let origin = |item: &Value| {
+        item["request_origin"]
+            .as_str()
+            .map(str::to_owned)
+            .or_else(|| (item["request_origin_absent"] == true).then(String::new))
+    };
+    let kind = |item: &Value| {
+        if item["request_origin_absent_stylesheet"] == true {
+            Some("Stylesheet")
+        } else if item["request_origin_absent"] == true {
+            Some("Document")
+        } else {
+            None
+        }
+    };
+    origin(left).zip(origin(right)).is_some_and(|(a, b)| a != b)
+        || kind(left).zip(kind(right)).is_some_and(|(a, b)| a != b)
+        || left["request_accept"]
+            .as_str()
+            .zip(right["request_accept"].as_str())
+            .is_some_and(|(a, b)| a != b)
+}
+
 impl SnapshotBuilder {
     /// An immutable rendering checkpoint while the anonymous collector remains
     /// active. Only the render-only worker may consume these checkpoints.
@@ -362,9 +388,6 @@ impl SnapshotBuilder {
             return Err("Only GET representations can enter this snapshot".into());
         }
         let url = canonical(resource_url, false)?;
-        if self.urls.contains(&url) {
-            return Err("Snapshot request identity is ambiguous".into());
-        }
         if self.resources.len() >= 512
             || response.body.len() > MAX_BODY
             || self.total.saturating_add(response.body.len()) > MAX_TOTAL
@@ -479,7 +502,7 @@ impl SnapshotBuilder {
         }
         let mut entry = url::Url::parse(&self.entry_url).map_err(|_| "Invalid snapshot entry")?;
         entry.set_fragment(None);
-        let first = url == entry.as_str();
+        let first = url == entry.as_str() && !self.files.contains_key("index.html");
         if first
             && (!(200..300).contains(&response.status)
                 || !headers.iter().any(|h| {
@@ -501,16 +524,7 @@ impl SnapshotBuilder {
         {
             return Err("Snapshot entry is not a successful HTML representation".into());
         }
-        let filename = if first {
-            "index.html".into()
-        } else {
-            format!("resource-{:04}.bin", self.resources.len() + 1)
-        };
-        let hash = write_new(&self.root, &filename, &response.body)?;
-        self.total += response.body.len();
-        self.files.insert(filename.clone(), hash.clone());
-        self.urls.insert(url.clone());
-        let mut resource = json!({"url":url,"method":"GET","request_body_sha256":waypoint_domain::sha256_hex(b""),"status":response.status,"headers":headers,"body_file":filename,"body_sha256":hash});
+        let mut resource = json!({"url":url,"method":"GET","request_body_sha256":waypoint_domain::sha256_hex(b""),"status":response.status,"headers":headers});
         if let Some(origin) = request_origin {
             resource["request_origin"] = json!(origin);
         } else if binding.origin {
@@ -528,6 +542,27 @@ impl SnapshotBuilder {
         if binding.requested_with_absent {
             resource["request_x_requested_with_absent"] = json!(true);
         }
+        let previous: Vec<_> = self
+            .resources
+            .iter()
+            .filter(|r| r["url"] == resource["url"])
+            .collect();
+        if previous.len() >= 8 || previous.iter().any(|r| !variants_disjoint(r, &resource)) {
+            return Err(
+                "Snapshot request identity is ambiguous or exceeds its variant budget".into(),
+            );
+        }
+        let filename = if first {
+            "index.html".into()
+        } else {
+            format!("resource-{:04}.bin", self.resources.len() + 1)
+        };
+        let hash = write_new(&self.root, &filename, &response.body)?;
+        self.total += response.body.len();
+        self.files.insert(filename.clone(), hash.clone());
+        self.urls.insert(url.clone());
+        resource["body_file"] = json!(filename);
+        resource["body_sha256"] = json!(hash);
         self.resources.push(resource);
         if ignored_cookie {
             self.warnings.insert("response_cookies_not_replayed");
@@ -541,7 +576,7 @@ impl SnapshotBuilder {
         if !self.files.contains_key("index.html") {
             return Err("Snapshot entry has not been captured".into());
         }
-        let manifest = json!({"schema":1,"body_representation":"decoded_http","entry_url":self.entry_url,"resources":self.resources});
+        let manifest = json!({"schema":if self.resources.len()>self.urls.len() {2}else{1},"body_representation":"decoded_http","entry_url":self.entry_url,"resources":self.resources});
         let bytes =
             serde_json::to_vec_pretty(&manifest).map_err(|_| "Cannot encode replay manifest")?;
         if bytes.len() > 1024 * 1024 {
@@ -598,6 +633,108 @@ mod tests {
     fn builder(root: &Path) -> SnapshotBuilder {
         SnapshotBuilder::start(&root.join("capture"), "https://fixture.invalid/form#apply").unwrap()
     }
+    fn origin_style(origin: Option<&str>) -> CapturedResponse {
+        let mut value = response("input{color:green}", "text/css", "Vary: Origin\r\n");
+        value.request_header_names = Some(vec!["host".into(), "accept".into()]);
+        value.request_accept = Some("*/*".into());
+        if let Some(origin) = origin {
+            value.request_origin = Some(waypoint_net::PublicRequestOrigin::parse(origin).unwrap());
+            value
+                .request_header_names
+                .as_mut()
+                .unwrap()
+                .push("origin".into());
+        }
+        value
+    }
+    #[test]
+    fn versioned_variants_require_independent_disjoint_binding_before_writing() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut capture = builder(temp.path());
+        capture
+            .add(
+                "https://fixture.invalid/form",
+                response("<!doctype html>Fixture", "text/html", ""),
+            )
+            .unwrap();
+        let url = "https://cdn.fixture.invalid/shared.css";
+        capture
+            .add(url, origin_style(Some("https://fixture.invalid")))
+            .unwrap();
+        capture
+            .add_scoped(
+                url,
+                origin_style(None),
+                SnapshotScope::OriginAbsentStylesheet,
+            )
+            .unwrap();
+        let snapshot = capture.finish().unwrap();
+        let manifest: Value =
+            serde_json::from_slice(&fs::read(snapshot.root.join(snapshot.manifest)).unwrap())
+                .unwrap();
+        assert_eq!(manifest["schema"], 2);
+        assert_eq!(manifest["resources"].as_array().unwrap().len(), 3);
+        assert_ne!(
+            manifest["resources"][1]["body_file"],
+            manifest["resources"][2]["body_file"]
+        );
+        assert_eq!(
+            manifest["resources"][1]["request_origin"],
+            "https://fixture.invalid"
+        );
+        assert_eq!(
+            manifest["resources"][2]["request_origin_absent_stylesheet"],
+            true
+        );
+        for duplicate in [true, false] {
+            let temp = tempfile::tempdir().unwrap();
+            let mut capture = builder(temp.path());
+            capture
+                .add(
+                    "https://fixture.invalid/form",
+                    response("Fixture", "text/html", ""),
+                )
+                .unwrap();
+            capture
+                .add(url, origin_style(Some("https://fixture.invalid")))
+                .unwrap();
+            let value = if duplicate {
+                origin_style(Some("https://fixture.invalid"))
+            } else {
+                response("input{}", "text/css", "")
+            };
+            assert!(capture.add(url, value).is_err());
+            assert!(!capture.root.join("resource-0003.bin").exists());
+            assert!(capture.finish().is_err());
+        }
+    }
+    #[test]
+    fn representation_budget_counts_same_url_variants() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut capture = builder(temp.path());
+        capture
+            .add(
+                "https://fixture.invalid/form",
+                response("Fixture", "text/html", ""),
+            )
+            .unwrap();
+        for index in 0..8 {
+            capture
+                .add(
+                    "https://cdn.fixture.invalid/shared.css",
+                    origin_style(Some(&format!("https://site{index}.invalid"))),
+                )
+                .unwrap();
+        }
+        assert!(capture
+            .add(
+                "https://cdn.fixture.invalid/shared.css",
+                origin_style(Some("https://overflow.invalid"))
+            )
+            .is_err());
+        assert!(capture.finish().is_err());
+    }
+
     #[test]
     fn anonymous_navigation_variants_retain_native_request_proof_and_all_vary_lines() {
         let temp = tempfile::tempdir().unwrap();

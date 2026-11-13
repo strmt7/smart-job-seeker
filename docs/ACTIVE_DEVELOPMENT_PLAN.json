@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "reviewed_on": "2026-11-13",
-  "reviewed_source": "5b1c986370bc972c457785ffa16aeabf7aa9fcff",
+  "reviewed_source": "3da8464837551984b8c47e5f168aa52127983892",
   "goal": "Continue the existing active Smart Jobseeker product-development goal",
   "plan": "docs/COMPLETION_PLAN_2026-11-11.md",
   "assessment": "docs/REPO_STATE_REVIEW_2026-11-11.md",
@@ -101,7 +101,7 @@
         "Freeze employer/layout-family held-out partition before tuning.",
         "Report field, workflow, abstention, error, elapsed and resource denominators; repeat model-sensitive promotion candidates."
       ],
-      "next_action": "Continue independent untouched-family/workflow evaluation and repeats before promotion. Diagnose retained withheld residence radio and saved-employer résumé visual failure with raw native/model evidence. Keep offered-ID grammars advisory to semantic/native/visual validation; do not hide critical uncertainty or credit completed controllers as workflow passes.",
+      "next_action": "Continue independent untouched-family/workflow evaluation and repeats before promotion. Diagnose retained withheld residence radio and saved-employer r\u00e9sum\u00e9 visual failure with raw native/model evidence. Keep offered-ID grammars advisory to semantic/native/visual validation; do not hide critical uncertainty or credit completed controllers as workflow passes.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "completed_scopes": [
         "Bounded corpus identity/partition/input protocol and explicit field gate; two development cases, no held-out coverage.",
@@ -112,7 +112,7 @@
         "2026-11-13: froze four more platform candidates, collected4 compiled read-only attempts/3 native inventories (3 job-alert,16 and10 supported controls; none omitted),0 entry-eligible/0 model-scored. One response representation excluded. Pinpoint reclassified to development before generic context repair; all original manifests/results preserved.",
         "2026-11-13: request-representation source family is development; immutable selectionv3 retains initial manifests/failures. New10-control saved inventory has0 omissions but no entry eligibility or independent full-workflow/requiredness truth. No model score or promotion.",
         "Independent four-control fictional dialog truth and raw decision/control oracle retained before inference. Corrected an initial scorer that credited a validated fallback as raw model correctness; original legal response remains failed. Final tuned dialog decisions pass once; contact sensitivity remains 0/3, with no held-out/workflow credit.",
-        "Bounded opt-in native completion/response diagnostics identify missing manual_review and a 512-token invented-selector repair. Offered-ID/key schemas improve frozen fictional contact case 0/3 to3/3; French6/7 and saved-employer4/6 plus1unverified résumé remain unchanged. No unknown entered, held-out or workflow credit."
+        "Bounded opt-in native completion/response diagnostics identify missing manual_review and a 512-token invented-selector repair. Offered-ID/key schemas improve frozen fictional contact case 0/3 to3/3; French6/7 and saved-employer4/6 plus1unverified r\u00e9sum\u00e9 remain unchanged. No unknown entered, held-out or workflow credit."
       ],
       "start_requirements": [
         "Existing versioned input-binding/evaluation protocol is implemented; reviewed in tools/form_corpus.py and docs/FORM_EVALUATION.md."
@@ -153,16 +153,17 @@
         "docs/g1/UNSEEN_FAMILIES_AND_QUESTION_CONTEXT_2026-11-13.md",
         "docs/g1/OBSERVED_DOCUMENT_REPRESENTATION_2026-11-13.md",
         "docs/g1/CONTAINED_DIALOG_PROGRESSION_2026-11-13.md",
-        "docs/g1/SCOPED_MAPPING_AND_DEEP_DISCOVERY_2026-11-13.md"
+        "docs/g1/SCOPED_MAPPING_AND_DEEP_DISCOVERY_2026-11-13.md",
+        "docs/g1/REQUEST_REPRESENTATION_VARIANTS_2026-11-13.md"
       ],
       "execution_batch": "B",
       "steps": [
-        "Preserve current source and native evidence; test absent-Origin Stylesheet request/header proof, conflicts, credentials/body, wrong types/MIME/Vary and redirect scope.",
-        "Qualify new binding using the existing native fictional capture/replay harness; retain offline isolation and incompatible-request refusals.",
-        "Collect a new permitted read-only source copy and inspect actual rendering/native labels without modifying historical manifests.",
-        "Only if necessary, repair generic bounded label/control context; qualify earlier and untouched cases, then coherent integration and ownership checks."
+        "Bind native discovery versus final-inventory request/context and bounded timing observations to the fresh permitted source; preserve unknowns and original evidence.",
+        "Repair only demonstrated generic observation/collection gaps without changing request identity, permissions, robots or write isolation.",
+        "Qualify both single- and multiple-representation native cases, earlier and untouched saved cases; retain requiredness/custom-panel and missing-response review states.",
+        "Run coherent integration, source/engine identity and owned-resource teardown checks; keep R02 representative/held-out requirements visible."
       ],
-      "next_action": "Investigate multiple actual request representations for the same stylesheet URL and late unrecorded requests using the retained native header/source identity. Preserve explicit Origin/absence, Vary, script-write and ambiguous-replay refusals. Requiredness/custom panels, missing resources and varied workflow fidelity remain open; no header overrides or fabricated responses.",
+      "next_action": "Compare render-only discovery and final offline inventory timing/owned target contexts for the retained absent-Origin Stylesheet refusal. Version2 independently captured disjoint variants now work natively, but fresh real source remains version1 and incomplete. Preserve native header proof, Vary, POST, credentials and ambiguous-context refusals; never infer or override missing headers. Then qualify earlier and untouched cases, requiredness and custom-control fidelity.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "completed_scopes": [
         "Observed absent-Origin GET Stylesheet binding and strict capture/replay proof; malformed/conflicting/cross-type cases refused.",
@@ -172,7 +173,8 @@
         "2026-11-13: generic shared-section native radios retain distinct bounded advisory questions; sensitive/manual remains. Fictional positive/hidden/ambiguous/nested checks and11 selected native regressions pass. Compiled saved-development replay distinguishes8 groups with barriers retained; shortened labels explicitly marked in4-width actual record UI.",
         "2026-11-13: observed native engine Document Accept in a scriptless zero-capability sentinel, bound typed anonymous public GETs and exact replay (including X-Requested-With absence and repeated Vary lines). Native root/frame and legacy refusal fixtures pass. Production recollection now archives30 resources/10 supported controls; dialog/custom/obscured barriers remain,0 eligible/0 model-scored. No header overrides or live employer actions.",
         "Contained optional-dialog inventory, local semantic proposal, before/after visual review and sealed native closure witness; 7-case native adversarial qualification, two final fictional model intent checks, explicit saved-employer replay refusal and compiled record UI at four widths. No field/workflow or held-out completion credit.",
-        "Shared eight-pass discovery ceiling with unchanged session budgets/early stopping; fictional native six-script chain observes the final form in7passes. Fresh permitted source gains4resources (34/42requests), stopsReviewRequired after6passes, retains10controls/3walls and all request/context barriers."
+        "Shared eight-pass discovery ceiling with unchanged session budgets/early stopping; fictional native six-script chain observes the final form in7passes. Fresh permitted source gains4resources (34/42requests), stopsReviewRequired after6passes, retains10controls/3walls and all request/context barriers.",
+        "Versioned independently captured disjoint request representations; native same-URL Origin/absent-Origin Stylesheet replay verifies both styles, 3 representations/2 URLs/5 simulated requests. Legacy deep and embedded checks pass. Fresh real saved source remains34URLs/42requests,10controls/3walls with delayed variant/POST/resource gaps; no workflow or held-out credit."
       ],
       "start_requirements": [
         "R02 input-binding protocol exists; full representative/held-out collection is not required to begin this rendering repair.",
@@ -229,8 +231,8 @@
         "Native-bound failed-entry witness and coherent diagnostic image/text without accepting the entry; challenge/schema/document changes refuse observations.",
         "Actual failed Phone image/value retained: +1 202-555-0123 versus intended +12025550123. Independent gate stays failed; no section advances.",
         "Native tel-only presentation proof and stable actual-value captures, separate raw local-model transcription and explicit oracle comparison; final known-source run verifies4/6 initial answerable controls. No held-out or full-workflow claim.",
-        "Bounded generic document catalog proposals and distinct PDF truth; three known-source local12B runs choose both roles. Explicit current native file-group proof supports separate label comparison. Four of six controls verified; résumé visual gap remains, cover unreached, workflow not qualified.",
-        "Phase-specific file-feedback context preserves pre-entry/contact images; per-entry replay deltas retain degraded states. Final local12B4/6 verified with native résumé selection still visually unverified; field/workflow gates remain failed/not_qualified. Native embedded/contact feedback and rendered record/inspector/zoom checks pass within documented scopes.",
+        "Bounded generic document catalog proposals and distinct PDF truth; three known-source local12B runs choose both roles. Explicit current native file-group proof supports separate label comparison. Four of six controls verified; r\u00e9sum\u00e9 visual gap remains, cover unreached, workflow not qualified.",
+        "Phase-specific file-feedback context preserves pre-entry/contact images; per-entry replay deltas retain degraded states. Final local12B4/6 verified with native r\u00e9sum\u00e9 selection still visually unverified; field/workflow gates remain failed/not_qualified. Native embedded/contact feedback and rendered record/inspector/zoom checks pass within documented scopes.",
         "Contained semantic contact proposals reuse native options/constraints, captured aliases and section context, with strict failure/manual exclusions and bound records. Repaired native preflight passes. Fictional local12B case proposes6, verifies2/7, leaves2 unknown; email vision omission stops entry and residence radio remains manual. No field/workflow/held-out promotion.",
         "Conditional blind coverage distinguishes absence from ambiguous/different/limited evidence, retains raw first and second observations, and vetoes conflicts/failures. Native text/select detail views preserve original inputs. Frozen French case4/7 and prior family4/6; neither field/workflow gate passes. Scoped native/unit/actual UI checks pass.",
         "Shared pre/post coverage resolver retains exact/native-telephone and conflict/ambiguity/failure gates. Post-entry native detail recovers Country; French6/7 with0 wrong/unverified performed entries,2 unknown untouched and radio withheld. Prior family4/6, no full-workflow or held-out success. Native regressions and actual UI pass."

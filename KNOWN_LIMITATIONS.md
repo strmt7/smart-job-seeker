@@ -10,6 +10,15 @@ frame/shadow traversal, candidate-file import, structured history and semantic
 fit assessment also exist. Their broad qualification and recovery limits remain
 open; the earlier statements that those mechanisms are absent are superseded.
 
+Current request-representation continuation, 2026-11-13: independently captured,
+disjoint same-URL variants now pass native replay with both stylesheet bodies.
+Fresh permitted source collection still records only one of a later stylesheet's
+request contexts, so the real saved page remains review-required (10 controls,
+3 walls). Discovery versus final-inventory timing/context, POST and missing
+resources, requiredness and custom controls remain open. No workflow, held-out
+or new model/GPU qualification is claimed.
+[Evidence](docs/g1/REQUEST_REPRESENTATION_VARIANTS_2026-11-13.md).
+
 Current scoped-mapping continuation, 2026-11-13: the missing review array and
 runaway invented-selector repair are fixed with offered-ID schemas; the known
 optional/contact case now verifies 3/3, salary blank. French remains 6/7 and the
