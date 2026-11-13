@@ -4846,7 +4846,10 @@ impl CdpDriver {
                 if start.elapsed() > Duration::from_secs(8) {
                     return Err(DriverError("Form visibility inspection exceeded its time budget; manual review is needed".into()));
                 }
-                if self.control_visibility_and_path(node)?.0 {
+                let (visible, _, _, needs_review, _) = self.control_visibility_and_path(node)?;
+                // Clipping or transparency is not positive evidence of an
+                // absent frame. Its uninspected content must retain review.
+                if visible || needs_review {
                     let model = self.cdp.call("DOM.getBoxModel", json!({"nodeId":node}));
                     let empty = model.as_ref().ok().is_some_and(|value| {
                         value.pointer("/model/width").and_then(Value::as_f64) == Some(0.0)

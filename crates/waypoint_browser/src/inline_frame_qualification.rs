@@ -40,6 +40,15 @@ fn inline_frame_completeness_and_stale_scope_qualification() {
         "navigation",
         "reparented_owner",
         "replaced_owner",
+        "tall",
+        "wide",
+        "partly_above",
+        "nested_tall",
+        "tall_scroll_end",
+        "tall_covered",
+        "tall_clipped",
+        "tall_offscreen",
+        "tall_transparent",
     ];
     let selected = std::env::var("WAYPOINT_INLINE_CASE").ok();
     if let Some(selected) = &selected {
@@ -51,6 +60,35 @@ fn inline_frame_completeness_and_stale_scope_qualification() {
         }
         let mut sources: Vec<(String, String)> = vec![];
         let body = match name {
+            "tall" | "wide" | "partly_above" | "tall_scroll_end" | "tall_covered"
+            | "tall_clipped" | "tall_offscreen" | "tall_transparent" => {
+                let field = if name == "partly_above" {
+                    format!("<div style='padding-top:1720px'>{input}</div>")
+                } else if name == "tall_scroll_end" {
+                    format!("<div style='padding-top:2500px'>{input}</div>")
+                } else {
+                    input.to_owned()
+                };
+                sources.push((a.into(), field));
+                let style = match name {
+                    "wide" => "style='width:3200px;height:240px'",
+                    "partly_above" => "style='height:1800px;position:relative;top:-1700px'",
+                    "tall_transparent" => "style='height:3200px;opacity:0'",
+                    _ => "style='height:3200px'",
+                };
+                let owner = iframe(a, style);
+                match name {
+                    "tall_covered" => format!("{owner}<div style='position:fixed;inset:0;background:white;z-index:100'>Fictional overlay</div>"),
+                    "tall_clipped" => format!("<div style='overflow:hidden;height:240px'>{owner}</div>"),
+                    "tall_offscreen" => format!("<div style='height:3200px'></div>{owner}"),
+                    _ => owner,
+                }
+            }
+            "nested_tall" => {
+                sources.push((a.into(), format!("{input}{}", iframe(b, "style='width:700px;height:2800px'"))));
+                sources.push((b.into(), input.into()));
+                iframe(a, "style='height:3200px'")
+            }
             "nested" => {
                 sources.push((a.into(), format!("{input}{}", iframe(b, "height=160"))));
                 sources.push((b.into(), input.into()));
@@ -191,6 +229,11 @@ fn inline_frame_completeness_and_stale_scope_qualification() {
                     | "navigation"
                     | "reparented_owner"
                     | "replaced_owner"
+                    | "tall"
+                    | "wide"
+                    | "partly_above"
+                    | "nested_tall"
+                    | "tall_scroll_end"
             );
             if eligible == form.independent_field_entry_blocked() {
                 let root = driver.document_with_frames(true)?;
@@ -207,24 +250,29 @@ fn inline_frame_completeness_and_stale_scope_qualification() {
                     "Unexpected inline eligibility for {name}"
                 )));
             }
-            if form.schema.fields.is_empty() {
+            if form.schema.fields.is_empty() && !matches!(name, "tall_clipped" | "tall_transparent")
+            {
                 return Err(DriverError(
                     "Fixture's known inline field was not inspected".into(),
                 ));
             }
             if !eligible {
                 let mut called = false;
-                let attempted = driver.rehearse_recorded_field_reviewed(
-                    &form,
-                    &form.schema.fields[0].selector,
-                    "Avery",
-                    &[],
-                    |_| {
-                        called = true;
-                        Ok(())
-                    },
-                );
-                if attempted.is_ok()
+                // A clipped/transparent scope can expose no inspected control.
+                // Do not invent one to claim that its action guard was tested.
+                let attempted = form.schema.fields.first().map(|field| {
+                    driver.rehearse_recorded_field_reviewed(
+                        &form,
+                        &field.selector,
+                        "Avery",
+                        &[],
+                        |_| {
+                            called = true;
+                            Ok(())
+                        },
+                    )
+                });
+                if attempted.as_ref().is_some_and(Result::is_ok)
                     || called
                     || driver
                         .trace
@@ -245,10 +293,10 @@ fn inline_frame_completeness_and_stale_scope_qualification() {
                     ));
                 }
                 return Ok(
-                    json!({"status":"needs_review","fields_entered":0,"callback_reached":called,"walls":form.walls}),
+                    json!({"status":"needs_review","fields_entered":0,"command_attempted":attempted.is_some(),"callback_reached":called,"walls":form.walls}),
                 );
             }
-            let expected = if matches!(name, "nested" | "siblings") {
+            let expected = if matches!(name, "nested" | "siblings" | "nested_tall") {
                 2
             } else {
                 1

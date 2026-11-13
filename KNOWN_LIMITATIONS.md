@@ -1,12 +1,22 @@
 # Known limitations register (T050)
 
+The [viewport continuation](docs/g1/FRAME_VIEWPORT_AVAILABILITY_2026-11-13.md)
+qualifies five visible frame-geometry variations, preserves four additional
+review cases and fixes zero-field clipped/transparent scopes losing review.
+The current 24-case native matrix passes; one compiled tall-form local 12B run
+verifies 2/2 supported facts, unknown0/6. This covers authored geometry, not
+arbitrary transformed layouts or wholly offscreen entry. The compiled clipped
+preview remains explicitly blocked. No whole-workflow/held-out credit or
+sustained leak qualification; earlier shutdown uncertainty remains open.
+
 The [structural evaluation continuation](docs/g1/STRUCTURAL_CONTROL_EVALUATION_2026-11-13.md)
 adds bounded schema-3 identities and two local 12B runs of one embedded development
 variation, each 2/2 supported answers with six unknowns unentered. Six native
 identity scenarios close cleanly. This is fixed-source structural identity,
 not identity across arbitrary layout changes or broad frame/model accuracy.
-Whole-workflow, held-out, tall/offscreen and target-less frame qualification
-remain open. Both model trees drain; sampled host RAM stays above 20 GiB.
+Whole-workflow, held-out and target-less frame qualification remain open.
+The later viewport evidence above adds authored tall/partly visible cases;
+wholly offscreen entry still needs review. Both model trees drain; sampled host RAM stays above 20 GiB.
 
 The [inline-frame continuation](docs/g1/INLINE_FRAME_COMPLETENESS_2026-11-13.md)
 adds native inspection-completeness evidence and bounded same-origin field entry,

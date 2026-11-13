@@ -445,7 +445,34 @@ impl CdpDriver {
                 if (right<=left || bottom<=top || left>box.left+0.5 || right<box.right-0.5 || top>box.top+0.5 || bottom<box.bottom-0.5) needs_review=true;
                 let access=false;
                 try {access=this.contentDocument!==null;if(access){const origin=this.contentWindow.origin;if(typeof origin!=='string' || origin.length>8192)return null;accessible_origin=origin;}} catch (_) {}
-                let current = this, view = window, x = (box.left + box.right)/2, y = (box.top + box.bottom)/2;
+                // Owner availability is not full-field visibility. A tall or
+                // wide owner can be available while its full center is outside
+                // the viewport. Select a point in the common visible rectangle
+                // of every accessible ancestor viewport, then retain the exact
+                // owner hit tests below. Individual fields still need their
+                // own complete capture, hit test and fresh native readback.
+                let visibleLeft=Math.max(left,0), visibleRight=Math.min(right,innerWidth);
+                let visibleTop=Math.max(top,0), visibleBottom=Math.min(bottom,innerHeight);
+                let projection=window, offsetX=0, offsetY=0, reachedTop=false;
+                for(let depth=0;depth<12;depth++) {
+                    if(visibleRight-visibleLeft<1 || visibleBottom-visibleTop<1) return {access,needs_review:true,accessible_origin};
+                    if(projection===projection.top) {reachedTop=true;break;}
+                    const owner=projection.frameElement;
+                    if(!owner || projection.parent.getComputedStyle(owner).transform!=='none') return {access,needs_review:true,accessible_origin};
+                    const bounds=owner.getBoundingClientRect();
+                    if(Math.abs(bounds.width-owner.offsetWidth)>.5 || Math.abs(bounds.height-owner.offsetHeight)>.5
+                        || Math.abs(owner.clientWidth-projection.innerWidth)>.5 || Math.abs(owner.clientHeight-projection.innerHeight)>.5)
+                        return {access,needs_review:true,accessible_origin};
+                    const dx=bounds.left+owner.clientLeft, dy=bounds.top+owner.clientTop;
+                    if(!Number.isFinite(dx) || !Number.isFinite(dy)) return null;
+                    visibleLeft=Math.max(visibleLeft+dx,0);visibleRight=Math.min(visibleRight+dx,projection.parent.innerWidth);
+                    visibleTop=Math.max(visibleTop+dy,0);visibleBottom=Math.min(visibleBottom+dy,projection.parent.innerHeight);
+                    offsetX+=dx;offsetY+=dy;projection=projection.parent;
+                }
+                if(!reachedTop) return {access,needs_review:true,accessible_origin};
+                const px=Math.min((visibleLeft+visibleRight)/2,projection.innerWidth-1), py=Math.min((visibleTop+visibleBottom)/2,projection.innerHeight-1);
+                if(px<visibleLeft || px>=visibleRight || py<visibleTop || py>=visibleBottom) return {access,needs_review:true,accessible_origin};
+                let current=this, view=window, x=px-offsetX, y=py-offsetY;
                 for (let depth = 0; depth < 12; depth++) {
                     if (x<0 || y<0 || x>=view.innerWidth || y>=view.innerHeight) return {access,needs_review:true,accessible_origin};
                     const root = current.getRootNode();

@@ -1,3 +1,14 @@
+## Tall and clipped embedded forms - 2026-11-13
+
+Visible fields inside tall, wide and partly visible inline forms now pass native
+entry checks. Clipped or transparent scopes retain review even when no fields
+were inspected. The expanded 24-case native matrix passes with 16 exact
+readbacks and 11 review outcomes; all browsers close. The compiled clipped-form
+preview reports review correctly. One local 12B tall-form run verifies 2/2 facts
+and leaves six unknowns untouched. Workspace 1,371 passed / 612 ignored;
+Clippy/build/fmt pass. [Evidence](docs/g1/FRAME_VIEWPORT_AVAILABILITY_2026-11-13.md).
+Whole-workflow and model-scored held-out qualification remain open.
+
 ## Structural frame evaluation - 2026-11-13
 
 Schema 3 separates stable structural evaluation keys from native action/lease
