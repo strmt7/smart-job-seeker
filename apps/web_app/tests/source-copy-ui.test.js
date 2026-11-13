@@ -25,6 +25,20 @@ function harness(api, onFinished) {
     {kind:'page',label:'Page',image:'0001.png',sha256:digest,fields:[{label:'Parent name'}]},
     {kind:'frame',label:'Qualifications',image:'0002.png',sha256:digest,fields:[{label:'Child answer',required:true}]},
   ] };
+  for (const [activity,message] of [
+    [{status:'unavailable'},'Request activity was unavailable for this check.'],
+    [{status:'observed',scope:'entry_and_review_interval',delta:{blocked:1}},'During this check, the saved page blocked 1 request. The website response remains unverified.'],
+    [{status:'observed',scope:'entry_and_review_interval',delta:{blocked:3}},'During this check, the saved page blocked 3 requests. The website response remains unverified.'],
+    [{status:'observed',scope:'entry_and_review_interval',delta:{blocked:0}},null],
+    [{status:'observed',scope:'wrong',delta:{blocked:1}},null],
+    [{status:'observed',scope:'entry_and_review_interval',delta:{blocked:'secret-url'}},null],
+  ]) {
+    const panel=harness(async()=>{}).preview({...preview,rehearsal:{scope:'fictional_saved_form',fields:[{view:1,label:'Upload',kind:'file',status:'visual_unobserved',replay_activity:activity}]}},{});
+    assert(find(panel,node=>node.textContent==='Upload · Selected file needs visual review'));
+    if(message)assert(find(panel,node=>node.textContent===message));
+    else assert.equal(find(panel,node=>node.textContent.includes('During this check')),undefined);
+    assert.equal(find(panel,node=>node.textContent==='Attachment and image match'),undefined);
+  }
   for (const [native, state, visible] of [[true,'visually_matched',true],[false,'visually_matched',false],[true,'entry_unverified',false]]) {
     const formatted = harness(async () => {}).preview({...preview, rehearsal:{scope:'fictional_saved_form',fields:[{
       view:1,label:'International contact',kind:'text',native_verified:native,status:state,value_comparison:'international_telephone_presentation',
@@ -111,6 +125,7 @@ function harness(api, onFinished) {
       {view:2,kind:'radio',label:'City',status:'visual_unavailable'},
       {view:2,kind:'file',label:'Resume',status:'visual_unavailable',attachment:{name:'sample-resume.pdf'}},
       {view:2,kind:'file',label:'Cover letter',status:'visual_unobserved'},
+      {view:2,kind:'file',label:'Certificate',status:'visual_difference'},
     ]},
   }, {jobId:'job',attemptId:'test',api:async () => {}});
   const choiceSelect = find(choice,node => node.tag==='select');
@@ -119,6 +134,7 @@ function harness(api, onFinished) {
   assert(find(choice,node => node.textContent==='City · Selection verified in form · visual review unavailable'));
   assert(find(choice,node => node.textContent==='Resume · Attachment verified in form · visual review unavailable'));
   assert(find(choice,node => node.textContent==='Cover letter · Selected file needs visual review'));
+  assert(find(choice,node => node.textContent==='Certificate · Selected file needs visual review'));
   assert(find(choice,node => node.textContent==='sample-resume.pdf'));
   const stages = harness(async () => {}).preview({
     views: [...preview.views, {kind:'frame', label:'Qualifications', scope_view:2, section:2,

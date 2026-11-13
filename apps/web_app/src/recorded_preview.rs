@@ -590,6 +590,40 @@ fn recorded_vision_status(outcome: crate::visual_review::RecordedVisionOutcome) 
     }
 }
 
+/// Activity observed during entry and its visual/native review, not causality,
+/// server acceptance, or a complete inventory of browser/network channels.
+#[cfg(any(windows, test))]
+fn observed_replay_activity(before: Option<&Value>, after: Option<&Value>) -> Value {
+    let unavailable = || serde_json::json!({"status":"unavailable","reason":"replay_counters_unavailable_or_changed"});
+    let (Some(before), Some(after)) = (before, after) else {
+        return unavailable();
+    };
+    if [before, after]
+        .iter()
+        .any(|report| report["schema"] != 1 || report["mode"] != "offline_response_replay")
+    {
+        return unavailable();
+    }
+    let mut delta = serde_json::Map::new();
+    for key in [
+        "served",
+        "blocked",
+        "cached_non_read_replies",
+        "unreplayed_transports",
+        "unmanaged_child_sessions",
+    ] {
+        let Some(value) = before[key]
+            .as_u64()
+            .zip(after[key].as_u64())
+            .and_then(|(before, after)| after.checked_sub(before))
+        else {
+            return unavailable();
+        };
+        delta.insert(key.to_owned(), value.into());
+    }
+    serde_json::json!({"status":"observed","scope":"entry_and_review_interval","delta":delta})
+}
+
 #[cfg(windows)]
 struct Rehearsal {
     vision: RehearsalVision,
@@ -711,6 +745,7 @@ impl Rehearsal {
             let mut target_refused = false;
             let mut witness = None;
             let verified: Vec<_> = captures.iter().map(|(_, capture, _)| capture).collect();
+            let replay_before = driver.rehearsal_replay_report().ok();
             match driver.rehearse_recorded_field_reviewed(
                 form,
                 &field.selector,
@@ -787,6 +822,9 @@ impl Rehearsal {
                     self.halted = true;
                 }
             }
+            let replay_after = driver.rehearsal_replay_report().ok();
+            result["replay_activity"] =
+                observed_replay_activity(replay_before.as_ref(), replay_after.as_ref());
             self.fields.push(result);
             if self.halted {
                 break;
@@ -956,6 +994,59 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    #[test]
+    fn replay_activity_preserves_unknowns_and_does_not_claim_causality() {
+        let before = json!({"schema":1,"mode":"offline_response_replay","served":10,"blocked":3,
+            "cached_non_read_replies":0,"unreplayed_transports":0,"unmanaged_child_sessions":0});
+        let mut after = before.clone();
+        after["served"] = json!(12);
+        after["blocked"] = json!(4);
+        let activity = observed_replay_activity(Some(&before), Some(&after));
+        assert_eq!(activity["status"], "observed");
+        assert_eq!(activity["scope"], "entry_and_review_interval");
+        assert_eq!(activity["delta"]["blocked"], 1);
+        assert_eq!(activity["delta"]["served"], 2);
+        assert!(activity.get("entry_verified").is_none());
+        for key in [
+            "served",
+            "blocked",
+            "cached_non_read_replies",
+            "unreplayed_transports",
+            "unmanaged_child_sessions",
+        ] {
+            for value in [Value::Null, json!(-1), json!(1.5), json!("0")] {
+                let mut invalid = after.clone();
+                invalid[key] = value;
+                assert_eq!(
+                    observed_replay_activity(Some(&before), Some(&invalid))["status"],
+                    "unavailable"
+                );
+            }
+        }
+        let mut regressed = before.clone();
+        regressed["served"] = json!(9);
+        assert_eq!(
+            observed_replay_activity(Some(&before), Some(&regressed))["status"],
+            "unavailable"
+        );
+        for key in ["schema", "mode"] {
+            let mut invalid = before.clone();
+            invalid[key] = Value::Null;
+            assert_eq!(
+                observed_replay_activity(Some(&invalid), Some(&after))["status"],
+                "unavailable"
+            );
+        }
+        assert_eq!(
+            observed_replay_activity(None, Some(&after))["status"],
+            "unavailable"
+        );
+        assert_eq!(
+            observed_replay_activity(Some(&before), None)["status"],
+            "unavailable"
+        );
+    }
+
     #[cfg(windows)]
     #[test]
     #[ignore = "native actuator probe of an explicitly bound private offline archive; no model-quality claim"]
@@ -1036,7 +1127,7 @@ mod tests {
                     .verify_recorded_field(&capture)
                     .map_err(|e| e.to_string());
                 let image = driver
-                    .screenshot_field_context(&fixture.selector)
+                    .screenshot_field_feedback(&fixture.selector)
                     .map_err(|e| e.to_string())?;
                 let name = format!("widget-{index}.png");
                 let png =
@@ -1046,7 +1137,9 @@ mod tests {
                 let replay = driver
                     .rehearsal_replay_report()
                     .map_err(|e| e.to_string())?;
-                observations.push(json!({"elapsed_ms":started.elapsed().as_millis(),"requested_delay_ms":delay,"native_verified":verified.is_ok(),"error":verified.err(),"image":name,"sha256":waypoint_domain::sha256_hex(&png),"replay":replay}));
+                let activity = observed_replay_activity(Some(&initial), Some(&replay));
+                assert_eq!(activity["status"], "observed");
+                observations.push(json!({"elapsed_ms":started.elapsed().as_millis(),"requested_delay_ms":delay,"native_verified":verified.is_ok(),"error":verified.err(),"image":name,"sha256":waypoint_domain::sha256_hex(&png),"replay":replay,"replay_activity":activity}));
             }
             Ok(
                 json!({"scope":"native file-widget diagnostics only; no local-model or whole-workflow credit","appcontainer":ready.appcontainer,"capabilities":ready.capabilities,"initial_replay":initial,"observations":observations}),

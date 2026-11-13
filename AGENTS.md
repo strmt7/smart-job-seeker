@@ -31,6 +31,8 @@ repo up cold. Read this first, then `README.md`, then the references below.
   or contracts only as needed. Before each large tool call, choose the fields,
   line range and output budget that can answer that question. If output is
   truncated, narrow the query; do not repeatedly request the same oversized dump.
+  Native JSON can contain entire HTML pages or sample arrays on one line; parse
+  and select bounded fields instead of printing initial lines of such reports.
   Keep full native reports privately and return a compact result, artifact path,
   exit status and live handle when work is still running.
 - Batch independent reads/checks in one call and inspect every result; keep edits,
@@ -276,7 +278,9 @@ used by development tools and tests. Do not add WSL or Docker as product require
 
 - Native inspection snapshots include selector and section identities. Adding an
   embedded-document namespace must use `LiveForm::with_control_scope`; mutating
-  those identities afterward makes unchanged forms stale. Only a current native
+  those identities afterward makes unchanged forms stale. Public driver calls
+  inside an embedded view must use the snapshot's scoped selectors; raw local
+  selectors belong only in explicitly child-scoped native probes. Only a current native
   snapshot may survive that exact transformation. Preserve all original barriers,
   keep previously stale evidence invalid, and qualify both main-page and embedded
   fixtures after changes to this mechanism.
@@ -312,6 +316,12 @@ used by development tools and tests. Do not add WSL or Docker as product require
   Candidate history must not be rewritten to match the hiring employer or role.
   Retain original visual-review observations and unknowns; optional model advice
   is not evidence for new candidate facts. See `docs/TEMPLATE_TAILORING.md`.
+- Larger context images can reduce local-model accuracy by introducing unrelated
+  controls. Keep unaffected control crops stable, qualify native file-only
+  context separately on main/embedded pages, and retain regressions rather than
+  claiming that a larger image is inherently better. A page can catch an upload
+  error without emitting an unhandled runtime exception; inspect its visible
+  feedback and preserve server-dependent review outcomes.
 - Native file selection and matching bytes do not prove that the page's widget
   accepted the attachment. Preserve visible filename failures and broker walls;
   do not normalize them into success. Keep requested waits separate from actual

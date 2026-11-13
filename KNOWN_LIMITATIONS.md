@@ -10,18 +10,18 @@ frame/shadow traversal, candidate-file import, structured history and semantic
 fit assessment also exist. Their broad qualification and recovery limits remain
 open; the earlier statements that those mechanisms are absent are superseded.
 
-Current document/source continuation, 2026-11-13: the generic catalog-based
-local12B proposal chooses both fictional document roles correctly. The known
-saved form verifies4/6 answerable initial controls; the résumé has native byte
-proof but no visible filename, and the cover letter remains unreached. Three
-answers stay unknown. Native widget probes with two varied public CV PDFs
-reproduce the visual gap inside zero-capability offline execution. A request-
-context refusal coincides with selection; cause and safe replay repair remain
-open. No sections advance or full workflow passes. Two frozen new ATS families
-yield one held-out initial inventory and one excluded incomplete copy, with
-zero held-out model cases scored. Generic fact/action planning, complete-form
-truth and broader model/corpus coverage remain open.
-[Current evidence](docs/g1/HELD_OUT_INTAKE_AND_DOCUMENT_MATCHING_2026-11-13.md).
+Current saved-upload continuation, 2026-11-13: file selection reaches a
+server-dependent widget whose uploader setup is unavailable in the saved copy.
+Native trusted input/change events are emitted; selection bytes are retained,
+but no displayed filename or server acceptance is proven. The full visible
+error is now in the feedback image. Expanding unrelated/pre-entry image context
+caused measured local-model regressions, so those earlier crops remain stable.
+Final known-source local12B4/6 controls verified, one unverified résumé, one
+unreached cover letter, three unknown answers; no sections advance or workflow
+passes. Per-check request counters are interval observations, not causality or
+delivery. Held-out model cases remain zero; generic fact/action planning, varied
+source fidelity and complete-form truth remain open.
+[Current evidence](docs/g1/SAVED_UPLOAD_DIAGNOSTICS_2026-11-13.md).
 
 Historical stylesheet continuation: two native-bound CSS resources now render on a
 new saved real page, and local12B vision recognizes Phone before entry. Phone

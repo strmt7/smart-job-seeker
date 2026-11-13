@@ -187,7 +187,7 @@
           const stateLabel = check.kind === 'file' ? 'Attachment' : ['select', 'radio'].includes(check.kind) ? 'Selection' : 'Text';
           const states = {
             visually_matched: `${stateLabel} and image match`,
-            visual_difference: 'Image transcription differs',
+            visual_difference: check.kind === 'file' ? 'Selected file needs visual review' : 'Image transcription differs',
             visual_unobserved: check.kind === 'file' ? 'Selected file needs visual review' : 'Model could not read the image',
             visual_review_failed: `${stateLabel} verified in form · image review failed`,
             visual_unavailable: `${stateLabel} verified in form · visual review unavailable`,
@@ -212,6 +212,13 @@
             details.append(el('p', 'The form formats this number differently; the digits match.', 'footnote'));
           }
           if (typeof check.review_reason === 'string' && check.review_reason) details.append(el('p', check.review_reason.slice(0, 500), 'footnote'));
+          const activity = check.replay_activity;
+          if (activity?.status === 'unavailable') {
+            details.append(el('p', 'Request activity was unavailable for this check.', 'footnote'));
+          } else if (activity?.status === 'observed' && activity.scope === 'entry_and_review_interval') {
+            const blocked = count(activity.delta?.blocked);
+            if (blocked) details.append(el('p', `During this check, the saved page blocked ${blocked} request${blocked === 1 ? '' : 's'}. The website response remains unverified.`, 'review-label'));
+          }
         }
         const targets = Array.isArray(rehearsal.visual_gate?.targets) ? rehearsal.visual_gate.targets.slice(0, 10).filter(target => target?.view === viewNumber) : [];
         for (const target of targets) {

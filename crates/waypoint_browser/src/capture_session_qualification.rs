@@ -46,13 +46,14 @@ fn discovery_archives_observed_public_ats_frame() {
     let frame = "https://jobs.lever.co/fictional-company/fictional-role/apply";
     let unrelated = "https://jobs.ashbyhq.com/fictional-company/pixel";
     let document = format!(
-        "<!doctype html><link rel=icon href=data:,><h1>Fictional listing</h1><iframe title=Application src={frame}></iframe><img src={unrelated}>"
+        "<!doctype html><link rel=icon href=data:,><h1>Fictional listing</h1><iframe title=Application width=720 height=480 src={frame}></iframe><img src={unrelated}>"
     );
     let responses = [
         ("https://fixture.invalid/robots.txt", "text/plain", "User-agent: *\nAllow: /"),
         ("https://jobs.lever.co/robots.txt", "text/plain", "User-agent: *\nAllow: /"),
+        ("https://jobs.ashbyhq.com/robots.txt", "text/plain", "User-agent: *\nDisallow: /"),
         (entry, "text/html", document.as_str()),
-        (frame, "text/html", "<!doctype html><link rel=icon href=data:,><label>Field experience<input required></label>"),
+        (frame, "text/html", "<!doctype html><link rel=icon href=data:,><label>Field experience<input required></label><div role=group aria-label='Supporting documents'><label for=document>Candidate document</label><input id=document type=file><p aria-live=polite style='margin-top:170px;color:maroon'>Fictional upload needs review</p></div>"),
     ]
     .into_iter()
     .map(|(url, mime, body)| (
@@ -98,7 +99,8 @@ fn discovery_archives_observed_public_ats_frame() {
             "https://fixture.invalid/robots.txt",
             entry,
             "https://jobs.lever.co/robots.txt",
-            frame
+            frame,
+            "https://jobs.ashbyhq.com/robots.txt"
         ]
     );
     config.schema = 2;
@@ -106,12 +108,42 @@ fn discovery_archives_observed_public_ats_frame() {
     config.content_files = archive.snapshot.files;
     config.entry = archive.snapshot.entry;
     config.replay_manifest = Some(archive.snapshot.manifest);
-    let (mut browser, _) = CdpDriver::launch_rehearsal(&python, config).unwrap();
+    let (mut browser, ready) = CdpDriver::launch_rehearsal(&python, config).unwrap();
+    assert!(ready.appcontainer && ready.capabilities == 0);
     let observed = (|| {
         browser.open(entry)?;
         let frames = browser.captured_frames()?;
         if let [frame] = frames.frames.as_slice() {
             let child = browser.enter_captured_frame(frame)?;
+            let contact = child
+                .schema
+                .fields
+                .iter()
+                .find(|f| f.label == "Field experience")
+                .unwrap();
+            std::fs::write(
+                folder.join("embedded-contact-context.base64"),
+                browser.screenshot_field_context(&contact.selector)?,
+            )
+            .unwrap();
+            let file = child
+                .schema
+                .fields
+                .iter()
+                .find(|f| f.field_type == waypoint_applications::form_mapping::FormFieldType::File)
+                .unwrap();
+            std::fs::write(
+                folder.join("embedded-file-context.base64"),
+                browser.screenshot_field_feedback(&file.selector)?,
+            )
+            .unwrap();
+            assert_eq!(
+                browser.read_attribute(&file.selector, "type")?.as_deref(),
+                Some("file")
+            );
+            let files = browser.cdp.call("Runtime.evaluate",serde_json::json!({"expression":"document.querySelector('#document').files.length","returnByValue":true})).unwrap();
+            assert_eq!(files["result"]["value"], 0);
+            std::fs::write(folder.join("embedded-context.private.json"),serde_json::to_vec_pretty(&serde_json::json!({"file_and_contact_images":true,"files_selected":0,"external_delivery":"not_performed"})).unwrap()).unwrap();
             return Ok(child
                 .schema
                 .fields

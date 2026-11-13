@@ -734,7 +734,7 @@ impl CdpDriver {
         let image = if matches!(kind, RecordedFieldKind::Radio) {
             self.screenshot_recorded_radio(selector, value, true)?
         } else {
-            self.screenshot_field_context(selector)?
+            self.screenshot_field_feedback(selector)?
         };
         if matches!(kind, RecordedFieldKind::Text)
             && self.text_value_snapshot(selector)?.value != observed_value
@@ -818,7 +818,7 @@ impl CdpDriver {
             }
         };
         let value = read(self)?;
-        let image = self.screenshot_field_context(&witness.selector)?;
+        let image = self.screenshot_field_feedback(&witness.selector)?;
         if read(self)? != value {
             return Err(review());
         }
@@ -927,7 +927,7 @@ impl CdpDriver {
             .call("DOM.scrollIntoViewIfNeeded", json!({"nodeId":node}))
             .map_err(derr)?;
         if self.captured_scope.is_some() {
-            self.screenshot_captured_node(node, true, true)
+            self.screenshot_captured_node(node, true, true, false)
         } else {
             self.screenshot_node(node, true, false)
         }
@@ -1426,10 +1426,11 @@ impl CdpDriver {
         &mut self,
         selector: &str,
         context: bool,
+        feedback: bool,
     ) -> Result<String, DriverError> {
         self.scroll_field_into_view(selector)?;
         let node = self.node_id(selector)?.ok_or_else(review)?;
-        self.screenshot_captured_node(node, context, false)
+        self.screenshot_captured_node(node, context, false, feedback)
     }
 
     fn screenshot_captured_node(
@@ -1437,6 +1438,7 @@ impl CdpDriver {
         node: u64,
         context: bool,
         radio: bool,
+        feedback: bool,
     ) -> Result<String, DriverError> {
         let box_model = |driver: &mut Self| -> Result<[f64; 8], DriverError> {
             let response = driver
@@ -1462,9 +1464,10 @@ impl CdpDriver {
         let point = self
             .captured_pointer_point(node, x, y)?
             .ok_or_else(review)?;
-        let bounds = recorded_field_crop(quad, &point, x, y, context, radio)?;
+        let file_context = context && feedback && !radio && self.is_native_file_node(node)?;
+        let bounds = recorded_field_crop(quad, &point, x, y, context, radio, file_context)?;
         let image = self.with_captured_parent_capture(|driver| {
-            driver.screenshot_bounds(&bounds, false, false)
+            driver.screenshot_bounds(&bounds, false, false, false)
         })?;
         if box_model(self)? != quad
             || self.captured_pointer_point(node, x, y)?.as_ref() != Some(&point)
@@ -1521,6 +1524,7 @@ fn recorded_field_crop(
     y: f64,
     context: bool,
     radio: bool,
+    file_context: bool,
 ) -> Result<[f64; 8], DriverError> {
     let left = quad
         .iter()
@@ -1566,8 +1570,14 @@ fn recorded_field_crop(
             start + width,
             (bottom + 26.0).min(point.child_height),
         )
+    } else if context && file_context {
+        // File progress/errors can be below the chooser. Share the main-page
+        // file context budget, clipped to this exact child. Other crops stay small.
+        let start = context_left_edge(left, right, 0.0, point.child_width);
+        let width = 720.0_f64.min(point.child_width - start);
+        let (top, height) = context_vertical_bounds(top, bottom, 0.0, point.child_height, true);
+        (start, top, start + width, top + height)
     } else if context {
-        // Keep nearby labels, but never include pixels outside this frame.
         (
             (left - 180.0).max(0.0),
             (top - 24.0).max(0.0),
@@ -1707,12 +1717,16 @@ mod tests {
     fn field_context_is_clipped_to_the_bound_child_viewport() {
         let quad = [20.0, 10.0, 140.0, 10.0, 140.0, 30.0, 20.0, 30.0];
         assert_eq!(
-            recorded_field_crop(quad, &point(), 80.0, 20.0, true, false).unwrap(),
+            recorded_field_crop(quad, &point(), 80.0, 20.0, true, false, false).unwrap(),
             [250.0, 400.0, 408.0, 400.0, 408.0, 448.0, 250.0, 448.0]
         );
         assert_eq!(
-            recorded_field_crop(quad, &point(), 80.0, 20.0, false, false).unwrap(),
+            recorded_field_crop(quad, &point(), 80.0, 20.0, false, false, false).unwrap(),
             [270.0, 410.0, 390.0, 410.0, 390.0, 430.0, 270.0, 430.0]
+        );
+        assert_eq!(
+            recorded_field_crop(quad, &point(), 80.0, 20.0, true, false, true).unwrap(),
+            [250.0, 400.0, 550.0, 400.0, 550.0, 500.0, 250.0, 500.0]
         );
     }
 
@@ -1723,7 +1737,7 @@ mod tests {
             [20.0, 90.0, 30.0, 90.0, 30.0, 101.0, 20.0, 101.0],
             [20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0],
         ] {
-            assert!(recorded_field_crop(quad, &point(), 80.0, 20.0, true, false).is_err());
+            assert!(recorded_field_crop(quad, &point(), 80.0, 20.0, true, false, false).is_err());
         }
     }
 }

@@ -22,10 +22,12 @@ def main():
     parser.add_argument('--privacy',action='store_true',help='Discover/refuse fictional private URLs before offline candidate entry')
     parser.add_argument('--custom-controls',action='store_true',help='Verify independent entry while custom widgets still block advancement')
     parser.add_argument('--failed-entry',action='store_true',help='Qualify failed input readback/image evidence without accepting the entry')
+    parser.add_argument('--embedded-context',action='store_true',help='Capture fictional embedded file feedback and unchanged contact context without selecting files')
     args=parser.parse_args()
     if args.failed_entry and (args.discover or args.privacy or args.custom_controls):parser.error('--failed-entry selects a separate native scenario')
+    if args.embedded_context and (args.failed_entry or args.discover or args.privacy or args.custom_controls):parser.error('--embedded-context selects a separate native scenario')
     args.discover=args.discover or args.privacy or args.custom_controls
-    args.coordinator=args.coordinator or args.discover or args.failed_entry
+    args.coordinator=args.coordinator or args.discover or args.failed_entry or args.embedded_context
     if os.name!='nt' or not args.engine.is_absolute() or not args.python.is_absolute() or not args.python.is_file():parser.error('Windows and explicit absolute engine/interpreter paths required')
     cargo=shutil.which('cargo')
     if not cargo:parser.error('Cargo is required for this development qualification')
@@ -50,15 +52,31 @@ def main():
         if args.privacy:case='private_resources_are_not_fetched_before_offline_candidate_entry'
         if args.custom_controls:case='independent_fields_preserve_custom_review_and_hard_barriers'
         if args.failed_entry:case='failed_entry_retains_bound_readback_without_approving_it'
+        if args.embedded_context:case='discovery_archives_observed_public_ats_frame'
         selection=['--lib','capture_session::qualification::'+case] if args.coordinator else ['--test','capture_replay_live']
         log=folder/'native.private.log';report['run']=run([cargo,'test','-p','waypoint_browser',*selection,'--','--ignored','--nocapture','--test-threads=1'],env,log,180)
         if report['run']['exit_code']:raise RuntimeError('Capture bridge failed; inspect '+str(log))
         report['tests']=test_denominator(log.read_text(encoding='utf-8'),'rust',1)
-        native=folder/'http-captured.private.json'
-        if json.loads(native.read_text())['complete'] is not True:raise RuntimeError('Missing native completion')
-        report['native_sha256']=sha(native)
-        (folder/'screenshot.png').write_bytes(base64.b64decode((folder/'http-captured-screenshot.base64').read_bytes(),validate=True))
-        report['screenshot_sha256']=sha(folder/'screenshot.png')
+        if not args.embedded_context:
+            native=folder/'http-captured.private.json'
+            if json.loads(native.read_text())['complete'] is not True:raise RuntimeError('Missing native completion')
+            report['native_sha256']=sha(native)
+            (folder/'screenshot.png').write_bytes(base64.b64decode((folder/'http-captured-screenshot.base64').read_bytes(),validate=True))
+            report['screenshot_sha256']=sha(folder/'screenshot.png')
+        if args.embedded_context:
+            observation=json.loads((folder/'embedded-context.private.json').read_text(encoding='utf-8'))
+            if observation != {'file_and_contact_images':True,'files_selected':0,'external_delivery':'not_performed'}:raise RuntimeError('Embedded context evidence differs')
+            report['embedded_context']={'observation_sha256':sha(folder/'embedded-context.private.json'),'images':{}}
+            for kind in ['contact','file']:
+                stem='embedded-'+kind+'-context'
+                png=base64.b64decode((folder/(stem+'.base64')).read_bytes(),validate=True)
+                if not png.startswith(b'\x89PNG\r\n\x1a\n') or len(png)>6*1024**2:raise RuntimeError('Invalid embedded context image')
+                width,height=int.from_bytes(png[16:20],'big'),int.from_bytes(png[20:24],'big')
+                # Embedded context is clipped to 720x400 CSS pixels, then the
+                # existing parent-control capture path renders at scale 2.
+                if not 0<width<=1440 or not 0<height<=800:raise RuntimeError('Embedded image exceeded the existing raster budget')
+                (folder/(stem+'.png')).write_bytes(png)
+                report['embedded_context']['images'][kind]={'sha256':sha(folder/(stem+'.png')),'width':width,'height':height,'raster_scale':2,'css_width_limit':720,'css_height_limit':400}
         if args.failed_entry:
             failure=json.loads((folder/'failed-entry.private.json').read_bytes())
             if failure.get('status')!='entry_unverified' or failure.get('entry_verified') is not False:raise RuntimeError('Failed entry was mislabeled')

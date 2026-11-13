@@ -158,6 +158,33 @@ fn context_left_edge(
         .min(page_width)
 }
 
+// Keep heading space and spend the remaining existing 400px budget below the
+// control, where upload progress and validation messages often appear. This is
+// bounded context, not proof that every page message is visible.
+fn context_vertical_bounds(
+    field_top: f64,
+    field_bottom: f64,
+    viewport_top: f64,
+    viewport_bottom: f64,
+    file_context: bool,
+) -> (f64, f64) {
+    let headroom = if file_context {
+        100.0
+    } else {
+        (400.0 - (field_bottom - field_top) - 60.0).clamp(70.0, 160.0)
+    };
+    let top = (field_top - headroom)
+        .max(viewport_top)
+        .max(0.0)
+        .min(viewport_bottom);
+    let height = if file_context {
+        400.0
+    } else {
+        (field_bottom + 60.0 - top).clamp(80.0, 400.0)
+    };
+    (top, height.min((viewport_bottom - top).max(0.0)))
+}
+
 fn retry_changed_inspection(
     mut result: Result<LiveForm, DriverError>,
     mut retry: impl FnMut(usize) -> Result<LiveForm, DriverError>,
@@ -987,7 +1014,7 @@ impl CdpDriver {
             DriverError("Radio question label is unavailable or ambiguous".into())
         })?;
         let numbers: Vec<f64> = bounds.iter().filter_map(Value::as_f64).collect();
-        self.screenshot_bounds(&numbers, false, true)
+        self.screenshot_bounds(&numbers, false, true, false)
     }
 
     /// Capture the option before a caller seeks independent visual review.
@@ -2104,13 +2131,19 @@ impl CdpDriver {
     /// Capture a bounded area around a known field after it has been scrolled
     /// into view. The crop may omit a distant label or obscured content.
     pub fn screenshot_field_context(&mut self, selector: &str) -> Result<String, DriverError> {
-        self.screenshot_element(selector, true)
+        self.screenshot_element(selector, true, false)
+    }
+
+    /// Capture post-entry context, including more of a native file chooser's
+    /// progress/validation area. Other control and pre-entry crops stay stable.
+    pub fn screenshot_field_feedback(&mut self, selector: &str) -> Result<String, DriverError> {
+        self.screenshot_element(selector, true, true)
     }
 
     /// Capture only a control's bounding box, reducing unrelated nearby text.
     /// Overlays and content clipped by an ancestor can still obscure the control.
     pub fn screenshot_control(&mut self, selector: &str) -> Result<String, DriverError> {
-        self.screenshot_element(selector, false)
+        self.screenshot_element(selector, false, false)
     }
 
     /// Capture one uniquely identified rendered option without scrolling or clicking.
@@ -2123,14 +2156,19 @@ impl CdpDriver {
         self.screenshot_node(node, false, true)
     }
 
-    fn screenshot_element(&mut self, selector: &str, context: bool) -> Result<String, DriverError> {
+    fn screenshot_element(
+        &mut self,
+        selector: &str,
+        context: bool,
+        feedback: bool,
+    ) -> Result<String, DriverError> {
         if self.captured_scope.is_some() {
-            return self.screenshot_captured_field(selector, context);
+            return self.screenshot_captured_field(selector, context, feedback);
         }
         let node = self
             .node_id(selector)?
             .ok_or_else(|| DriverError("Field is unavailable for visual capture".into()))?;
-        self.screenshot_node(node, context, false)
+        self.screenshot_node_with_feedback(node, context, false, feedback)
     }
 
     fn screenshot_node(
@@ -2138,6 +2176,16 @@ impl CdpDriver {
         node: u64,
         context: bool,
         allow_larger_element: bool,
+    ) -> Result<String, DriverError> {
+        self.screenshot_node_with_feedback(node, context, allow_larger_element, false)
+    }
+
+    fn screenshot_node_with_feedback(
+        &mut self,
+        node: u64,
+        context: bool,
+        allow_larger_element: bool,
+        feedback: bool,
     ) -> Result<String, DriverError> {
         let model = self
             .cdp
@@ -2148,7 +2196,32 @@ impl CdpDriver {
             .and_then(Value::as_array)
             .ok_or_else(|| DriverError("Field has no capture bounds".into()))?;
         let numbers: Vec<f64> = quad.iter().filter_map(Value::as_f64).collect();
-        self.screenshot_bounds(&numbers, context, allow_larger_element)
+        let file_context = context && feedback && self.is_native_file_node(node)?;
+        self.screenshot_bounds(&numbers, context, allow_larger_element, file_context)
+    }
+
+    fn is_native_file_node(&mut self, node: u64) -> Result<bool, DriverError> {
+        let description = self
+            .cdp
+            .call("DOM.describeNode", json!({"nodeId":node}))
+            .map_err(derr)?;
+        let node = description
+            .get("node")
+            .ok_or_else(|| DriverError("Control type is unavailable for image capture".into()))?;
+        let name = node["localName"]
+            .as_str()
+            .ok_or_else(|| DriverError("Control type is unavailable for image capture".into()))?;
+        if !name.eq_ignore_ascii_case("input") {
+            return Ok(false);
+        }
+        if !node["attributes"].is_array() {
+            return Err(DriverError(
+                "Control type is unavailable for image capture".into(),
+            ));
+        }
+        Ok(attributes(node)
+            .get("type")
+            .is_some_and(|kind| kind.eq_ignore_ascii_case("file")))
     }
 
     fn screenshot_bounds(
@@ -2156,6 +2229,7 @@ impl CdpDriver {
         numbers: &[f64],
         context: bool,
         allow_larger_element: bool,
+        file_context: bool,
     ) -> Result<String, DriverError> {
         if numbers.len() != 8 || numbers.iter().any(|number| !number.is_finite()) {
             return Err(DriverError("Invalid field capture bounds".into()));
@@ -2225,22 +2299,21 @@ impl CdpDriver {
         }
         let (left, top, width, height, scale) = if context {
             let left = context_left_edge(x + page_x, right, page_x, page_width);
-            // Include more section context when the field is short, while
-            // preserving the previous 70-pixel margin for tall controls.
-            let field_height = bottom - (y + page_y);
-            let headroom = (400.0 - field_height - 60.0).clamp(70.0, 160.0);
-            let top = (y + page_y - headroom)
-                .max(page_y)
-                .max(0.0)
-                .min(page_height);
-            let width = (right + 60.0 - left)
-                .clamp(220.0, 720.0)
+            let (top, height) = context_vertical_bounds(
+                y + page_y,
+                bottom,
+                page_y,
+                page_height.min(viewport_bottom),
+                file_context,
+            );
+            let requested_width = if file_context {
+                720.0
+            } else {
+                (right + 60.0 - left).clamp(220.0, 720.0)
+            };
+            let width = requested_width
                 .min(page_width - left)
                 .min(viewport_right - left);
-            let height = (bottom + 60.0 - top)
-                .clamp(80.0, 400.0)
-                .min(page_height - top)
-                .min(viewport_bottom - top);
             (left, top, width, height, 1)
         } else {
             let left = x + page_x;
@@ -7843,6 +7916,31 @@ mod traversal_tests {
         // the existing image budget on context instead of imposing a 240px cap.
         assert_eq!(context_left_edge(400.0, 401.0, 0.0, 1400.0), 0.0);
         assert_eq!(context_left_edge(1000.0, 1001.0, 0.0, 1400.0), 281.0);
+    }
+
+    #[test]
+    fn context_capture_spends_bounded_height_on_below_field_messages() {
+        // Ordinary text controls retain the previously qualified crop.
+        assert_eq!(
+            context_vertical_bounds(450.0, 451.0, 0.0, 900.0, false),
+            (290.0, 221.0)
+        );
+        assert_eq!(
+            context_vertical_bounds(450.0, 451.0, 0.0, 900.0, true),
+            (350.0, 400.0)
+        );
+        assert_eq!(
+            context_vertical_bounds(10.0, 30.0, 0.0, 100.0, true),
+            (0.0, 100.0)
+        );
+        assert_eq!(
+            context_vertical_bounds(850.0, 890.0, 0.0, 900.0, true),
+            (750.0, 150.0)
+        );
+        assert_eq!(
+            context_vertical_bounds(200.0, 220.0, 180.0, 350.0, true),
+            (180.0, 170.0)
+        );
     }
 
     #[test]

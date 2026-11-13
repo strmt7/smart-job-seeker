@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
   "reviewed_on": "2026-11-13",
-  "reviewed_source": "27205889628bb867c54785e45743bd5b407f318a",
+  "reviewed_source": "7c7a25cf9bb586751b4a36ff81d790f0ff8b728a",
   "goal": "Continue the existing active Smart Jobseeker product-development goal",
   "plan": "docs/COMPLETION_PLAN_2026-11-11.md",
   "assessment": "docs/REPO_STATE_REVIEW_2026-11-11.md",
-  "next_task": "R03",
+  "next_task": "R04",
   "boundaries": [
     "main only",
     "headless development only",
@@ -128,7 +128,8 @@
         "docs/g1/FORM_CORPUS_SCOPE_2026-11-11.md",
         "docs/REPO_STATE_REVIEW_2026-11-11.md",
         "docs/g1/ABSENT_ORIGIN_STYLESHEETS_2026-11-11.md",
-        "docs/g1/HELD_OUT_INTAKE_AND_DOCUMENT_MATCHING_2026-11-13.md"
+        "docs/g1/HELD_OUT_INTAKE_AND_DOCUMENT_MATCHING_2026-11-13.md",
+        "docs/g1/SAVED_UPLOAD_DIAGNOSTICS_2026-11-13.md"
       ],
       "execution_batch": "B",
       "steps": [
@@ -137,7 +138,7 @@
         "Collect a new permitted read-only source copy and inspect actual rendering/native labels without modifying historical manifests.",
         "Only if necessary, repair generic bounded label/control context; qualify earlier and untouched cases, then coherent integration and ownership checks."
       ],
-      "next_action": "Diagnose the known saved widget with four initially missing Script requests and a post-selection cached-page GET observed as Other; preserve exact observed method/resource/origin bindings before any replay change. Also diagnose retained Ashby robots/ineligible requests without allowing arbitrary non-read transports. Native selected bytes are not widget acceptance.",
+      "next_action": "Preserve the diagnosed server-dependent upload as review-required. Continue source/robots/request representation qualification and varied eligible read-only captures; never invent acknowledgements, archive upload credentials or allow arbitrary non-read transports to make an offline page pass.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "completed_scopes": [
         "Observed absent-Origin GET Stylesheet binding and strict capture/replay proof; malformed/conflicting/cross-type cases refused.",
@@ -163,7 +164,9 @@
         "apps/web_app/src/form_task.rs",
         "apps/web_app/src/recorded_preview.rs",
         "crates/waypoint_browser/src/lib.rs",
-        "apps/web_app/src/attachment_mapping.rs"
+        "apps/web_app/src/attachment_mapping.rs",
+        "apps/web_app/src/suggestions.rs",
+        "crates/waypoint_applications/src/form_mapping.rs"
       ],
       "acceptance": [
         "Typed bounded planning using supported candidate facts",
@@ -173,7 +176,8 @@
       "evidence": [
         "docs/g1/INDEPENDENT_ENTRY_EVIDENCE_2026-11-11.md",
         "docs/g1/TELEPHONE_PRESENTATION_2026-11-13.md",
-        "docs/g1/HELD_OUT_INTAKE_AND_DOCUMENT_MATCHING_2026-11-13.md"
+        "docs/g1/HELD_OUT_INTAKE_AND_DOCUMENT_MATCHING_2026-11-13.md",
+        "docs/g1/SAVED_UPLOAD_DIAGNOSTICS_2026-11-13.md"
       ],
       "execution_batch": "C",
       "steps": [
@@ -183,17 +187,19 @@
         "After every action, read back native state and perform local-model visual review; detect stale state and no progress.",
         "Measure the local model on the frozen corpus; provide actionable review records rather than invented answers."
       ],
-      "next_action": "After R03 input fidelity work, qualify generic catalog-based attachment proposals on varied eligible frozen sources. Known-source proposals choose both fictional roles, but the résumé has native proof without visual filename acceptance and the cover letter remains unreached. Keep strict file hashes/raw vision/native group proof and review fallback; no live uploads or planner promotion.",
+      "next_action": "Implement bounded generic proposals from reviewed candidate fact IDs for supported text/select/radio controls, reusing existing local structured inference and native control identities/options/constraints. Prepare on fictional/offline schemas; unsupported, sensitive or unknown answers remain manual, facts cannot be invented, and held-out/full-workflow promotion remains open.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "start_requirements": [
         "The frozen schema2 known-source initial-control case and native mutation fixture admit investigation of the observed actuator failure. This does not admit broad planner promotion; that still requires the varied held-out tranche and full workflow truth.",
-        "Native/visual observations and typed actions stay in contained fictional/offline execution; no live employer writes."
+        "Native/visual observations and typed actions stay in contained fictional/offline execution; no live employer writes.",
+        "Bounded development-only generic fact proposals may be prepared on fictional/offline schemas without claiming planner promotion; no live actuation or relaxed native/visual/approval constraints."
       ],
       "completed_scopes": [
         "Native-bound failed-entry witness and coherent diagnostic image/text without accepting the entry; challenge/schema/document changes refuse observations.",
         "Actual failed Phone image/value retained: +1 202-555-0123 versus intended +12025550123. Independent gate stays failed; no section advances.",
         "Native tel-only presentation proof and stable actual-value captures, separate raw local-model transcription and explicit oracle comparison; final known-source run verifies4/6 initial answerable controls. No held-out or full-workflow claim.",
-        "Bounded generic document catalog proposals and distinct PDF truth; three known-source local12B runs choose both roles. Explicit current native file-group proof supports separate label comparison. Four of six controls verified; résumé visual gap remains, cover unreached, workflow not qualified."
+        "Bounded generic document catalog proposals and distinct PDF truth; three known-source local12B runs choose both roles. Explicit current native file-group proof supports separate label comparison. Four of six controls verified; résumé visual gap remains, cover unreached, workflow not qualified.",
+        "Phase-specific file-feedback context preserves pre-entry/contact images; per-entry replay deltas retain degraded states. Final local12B4/6 verified with native résumé selection still visually unverified; field/workflow gates remain failed/not_qualified. Native embedded/contact feedback and rendered record/inspector/zoom checks pass within documented scopes."
       ]
     },
     {
@@ -525,7 +531,7 @@
     "binding": "Existing active Smart Jobseeker goal; reverified active on 2026-11-13; objective unchanged.",
     "entry_point": "AGENTS.md",
     "queue": "docs/ACTIVE_DEVELOPMENT_PLAN.json",
-    "selection": "Continue R03 faithful saved-page initialization and request-context diagnosis using retained native refusal samples. Keep R02 held-out and complete-form truth open. Correct local-model document proposals do not qualify a visually unverified attachment or workflow.",
+    "selection": "Continue R04 generic candidate-supported fact proposals on bounded fictional/offline schemas, preserving current native/visual/options/constraint checks and manual unknowns. Do not expand pre-entry images or bypass server-dependent upload review. R02 held-out/full-workflow and all other product gates remain open.",
     "completion": "A package completion does not complete the product goal. Keep the overall goal active until all required product work is achieved.",
     "scheduling": "No new agents, automation, service or background scheduler created by this plan."
   },
@@ -548,6 +554,48 @@
     "build_state": "Last focused test compile failed; three stale start callers remain in current source. No current full-workspace pass claimed."
   },
   "working_tree_checkpoint": {
+    "baseline_head": "7c7a25cf9bb586751b4a36ff81d790f0ff8b728a",
+    "validated_changes": "Phase-specific native file-feedback captures; stable pre-entry/contact images; bounded per-entry acknowledged replay counter deltas and honest record UI; embedded native context qualification; retained local-model regressions and GPU observations.",
+    "validated_source_sha256": {
+      "AGENTS.md": "38667d477177313f85f78f01031e30028953f0a96f28ed7a46d460f6c19e428c",
+      "apps/web_app/src/main.rs": "f3c9c009ea04463ee984fcde4cb8c416ac2cec7ba79bea60ab109690f2791540",
+      "apps/web_app/src/attachment_mapping.rs": "459d964954b166ac0a5d0adb9388b252efc212fe709298f93f16d7d0109a2875",
+      "apps/web_app/src/recorded_preview.rs": "2beaf1a2ea9ab54ca43dd0aaeb52e0cbdbd5869115817f539139893b449758b9",
+      "apps/web_app/src/visual_review.rs": "5328cad3eb9f9420d311d9dde2570c05afec42db987c3ec8ab89246d61c82c3c",
+      "apps/web_app/src/rehearsal-sample.pdf": "67174a6e3717b70a030dcb988b825d5e77e839448ba2f02ca3f2131b0058ca2d",
+      "apps/web_app/src/rehearsal-cover-letter.pdf": "0438103bc95980d039cb09038f3627ba6304954fdab29a3d6a160fc52163252a",
+      "apps/web_app/web/source-copy.js": "0ddb46728e877782fabc1ba63cfbda69edff088b6cc45752fb8405809778a6b9",
+      "apps/web_app/tests/source-copy-ui.test.js": "0eba161df5189781335566408ea7cc84ccf53f4400f220fa528b1d66192c698d",
+      "crates/waypoint_browser/src/capture_session_qualification.rs": "77ddfe6fd8d7c16f86023047a05f5b36c0636cb1b2083095804ebd5d4f52ff66",
+      "crates/waypoint_browser/src/captured_frame.rs": "1776492c8a1e4b6b93a073aa7f38c6c4d115d1ab2dcbdbe810b5a29e8ef03b25",
+      "crates/waypoint_browser/src/lib.rs": "a43097cd64a95ffdbd276521991452c750f0fa7ed8205e499716f81f85963d51",
+      "crates/waypoint_browser/src/rehearsal_replay.py": "6f4fde15824fa3b90ad5aae28a0d99fa7b62b71a18ed7ecb8350bd6ea7b9b6cd",
+      "crates/waypoint_browser/tests/test_rehearsal_replay.py": "8407f426b49766e9369f40360bb37f9a5e4405432d89e71a102a6842ee11091f",
+      "crates/waypoint_inference/src/ollama.rs": "ad91da0533d2b491e06886321b75d7414179a81217d5a3ab6683dce2cca7cfdc",
+      "tools/qualify_capture_replay.py": "896817ba1201752566945f86cdf4a1cec59523afb7f685ef1f96919d7c72d3b1",
+      "tools/form_corpus.py": "7255b7a95a65c459da48dd4f61f726afd926a1defe035b5d051433c876b3c7ca",
+      "apps/web_app/data/rehearsal-profile.json": "ce6e680f2e7180e1f7f6a7bf027123beaae25bb4dfb790098b6fe67afcd919e5",
+      "apps/web_app/web/image-viewer.js": "03b25a20ceb0a37a49c393155372256335cce375cfb29194015316e4a60bbc4b"
+    },
+    "app_sha256": "edd71850eafb2263d368807ed6f014ea8696ba1d477b7fcd1accb34987cb96eb",
+    "model_qualification": {
+      "private_evidence": "target/semantic-docs-model-t9u24lx0/",
+      "model_digest": "6114515d63c17436a7c0417d82820ac65ad643e2806c5a3c89cb62846436ed0b",
+      "context": 4096,
+      "scope": "Final production source/app hashes match the model report. Known development case only,4/6 verified,1 unverified résumé,1 unreached cover,3 unknown, no field/workflow pass."
+    },
+    "build_state": "Final workspace1327 passed/596 ignored; warning-deniedClippy, canonical build, fmt, tools90, source-copy UI, selected embedded native1 pass. Headless actual record4 widths, image inspector3 widths and quick layout22 pass. No final local hosted run or full settings/installation matrix claim.",
+    "evidence": "docs/g1/SAVED_UPLOAD_DIAGNOSTICS_2026-11-13.md",
+    "host_checkpoint": {
+      "available_ram_bytes": 31787991040,
+      "matching_processes": 0,
+      "resident_models": 0,
+      "persistent_registrations": 0,
+      "scope": "Final read-only post-inspector audit and owned-tree exit receipts; not a sustained leak test."
+    }
+  },
+  "dependency_semantics": "depends_on are completion prerequisites; start_requirements admit bounded implementation before the whole prerequisite package completes. Containment, UI consistency and resource ownership apply continuously.",
+  "last_validated_checkpoint": {
     "baseline_head": "27205889628bb867c54785e45743bd5b407f318a",
     "validated_changes": "Generic bounded document proposals, distinct fictional PDFs, native explicit file-group proof, preserved raw model comparisons, wider bounded crop, honest attachment review UI and bounded redacted replay refusal diagnostics. Frozen new-family intake retains all exclusions.",
     "validated_source_sha256": {
@@ -586,61 +634,29 @@
       "scope": "Read-only audit plus owned-tree teardown; retained private disk artifacts are intentional, not resident processes or sustained leak proof."
     }
   },
-  "dependency_semantics": "depends_on are completion prerequisites; start_requirements admit bounded implementation before the whole prerequisite package completes. Containment, UI consistency and resource ownership apply continuously.",
-  "last_validated_checkpoint": {
-    "baseline_head": "f7117503da0eb9847d666b2fa26e39e8844b4d16",
-    "validated_changes": "Native-proven international telephone presentation equality, preserved actual/intended values and raw post-entry vision, explicit schema2 equality and honest record UI. Known-source local12B run verifies4/6 initial answerable controls; two uploads remain unreached.",
-    "validated_source_sha256": {
-      "crates/waypoint_browser/src/capture_discovery.rs": "65d9c2820864510ecb91833bfec22670eaab32b665bab6842b62dfcd1a6e7d7e",
-      "crates/waypoint_browser/src/capture_session.rs": "385d3104724925220a60cdaa1af65a84120a39e40b68374942008dfb6fa5d834",
-      "crates/waypoint_browser/src/rehearsal_capture.rs": "52103fab8b10d0a8fda030d592fa05ee1dbb8de230e7e1635b8bcae623d37d39",
-      "crates/waypoint_browser/src/rehearsal_replay.py": "53c913e7e980ba2c1e8be35829977f54c123e703229a61aedad62b8093270a93",
-      "crates/waypoint_browser/src/captured_frame.rs": "414d8952725829fba48b81b9899deeae8f448c012f5224d7752e754d63290533",
-      "crates/waypoint_browser/src/lib.rs": "f1b38a034e32191bbc147005ca5f89c0b7f7058692cffa29fc4b4c4e3a5d99f8",
-      "apps/web_app/src/recorded_preview.rs": "39bf896e3646a1c8a1aec08128fc9be59d3814470f80aeccad23f3e06e7a0b2a",
-      "apps/web_app/src/visual_review.rs": "fab86cc7a204e90a772b0e214c3e5007a30d947692d7d5c58b882bf40f3653e1",
-      "crates/waypoint_domain/src/lib.rs": "a9c1d2b7b10b45a8fb535e2b31f4cb8e85d9e970c80d78348efbc0c9b2562912",
-      "crates/waypoint_domain/src/telephone.rs": "04739a3b0eceeb31ee9eadd9a64835e0a903f1a9d797245523b23d0e668011c7",
-      "apps/web_app/data/rehearsal-profile.json": "ce6e680f2e7180e1f7f6a7bf027123beaae25bb4dfb790098b6fe67afcd919e5",
-      "apps/web_app/src/rehearsal-sample.pdf": "67174a6e3717b70a030dcb988b825d5e77e839448ba2f02ca3f2131b0058ca2d",
-      "tools/form_corpus.py": "7255b7a95a65c459da48dd4f61f726afd926a1defe035b5d051433c876b3c7ca",
-      "apps/web_app/src/local_model_worker.py": "e038a37a2181823574fb9424cc63d7e2485ec9bf1d6b292dd7c9f33a334def5d",
-      "apps/web_app/web/source-copy.js": "1bb20c891e6ba20c1d3bf75ca7196abe73ae11f6daa6915c6b8352dfa3692852"
-    },
-    "app_sha256": "ddb0ff27141c578e3700bce60357d913285152ebb5cdc0b729556ef6c4082ce5",
-    "build_state": "Workspace1316 passed/595 ignored, tools90 passed; Clippy/build pass. Windows GPU-counter availability1 passed. Known development model run4/6 correct,2 unreached,3 unknown,0 incorrect/unexpected/ambiguous; field/workflow gates remain failed/not_qualified. Headless record view and quick layout22 passed; final native case1 passed on unchanged final browser source.",
-    "evidence": "docs/g1/TELEPHONE_PRESENTATION_2026-11-13.md",
-    "host_checkpoint": {
-      "available_ram_bytes": 30546604032,
-      "matching_processes": 0,
-      "resident_models": 0,
-      "persistent_registrations": 0,
-      "scope": "Final read-only audit plus owned-tree teardown; not a sustained leak proof."
-    }
-  },
   "current_hosted_checks": {
-    "head": "f7117503da0eb9847d666b2fa26e39e8844b4d16",
+    "head": "7c7a25cf9bb586751b4a36ff81d790f0ff8b728a",
     "all_completed_successfully": true,
     "run_ids": {
-      "ci": 43050096389,
-      "coverage": 43050096076,
-      "codeql": 43050093487
+      "ci": 43349872741,
+      "coverage": 43349872737,
+      "codeql": 43349871996
     },
-    "private_receipts": "target/telephone-presentation/",
-    "scope": "Previously pushed baseline only; current local changes are not hosted validation."
+    "private_receipts": "target/widget-diagnosis-qzchvj0z/hosted-final.private.json",
+    "scope": "Pushed baseline only; later local changes are not hosted validation."
   },
   "immediate_slices": [
     {
-      "task": "R03",
-      "deliverable": "Restore faithful varied read-only input collection; diagnose retained Ashby robots/ineligible requests without allowing writes."
+      "task": "R04",
+      "deliverable": "Generic bounded reviewed-fact proposals with native option/constraint validation and manual abstention; development-only qualification, no promotion or live actions."
     },
     {
       "task": "R02",
-      "deliverable": "Additional frozen eligible held-out cases with independent answers/full-workflow truth and explicit selected/excluded/scored denominators."
+      "deliverable": "Additional frozen eligible held-out families and complete-form truth; zero held-out model scores remain explicit."
     },
     {
-      "task": "R04",
-      "deliverable": "Qualify generic supported-fact/action and document planning; preserve native/visual verification, strict file hashes and review fallback."
+      "task": "R03",
+      "deliverable": "Faithful permitted read-only sources and explicit server-dependent review; no invented responses or upload credentials."
     }
   ]
 }

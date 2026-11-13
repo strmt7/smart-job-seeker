@@ -1,3 +1,14 @@
+## Visible upload feedback and interval diagnostics - 2026-11-13
+
+Post-entry file images now retain lower progress/error feedback within the
+existing bounds; pre-entry and contact images stay stable. Request activity is
+recorded per check without granting entry or delivery authority. The final
+local12B development run verifies4/6 controls; the résumé remains unverified
+and the cover letter unreached. Workspace1,327 passed/596 ignored, tools90,
+Clippy/build, embedded native and headless review/zoom checks pass. The prior
+pushed7c7a25c checkpoint passed hosted CI, coverage and CodeQL; this later local
+batch is not hosted validation. [Evidence and limits](docs/g1/SAVED_UPLOAD_DIAGNOSTICS_2026-11-13.md).
+
 ## Document matching and broader source intake - 2026-11-13
 
 Generic local-model document proposals now use a bounded caller-owned catalog,
