@@ -687,6 +687,23 @@ fn worker(request: Request) -> Result<Value, String> {
         return Ok(json!({"task_id":request.task_id,"preview":preview}));
     }
     let archive = request.destination.join("archive");
+    let config = RehearsalConfig {
+        schema: 3,
+        engine_root,
+        engine_files,
+        content_root: archive.clone(),
+        content_files: Default::default(),
+        entry: "index.html".into(),
+        seconds: 30,
+        replay_manifest: None,
+        attachments: None,
+    };
+    phase(&request, "reading")?;
+    let document_accept = waypoint_browser::capture_discovery::document_request_accept(
+        &python,
+        config.clone(),
+        &request.destination.join("document-request-probe"),
+    )?;
     let mut capture = CaptureSession::start(
         &archive,
         &request.url,
@@ -698,21 +715,10 @@ fn worker(request: Request) -> Result<Value, String> {
         CaptureBudget::default(),
         Arc::new(AtomicBool::new(false)),
     )?;
-    phase(&request, "reading")?;
+    capture.set_document_accept(document_accept)?;
     let entry = capture.capture_entry();
     if matches!(entry, CaptureOutcome::Recorded { .. }) {
         phase(&request, "resources")?;
-        let config = RehearsalConfig {
-            schema: 3,
-            engine_root,
-            engine_files,
-            content_root: archive.clone(),
-            content_files: Default::default(),
-            entry: "index.html".into(),
-            seconds: 30,
-            replay_manifest: None,
-            attachments: None,
-        };
         capture.discover_resources(&python, config, 4, 1500)?;
     }
     let report =

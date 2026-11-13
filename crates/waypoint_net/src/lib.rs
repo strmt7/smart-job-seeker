@@ -223,7 +223,7 @@ pub fn get(url: &str, timeout_ms: u64) -> Result<HttpResponse, NetError> {
 }
 
 pub fn get_capped(url: &str, timeout_ms: u64, max_bytes: usize) -> Result<HttpResponse, NetError> {
-    let response = get_response(url, timeout_ms, max_bytes, false, None)?;
+    let response = get_response(url, timeout_ms, max_bytes, false, None, None)?;
     Ok(HttpResponse {
         status: response.status,
         body: response.body,
@@ -241,7 +241,7 @@ pub fn get_asset_capped(
     if max_bytes == 0 || max_bytes > DEFAULT_MAX_BYTES || timeout_ms == 0 || timeout_ms > 60_000 {
         return Err(NetError::InvalidResponse("invalid asset capture budget"));
     }
-    validate_asset_response(get_response(url, timeout_ms, max_bytes, true, None)?)
+    validate_asset_response(get_response(url, timeout_ms, max_bytes, true, None, None)?)
 }
 
 /// A canonical public HTTPS origin, never an arbitrary header value. This
@@ -267,6 +267,66 @@ impl PublicRequestOrigin {
         &self.0
     }
 }
+/// An anonymous document's bounded content-negotiation preference. Callers
+/// must obtain it from their controlled engine, never a model or remote page.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PublicDocumentAccept(String);
+impl PublicDocumentAccept {
+    pub fn parse(raw: &str) -> Result<Self, NetError> {
+        let token = |s: &str| {
+            !s.is_empty()
+                && s.len() <= 128
+                && s.bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || b"!#$%&'*+.^_`|~-".contains(&c))
+        };
+        let ranges: Vec<_> = raw.split(',').collect();
+        if raw.is_empty()
+            || !raw.is_ascii()
+            || raw.bytes().any(|c| c < 32 || c == 127)
+            || raw.len() > 1024
+            || raw.trim() != raw
+            || ranges.len() > 32
+            || !ranges.iter().all(|range| {
+                let mut parts = range.trim().split(';');
+                let media: Vec<_> = parts.next().unwrap_or("").trim().split('/').collect();
+                media.len() == 2
+                    && media.iter().all(|part| token(part))
+                    && parts.all(|part| {
+                        part.trim()
+                            .split_once('=')
+                            .is_some_and(|(name, value)| token(name) && token(value))
+                    })
+            })
+        {
+            return Err(NetError::InvalidResponse("invalid public document Accept"));
+        }
+        Ok(Self(raw.to_owned()))
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Anonymous document GET using a preference observed from the controlled
+/// rendering engine. No cookies, Origin, arbitrary headers or request body.
+pub fn get_document_capped(
+    url: &str,
+    timeout_ms: u64,
+    max_bytes: usize,
+    accept: &PublicDocumentAccept,
+) -> Result<CapturedResponse, NetError> {
+    if max_bytes == 0 || max_bytes > DEFAULT_MAX_BYTES || timeout_ms == 0 || timeout_ms > 60_000 {
+        return Err(NetError::InvalidResponse("invalid document capture budget"));
+    }
+    validate_asset_response(get_response(
+        url,
+        timeout_ms,
+        max_bytes,
+        true,
+        None,
+        Some(accept),
+    )?)
+}
 /// Anonymous public GET with one validated Origin, for an observed CORS asset.
 /// No credentials, arbitrary headers, preflight or redirect following.
 pub fn get_asset_capped_with_origin(
@@ -284,6 +344,7 @@ pub fn get_asset_capped_with_origin(
         max_bytes,
         true,
         Some(origin),
+        None,
     )?)
 }
 
@@ -350,6 +411,7 @@ fn get_response(
     max_bytes: usize,
     asset: bool,
     origin: Option<&PublicRequestOrigin>,
+    accept: Option<&PublicDocumentAccept>,
 ) -> Result<CapturedResponse, NetError> {
     let parsed = parse_url(url)?;
     if !parsed.https {
@@ -405,17 +467,18 @@ fn get_response(
                 } else {
                     format!("{host}:{}", parsed.port)
                 };
-                let request_header_names = write_request(
+                let request = write_request(
                     &mut stream,
                     &host,
                     &parsed.request_target,
                     "GET",
                     None,
                     asset,
-                    origin,
+                    NativeRequestHeaders { origin, accept },
                 )?;
                 let mut response = http::receive(&mut stream, "GET", max_bytes)?;
-                response.request_header_names = Some(request_header_names);
+                response.request_header_names = Some(request.names);
+                response.request_accept = Some(request.accept);
                 response.request_origin = origin.cloned();
                 return Ok(response);
             }
@@ -461,12 +524,31 @@ pub fn request<S: Read + Write>(
     body: Option<&[u8]>,
     max_bytes: usize,
 ) -> Result<HttpResponse, NetError> {
-    write_request(stream, host, path, method, body, false, None)?;
+    write_request(
+        stream,
+        host,
+        path,
+        method,
+        body,
+        false,
+        NativeRequestHeaders::default(),
+    )?;
     let response = http::receive(stream, method, max_bytes)?;
     Ok(HttpResponse {
         status: response.status,
         body: response.body,
     })
+}
+
+#[derive(Clone, Copy, Default)]
+struct NativeRequestHeaders<'a> {
+    origin: Option<&'a PublicRequestOrigin>,
+    accept: Option<&'a PublicDocumentAccept>,
+}
+
+struct WrittenRequest {
+    names: Vec<String>,
+    accept: String,
 }
 
 fn write_request<S: Write>(
@@ -476,8 +558,9 @@ fn write_request<S: Write>(
     method: &str,
     body: Option<&[u8]>,
     asset: bool,
-    origin: Option<&PublicRequestOrigin>,
-) -> Result<Vec<String>, NetError> {
+    headers: NativeRequestHeaders<'_>,
+) -> Result<WrittenRequest, NetError> {
+    let NativeRequestHeaders { origin, accept } = headers;
     if host.is_empty()
         || !host.is_ascii()
         || host.bytes().any(|c| c <= 32 || c == 127)
@@ -496,12 +579,18 @@ fn write_request<S: Write>(
             "Origin requires an anonymous asset GET",
         ));
     }
+    if accept.is_some() && (!asset || method != "GET" || body.is_some() || origin.is_some()) {
+        return Err(NetError::InvalidResponse(
+            "document Accept requires an anonymous bodyless GET",
+        ));
+    }
+    let document_accept = accept.map(PublicDocumentAccept::as_str).unwrap_or("*/*");
     let origin_header = origin
         .map(|o| format!("Origin: {}\r\n", o.as_str()))
         .unwrap_or_default();
     let bytes = body.unwrap_or(&[]);
     let head = if asset {
-        format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: {USER_AGENT}\r\nAccept: */*\r\nAccept-Encoding: identity\r\n{origin_header}Connection: close\r\n\r\n")
+        format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: {USER_AGENT}\r\nAccept: {document_accept}\r\nAccept-Encoding: identity\r\n{origin_header}Connection: close\r\n\r\n")
     } else {
         format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: {USER_AGENT}\r\nAccept: application/json\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",bytes.len())
     };
@@ -520,6 +609,15 @@ fn write_request<S: Write>(
         .iter()
         .map(|h| h.name.to_ascii_lowercase())
         .collect();
+    let accept = parsed
+        .headers
+        .iter()
+        .find(|h| h.name.eq_ignore_ascii_case("accept"))
+        .and_then(|h| std::str::from_utf8(h.value).ok())
+        .ok_or(NetError::InvalidResponse(
+            "missing outgoing Accept evidence",
+        ))?
+        .to_owned();
     stream
         .write_all(head.as_bytes())
         .and_then(|_| stream.write_all(bytes))
@@ -533,7 +631,7 @@ fn write_request<S: Write>(
                 NetError::Io(format!("write: {e}"))
             }
         })?;
-    Ok(names)
+    Ok(WrittenRequest { names, accept })
 }
 
 pub fn decode_chunked(body: &[u8]) -> Option<Vec<u8>> {
@@ -581,10 +679,14 @@ mod tests {
             "GET",
             None,
             true,
-            Some(&origin),
+            NativeRequestHeaders {
+                origin: Some(&origin),
+                accept: None,
+            },
         )
         .unwrap();
-        assert!(names.contains(&"origin".to_owned()));
+        assert!(names.names.contains(&"origin".to_owned()));
+        assert_eq!(names.accept, "*/*");
         assert!(String::from_utf8(wire)
             .unwrap()
             .contains("\r\nOrigin: https://example.org\r\n"));
@@ -601,11 +703,85 @@ mod tests {
                 method,
                 body,
                 asset,
-                Some(&origin)
+                NativeRequestHeaders {
+                    origin: Some(&origin),
+                    accept: None
+                },
             )
             .is_err());
             assert!(wire.is_empty());
         }
+    }
+
+    #[test]
+    fn observed_document_accept_is_bounded_and_written_exactly_without_credentials() {
+        let raw = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,*/*;q=0.8,application/signed-exchange;v=b3";
+        let accept = PublicDocumentAccept::parse(raw).unwrap();
+        let mut wire = vec![];
+        let proof = write_request(
+            &mut wire,
+            "example.org",
+            "/job",
+            "GET",
+            None,
+            true,
+            NativeRequestHeaders {
+                origin: None,
+                accept: Some(&accept),
+            },
+        )
+        .unwrap();
+        assert_eq!(proof.accept, raw);
+        let text = String::from_utf8(wire).unwrap();
+        assert!(text.contains(&format!("\r\nAccept: {raw}\r\n")));
+        assert!(!proof.names.iter().any(|name| matches!(
+            name.as_str(),
+            "cookie" | "authorization" | "origin" | "content-length"
+        )));
+        for invalid in [
+            "",
+            " text/html",
+            "text/html ",
+            "text/html,\r\nX: injected",
+            "text/html,\napplication/json",
+            "text/html,\tapplication/json",
+            "text/html,\u{a0}application/json",
+            "not a range",
+            "text/html,",
+            "text/html;token",
+            "text/html;x=secret@example.invalid",
+        ] {
+            assert!(PublicDocumentAccept::parse(invalid).is_err(), "{invalid:?}");
+        }
+        assert!(PublicDocumentAccept::parse(&"a/b,".repeat(33)).is_err());
+        let origin = PublicRequestOrigin::parse("https://example.org").unwrap();
+        for (method, body, asset, origin) in [
+            ("POST", None, true, None),
+            ("GET", Some(b"".as_slice()), true, None),
+            ("GET", None, false, None),
+            ("GET", None, true, Some(&origin)),
+        ] {
+            let mut wire = vec![];
+            assert!(write_request(
+                &mut wire,
+                "example.org",
+                "/",
+                method,
+                body,
+                asset,
+                NativeRequestHeaders {
+                    origin,
+                    accept: Some(&accept)
+                },
+            )
+            .is_err());
+            assert!(wire.is_empty());
+        }
+        let mut stream = std::io::Cursor::new(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+        assert!(read_asset_response(&mut stream, "GET", 1024)
+            .unwrap()
+            .request_accept
+            .is_none());
     }
 
     #[test]
@@ -763,14 +939,31 @@ mod tests {
             ("example.org", "/", "GET\r\nPOST"),
         ] {
             let mut written = Vec::new();
-            assert!(write_request(&mut written, host, path, method, None, false, None).is_err());
+            assert!(write_request(
+                &mut written,
+                host,
+                path,
+                method,
+                None,
+                false,
+                NativeRequestHeaders::default()
+            )
+            .is_err());
             assert!(written.is_empty());
         }
         let mut written = Vec::new();
-        let names =
-            write_request(&mut written, "example.org", "/job", "GET", None, true, None).unwrap();
+        let names = write_request(
+            &mut written,
+            "example.org",
+            "/job",
+            "GET",
+            None,
+            true,
+            NativeRequestHeaders::default(),
+        )
+        .unwrap();
         assert_eq!(
-            names,
+            names.names,
             [
                 "host",
                 "user-agent",
@@ -780,6 +973,7 @@ mod tests {
             ]
         );
         let text = String::from_utf8(written).unwrap();
+        assert_eq!(names.accept, "*/*");
         assert!(text.contains("Accept: */*\r\n"));
         assert!(text.contains("Accept-Encoding: identity\r\n"));
         assert!(!text.to_ascii_lowercase().contains("\r\norigin:"));

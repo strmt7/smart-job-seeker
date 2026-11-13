@@ -1,6 +1,7 @@
 //! Explicit fictional coordinator -> archive -> actual contained browser check.
 use super::*;
 use crate::{rehearsal::RehearsalConfig, CdpDriver};
+use serde_json::Value;
 use std::{io::Cursor, sync::Mutex};
 use waypoint_applications::{
     driver::BrowserDriver,
@@ -19,6 +20,7 @@ impl Transport for RecordedHttp {
         _: u64,
         max: usize,
         origin: Option<&waypoint_net::PublicRequestOrigin>,
+        accept: Option<&waypoint_net::PublicDocumentAccept>,
     ) -> Result<CapturedResponse, ()> {
         assert!(origin.is_none(), "Fixture has no CORS context");
         self.requests.lock().unwrap().push(url.into());
@@ -29,6 +31,12 @@ impl Transport for RecordedHttp {
         // style resource type/Origin absence is separately observed by Chromium.
         response.request_header_names =
             Some(vec!["host".into(), "accept".into(), "user-agent".into()]);
+        response.request_accept = Some(
+            accept
+                .map(waypoint_net::PublicDocumentAccept::as_str)
+                .unwrap_or("*/*")
+                .into(),
+        );
         Ok(response)
     }
 }
@@ -56,10 +64,14 @@ fn discovery_archives_observed_public_ats_frame() {
         (frame, "text/html", "<!doctype html><link rel=icon href=data:,><label>Field experience<input required></label><div role=group aria-label='Supporting documents'><label for=document>Candidate document</label><input id=document type=file><p aria-live=polite style='margin-top:170px;color:maroon'>Fictional upload needs review</p></div>"),
     ]
     .into_iter()
-    .map(|(url, mime, body)| (
-        url.into(),
-        format!("HTTP/1.1 200 Fixture\r\nContent-Type: {mime}\r\nContent-Length: {}\r\n\r\n{body}", body.len()).into_bytes(),
-    ))
+    .map(|(url, mime, body)| {
+        let vary = if mime == "text/html" {
+            "Vary: Accept-Encoding\r\nVary: Accept, X-Requested-With, Origin\r\n"
+        } else {
+            ""
+        };
+        (url.into(), format!("HTTP/1.1 200 Fixture\r\nContent-Type: {mime}\r\nContent-Length: {}\r\n{vary}\r\n{body}", body.len()).into_bytes())
+    })
     .collect();
     let calls = Arc::new(Mutex::new(vec![]));
     let dropped = Arc::new(AtomicBool::new(false));
@@ -80,10 +92,32 @@ fn discovery_archives_observed_public_ats_frame() {
         }),
     )
     .unwrap();
+    let accept = crate::capture_discovery::document_request_accept(
+        &python,
+        config.clone(),
+        &folder.join("document-request-probe"),
+    )
+    .unwrap();
+    capture.set_document_accept(accept.clone()).unwrap();
     let discovery = capture
         .discover_resources(&python, config.clone(), 4, 1500)
         .unwrap();
     let archive = capture.freeze().unwrap();
+    let manifest: Value = serde_json::from_slice(
+        &std::fs::read(archive.snapshot.root.join(&archive.snapshot.manifest)).unwrap(),
+    )
+    .unwrap();
+    for url in [entry, frame] {
+        let resource = manifest["resources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|resource| resource["url"] == url)
+            .unwrap();
+        assert_eq!(resource["request_accept"], accept.as_str());
+        assert_eq!(resource["request_x_requested_with_absent"], true);
+        assert_eq!(resource["request_origin_absent"], true);
+    }
     assert!(dropped.load(Ordering::Acquire));
     assert_eq!(discovery.rounds[0].newly_recorded, 1);
     assert_eq!(archive.report.embedded_origins.len(), 1);

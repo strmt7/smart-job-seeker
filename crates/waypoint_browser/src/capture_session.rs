@@ -181,6 +181,7 @@ trait Transport: Send {
         millis: u64,
         max_bytes: usize,
         origin: Option<&waypoint_net::PublicRequestOrigin>,
+        accept: Option<&waypoint_net::PublicDocumentAccept>,
     ) -> Result<CapturedResponse, ()>;
 }
 struct PublicTransport;
@@ -191,12 +192,17 @@ impl Transport for PublicTransport {
         millis: u64,
         max_bytes: usize,
         origin: Option<&waypoint_net::PublicRequestOrigin>,
+        accept: Option<&waypoint_net::PublicDocumentAccept>,
     ) -> Result<CapturedResponse, ()> {
-        match origin {
-            Some(origin) => {
+        match (origin, accept) {
+            (Some(origin), None) => {
                 waypoint_net::get_asset_capped_with_origin(url, millis, max_bytes, origin)
             }
-            None => waypoint_net::get_asset_capped(url, millis, max_bytes),
+            (None, Some(accept)) => {
+                waypoint_net::get_document_capped(url, millis, max_bytes, accept)
+            }
+            (None, None) => waypoint_net::get_asset_capped(url, millis, max_bytes),
+            (Some(_), Some(_)) => return Err(()),
         }
         .map_err(|_| ())
     }
@@ -216,6 +222,7 @@ pub struct CaptureSession {
     sources: BTreeMap<String, String>,
     registry: PermissionRegistry,
     transport: Box<dyn Transport>,
+    document_accept: Option<waypoint_net::PublicDocumentAccept>,
     robots: BTreeMap<String, Robots>,
     visited: BTreeSet<String>,
     recorded: BTreeSet<String>,
@@ -265,6 +272,18 @@ fn privacy_gap(error: crate::capture_privacy::UrlPrivacyError) -> CaptureGap {
     }
 }
 impl CaptureSession {
+    /// Bind an engine-observed anonymous document preference before transport.
+    pub fn set_document_accept(
+        &mut self,
+        accept: waypoint_net::PublicDocumentAccept,
+    ) -> Result<(), String> {
+        if self.requests != 0 || self.entry_recorded || self.document_accept.is_some() {
+            return Err("Document request preference requires a fresh capture".into());
+        }
+        self.document_accept = Some(accept);
+        Ok(())
+    }
+
     /// Run only on an owned background worker. The template contributes its
     /// verified private engine; candidate content is never accepted here.
     #[cfg(windows)]
@@ -706,6 +725,7 @@ impl CaptureSession {
             sources,
             registry,
             transport,
+            document_accept: None,
             robots: BTreeMap::new(),
             visited: BTreeSet::new(),
             recorded: BTreeSet::new(),
@@ -752,6 +772,7 @@ impl CaptureSession {
         url: &url::Url,
         limit: usize,
         origin: Option<&waypoint_net::PublicRequestOrigin>,
+        document: bool,
     ) -> Result<CapturedResponse, CaptureGap> {
         self.check_time()?;
         self.authorize(url)?;
@@ -766,7 +787,17 @@ impl CaptureSession {
         self.requests += 1;
         let response = self
             .transport
-            .get(url.as_str(), millis, body_limit + HEADER_ALLOWANCE, origin)
+            .get(
+                url.as_str(),
+                millis,
+                body_limit + HEADER_ALLOWANCE,
+                origin,
+                if document {
+                    self.document_accept.as_ref()
+                } else {
+                    None
+                },
+            )
             .map_err(|_| CaptureGap::Network)?;
         if response.request_method != "GET" {
             return Err(CaptureGap::Network);
@@ -789,7 +820,7 @@ impl CaptureSession {
                     if !seen.insert(next.to_string()) {
                         return Err(CaptureGap::RedirectLoop);
                     }
-                    let response = self.get(&next, ROBOTS_BYTES, None)?;
+                    let response = self.get(&next, ROBOTS_BYTES, None, false)?;
                     if is_redirect(response.status) {
                         if depth == 5 {
                             return Err(CaptureGap::RedirectLimit);
@@ -907,6 +938,7 @@ impl CaptureSession {
                 &next,
                 self.budget.body_bytes,
                 scope.as_ref().and_then(|scope| scope.request_origin),
+                scope.as_ref().is_none_or(|scope| scope.assets.is_none()),
             )?;
             let status = response.status;
             let size = response.body.len();
@@ -1260,6 +1292,7 @@ mod tests {
             millis: u64,
             max: usize,
             origin: Option<&waypoint_net::PublicRequestOrigin>,
+            _accept: Option<&waypoint_net::PublicDocumentAccept>,
         ) -> Result<CapturedResponse, ()> {
             assert!((1..=8000).contains(&millis));
             assert!(max <= 8 * 1024 * 1024 + HEADER_ALLOWANCE);
@@ -1285,6 +1318,7 @@ mod tests {
         CapturedResponse {
             request_method: "GET".into(),
             request_header_names: None,
+            request_accept: None,
             request_origin: None,
             status,
             body: body.as_bytes().to_vec(),
@@ -2148,7 +2182,7 @@ mod tests {
             gap(h.session.capture(raw), CaptureGap::PrivateUrl);
             assert_eq!(
                 h.session
-                    .get(&url::Url::parse(raw).unwrap(), 1024, None)
+                    .get(&url::Url::parse(raw).unwrap(), 1024, None, false)
                     .unwrap_err(),
                 CaptureGap::PrivateUrl
             );

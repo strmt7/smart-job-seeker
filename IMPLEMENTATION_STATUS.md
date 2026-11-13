@@ -1,3 +1,14 @@
+## Observed document representations - 2026-11-13
+
+Public document captures now use the rendering engine's observed anonymous
+Accept preference, retained from actual native request bytes and matched exactly
+on replay. Repeated Vary dimensions remain bound. A previously unsupported source
+now archives30 resources and exposes10 native controls; covering-dialog/custom
+barriers still block entry. Workspace1,341 passed/599 ignored, Clippy/build/fmt,
+portable broker61, two selected contained native fixtures and actual record checks
+at four widths pass. No model score, submission or release.
+[Evidence](docs/g1/OBSERVED_DOCUMENT_REPRESENTATION_2026-11-13.md).
+
 ## Unseen-family intake and question context - 2026-11-13
 
 Four additional frozen platform candidates yielded three native inventories;

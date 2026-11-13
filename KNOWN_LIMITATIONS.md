@@ -10,6 +10,14 @@ frame/shadow traversal, candidate-file import, structured history and semantic
 fit assessment also exist. Their broad qualification and recovery limits remain
 open; the earlier statements that those mechanisms are absent are superseded.
 
+Current document-representation continuation, 2026-11-13: a previously unsupported
+source now archives30 resources/10 supported controls through engine-observed
+anonymous negotiation and strict replay. The family is development data. A cookie
+dialog, custom/obscured controls, missing assets and some unreflected visible
+Required markers remain; zero model-scored held-out cases. Generic contained
+dialog/panel progression and independent requiredness/workflow truth are next.
+[Evidence](docs/g1/OBSERVED_DOCUMENT_REPRESENTATION_2026-11-13.md).
+
 Current intake/context continuation, 2026-11-13: four additional platforms all
 remain entry-ineligible (job-alert panel/CAPTCHA, unsupported representation,
 custom/obscured controls, CAPTCHA). Zero held-out model scores remain. Shared

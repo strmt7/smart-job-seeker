@@ -24,6 +24,9 @@ pub struct CapturedResponse {
     /// Complete names from the request actually written by this client.
     /// A response-only stream has no evidence about absent request headers.
     pub request_header_names: Option<Vec<String>>,
+    /// Exact Accept value parsed from the request actually written. A
+    /// response-only stream cannot establish a request representation.
+    pub request_accept: Option<String>,
     /// Exact validated Origin written by the native client, if any.
     pub request_origin: Option<crate::PublicRequestOrigin>,
     pub status: u16,
@@ -283,6 +286,7 @@ pub(crate) fn receive<S: Read>(
                 return Ok(CapturedResponse {
                     request_method: method.to_owned(),
                     request_header_names: None,
+                    request_accept: None,
                     request_origin: None,
                     status: value.status,
                     headers: value.headers,

@@ -223,6 +223,26 @@ def origin_absent_stylesheet(request, resource_type):
         'access-control-request-headers', 'access-control-request-method'})
 
 
+def public_document_accept(value):
+    token = lambda text: bool(re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}", text))
+    if (not isinstance(value, str) or not 1 <= len(value) <= 1024 or value.strip() != value
+            or not value.isascii() or any(ord(c) < 32 or ord(c) == 127 for c in value)):
+        return False
+    ranges = value.split(',')
+    if len(ranges) > 32:
+        return False
+    for part in ranges:
+        parts = part.strip().split(';')
+        media = parts[0].strip().split('/')
+        if len(media) != 2 or not all(token(item) for item in media):
+            return False
+        for parameter in parts[1:]:
+            pair = parameter.strip().split('=', 1)
+            if len(pair) != 2 or not all(token(item) for item in pair):
+                return False
+    return True
+
+
 class Archive:
     def __init__(self, root, name, files, entry):
         self.root = Path(root)
@@ -259,7 +279,7 @@ class Archive:
         required = {'url', 'method', 'request_body_sha256', 'status', 'headers', 'body_file', 'body_sha256'}
         for item in value['resources']:
             if (not isinstance(item, dict) or not required.issubset(item)
-                    or set(item) - required - {'request_origin_absent', 'request_origin', 'request_preflight_absent', 'request_origin_absent_stylesheet'} or not isinstance(item['method'], str)
+                    or set(item) - required - {'request_origin_absent', 'request_origin', 'request_preflight_absent', 'request_origin_absent_stylesheet', 'request_accept', 'request_x_requested_with_absent'} or not isinstance(item['method'], str)
                     or not re.fullmatch('[A-Z]{1,32}', item['method'])
                     or item['method'] in ('CONNECT', 'TRACE') or not sha(item['request_body_sha256'])
                     or type(item['status']) is not int or not 200 <= item['status'] <= 599 or item['status'] in (206,304)):
@@ -303,6 +323,19 @@ class Archive:
             vary = next((h['value'] for h in normalized if h['name'].lower() == 'vary'), None)
             fields = {v.strip().lower() for v in vary.split(',')} if vary is not None else set()
             bound_origin = item.get('request_origin_absent') is True
+            accept_bound = public_document_accept(item.get('request_accept'))
+            requested_with_absent = item.get('request_x_requested_with_absent') is True
+            document_variant = accept_bound or requested_with_absent
+            if (('request_accept' in item and not accept_bound)
+                    or ('accept' in fields) != accept_bound
+                    or ('x-requested-with' in fields) != requested_with_absent
+                    or 'request_x_requested_with_absent' in item and not requested_with_absent
+                    or document_variant and (not bound_origin or item['method'] != 'GET'
+                        or item['request_body_sha256'] != hashlib.sha256(b'').hexdigest()
+                        or not (item['status'] in (301, 302, 303, 307, 308) or any(
+                            h['name'].lower() == 'content-type' and h['value'].split(';')[0].strip().lower()
+                            in ('text/html', 'application/xhtml+xml') for h in normalized)))):
+                raise ReplayError('unbound_replay_variant')
             absent_style = item.get('request_origin_absent_stylesheet') is True
             if 'request_origin_absent_stylesheet' in item and not absent_style:
                 raise ReplayError('unbound_replay_variant')
@@ -322,10 +355,10 @@ class Archive:
                     or 'request_preflight_absent' in item and not preflight_bound
                     or preflight_bound and item['method'] != 'GET'):
                 raise ReplayError('unbound_replay_variant')
-            if (fields - {'accept-encoding', 'origin'} - preflight_fields or ('origin' in fields and not (bound_origin or explicit_origin))
-                    or bound_origin and 'origin' not in fields and not absent_style
+            if (fields - {'accept-encoding', 'origin', 'accept', 'x-requested-with'} - preflight_fields or ('origin' in fields and not (bound_origin or explicit_origin))
+                    or bound_origin and 'origin' not in fields and not (absent_style or document_variant)
                     or 'request_origin_absent' in item and not bound_origin
-                    or bound_origin and (item['method'] != 'GET' or not absent_style and not any(
+                    or bound_origin and (item['method'] != 'GET' or not absent_style and not (document_variant and item['status'] in (301, 302, 303, 307, 308)) and not any(
                         h['name'].lower() == 'content-type' and h['value'].split(';')[0].strip().lower() in ('text/html', 'application/xhtml+xml')
                         for h in normalized))):
                 raise ReplayError('unbound_replay_variant')
@@ -437,6 +470,20 @@ class Archive:
                 return None, 'origin_variant_not_recorded'
             if item.get('request_origin') and [value for key, value in headers.items() if key.lower() == 'origin'] != [item['request_origin']]:
                 return None, 'origin_variant_not_recorded'
+            if item.get('request_accept') or item.get('request_x_requested_with_absent'):
+                if resource_type != 'Document' or method != 'GET':
+                    return None, 'document_variant_not_recorded'
+                if request.get('hasPostData') or 'postData' in request or 'postDataEntries' in request:
+                    return None, 'document_body_variant_not_recorded'
+                if any(name in names for name in ('cookie', 'authorization', 'proxy-authorization',
+                            'content-length', 'transfer-encoding', 'content-type', 'access-control-request-headers',
+                            'access-control-request-method')):
+                    return None, 'document_headers_variant_not_recorded'
+                if item.get('request_accept') and [value for key, value in headers.items()
+                        if key.lower() == 'accept'] != [item['request_accept']]:
+                    return None, 'document_accept_variant_not_recorded'
+                if item.get('request_x_requested_with_absent') and 'x-requested-with' in names:
+                    return None, 'document_requested_with_variant_not_recorded'
             if item.get('request_origin_absent_stylesheet') and not origin_absent_stylesheet(request, resource_type):
                 return None, 'origin_variant_not_recorded'
             if item.get('request_origin_absent') and not item.get('request_origin_absent_stylesheet') and (resource_type != 'Document' or 'origin' in names):
@@ -456,6 +503,7 @@ class Broker:
         if type(discovery) is not bool:
             raise ReplayError('invalid_discovery_mode')
         self.archive, self.send, self.emit = archive, send, emit
+        self.entry_request_accept, self.entry_document_requests = None, 0
         self.discovery = discovery
         self.discovery_session, self.discovery_frames = None, set()
         self.proposals, self.proposal_bytes, self.omitted_proposals, self.ineligible_requests = {}, 0, 0, 0
@@ -525,7 +573,9 @@ class Broker:
         self.send(command)
 
     def host(self, message):
-        if message['id'] >= INTERNAL_ID or message['method'].startswith('Fetch.') or message['method'] in ('Target.setAutoAttach', 'Target.autoAttachRelated'):
+        if (message['id'] >= INTERNAL_ID or message['method'].startswith('Fetch.')
+                or message['method'] in ('Target.setAutoAttach', 'Target.autoAttachRelated')
+                or not self.discovery and message['method'] == 'Network.setExtraHTTPHeaders'):
             raise ReplayError('replay_control_override')
         if isinstance(message.get('sessionId'), str) and message['sessionId'] in self.retired_sessions:
             self.emit(self.stale_reply(message))
@@ -558,7 +608,8 @@ class Broker:
                 'preload_projection_failures':self.archive.preload_projection_failures,
                 'omitted_requests':self.omitted_proposals,
                 'ineligible_requests':self.ineligible_requests, 'pending_commands':len(self.pending),
-                'form_outline': self.outline}})
+                'form_outline': self.outline, 'entry_request_accept':self.entry_request_accept,
+                'entry_document_requests':self.entry_document_requests}})
             return False
         if message['method'] == 'SmartJobseeker.replayReport':
             self.emit({'id': message['id'], 'result': self.report()})
@@ -847,6 +898,19 @@ class Broker:
             request = params.get('request', {})
             if not isinstance(request, dict):
                 raise ReplayError('invalid_replay_pause')
+            if (self.discovery and params.get('resourceType') == 'Document'
+                    and request.get('method') == 'GET' and request.get('url') == self.archive.entry_url):
+                self.entry_document_requests = min(128, self.entry_document_requests + 1)
+                headers = request.get('headers', {})
+                values = [value for key, value in headers.items() if isinstance(key, str) and key.lower() == 'accept'] if isinstance(headers, dict) else []
+                if (self.entry_document_requests == 1 and len(values) == 1 and public_document_accept(values[0])
+                        and not request.get('hasPostData') and 'postData' not in request and 'postDataEntries' not in request
+                        and not any(str(key).lower() in ('origin','cookie','authorization','proxy-authorization',
+                            'content-length','transfer-encoding','content-type','access-control-request-method',
+                            'access-control-request-headers') for key in headers)):
+                    self.entry_request_accept = values[0]
+                else:
+                    self.entry_request_accept = None
             result, reason = self.archive.response(request, params.get('resourceType'))
             if result is None:
                 self.observe_refusal(request, params.get('resourceType'), reason)

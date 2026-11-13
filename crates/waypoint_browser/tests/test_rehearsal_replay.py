@@ -35,6 +35,60 @@ class Fixture:
 class ReplayTests(unittest.TestCase):
     def setUp(self):self.fixture=Fixture()
     def tearDown(self):self.fixture.close()
+    def test_public_document_accept_has_no_header_injection_or_unbounded_media_ranges(self):
+        self.assertTrue(replay.public_document_accept('text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,*/*;q=0.8,application/signed-exchange;v=b3'))
+        for value in [None,True,1,[],{},'', ' text/html', 'text/html ', 'text/html,\r\nX: injected',
+                      'text/html,\napplication/json','text/html,\tapplication/json','text/html,\u00a0application/json',
+                      'text/html,','text/html;token','text/html;x=secret@example.invalid','a/b,'*33]:
+            with self.subTest(value=value):self.assertFalse(replay.public_document_accept(value))
+    def test_document_variant_requires_exact_anonymous_accept_and_absent_requested_with(self):
+        item=self.fixture.resources[0]
+        item.update(request_accept='*/*',request_origin_absent=True,request_x_requested_with_absent=True)
+        item['headers'].append({'name':'Vary','value':'Accept-Encoding, Accept, X-Requested-With, Origin'})
+        archive=self.fixture.archive()
+        request={'url':item['url'],'method':'GET','headers':{'Accept':'*/*'}}
+        self.assertEqual(archive.response(request,'Document')[1],'recorded_response')
+        self.assertEqual(archive.resources[('GET',item['url'],digest(b''))]['request_accept'],'*/*')
+        for headers in [{},{'Accept':'text/html'},{'Accept':' */*'},{'Accept':'*/*','accept':'*/*'},
+                        {'Accept':'*/*','Cookie':'private'},{'Accept':'*/*','Authorization':'private'},
+                        {'Accept':'*/*','X-Requested-With':'XMLHttpRequest'},
+                        {'Accept':'*/*','Content-Length':'0'},{'Accept':'*/*','Access-Control-Request-Method':'GET'}]:
+            with self.subTest(headers=headers):self.assertNotEqual(archive.response({**request,'headers':headers},'Document')[1],'recorded_response')
+        for kind in [None,'Fetch','XHR','Image','Stylesheet','Script']:
+            self.assertEqual(archive.response(request,kind)[1],'document_variant_not_recorded')
+        self.assertNotEqual(archive.response({**request,'method':'POST'},'Document')[1],'recorded_response')
+        for body in [{'hasPostData':True},{'postData':''},{'postDataEntries':[]}]:
+            self.assertNotEqual(archive.response({**request,**body},'Document')[1],'recorded_response')
+
+    def test_requested_with_absence_alone_does_not_invent_an_accept_policy(self):
+        item=self.fixture.resources[0];item.update(request_origin_absent=True,request_x_requested_with_absent=True)
+        item['headers'].append({'name':'Vary','value':'X-Requested-With'})
+        archive=self.fixture.archive();self.assertNotIn('request_accept',archive.resources[('GET',item['url'],digest(b''))])
+        request={'url':item['url'],'method':'GET','headers':{'Accept':'text/html'}}
+        self.assertEqual(archive.response(request,'Document')[1],'recorded_response')
+        for value in ['', 'XMLHttpRequest']:
+            self.assertEqual(archive.response({**request,'headers':{**request['headers'],'x-requested-with':value}},'Document')[1],'document_requested_with_variant_not_recorded')
+
+    def test_document_variant_manifest_refuses_missing_extra_or_forged_bindings(self):
+        item=self.fixture.resources[0];original=dict(item)
+        for binding in [{},{'request_accept':'text/html'},{'request_accept':True},{'request_accept':'*/*'},
+                        {'request_accept':'*/*','request_origin_absent':True,'request_x_requested_with_absent':1},
+                        {'request_accept':'*/*','request_origin_absent':True,'request_x_requested_with_absent':False}]:
+            item.clear();item.update(original);item.update(binding)
+            item['headers']=original['headers']+[{'name':'Vary','value':'Accept, X-Requested-With'}]
+            with self.subTest(binding=binding),self.assertRaisesRegex(replay.ReplayError,'unbound_replay_variant'):self.fixture.archive()
+        item.clear();item.update(original);item.update(request_accept='*/*',request_origin_absent=True)
+        item['headers']=original['headers']+[{'name':'Vary','value':'Accept'}]
+        for changes in [{'method':'HEAD'},{'request_body_sha256':digest(b'not empty')},
+                        {'headers':[{'name':'Content-Type','value':'application/json'},{'name':'Vary','value':'Accept'}]},
+                        {'headers':original['headers']},{'request_origin_absent_stylesheet':True}]:
+            valid=dict(item);item.update(changes)
+            with self.subTest(changes=changes),self.assertRaises(replay.ReplayError):self.fixture.archive()
+            item.clear();item.update(valid)
+        redirect={**item,'url':'https://fixture.invalid/redirect','status':302,
+            'headers':[{'name':'Content-Type','value':'text/plain'},{'name':'Vary','value':'Accept'}]}
+        self.fixture.resources.append(redirect)
+        self.assertEqual(self.fixture.archive().resources[('GET',item['url'],digest(b''))]['request_accept'],'*/*')
     def test_origin_bound_variant_requires_get_document_and_absent_origin(self):
         item=self.fixture.resources[0]
         item['headers'].append({'name':'Vary','value':'Accept-Encoding, Origin'})
@@ -470,7 +524,7 @@ class BrokerTests(unittest.TestCase):
 
 
     def test_interception_error_override_duplicate_ids_and_unknown_sessions_fail(self):
-        for method in ['Fetch.disable','Fetch.continueRequest','Fetch.enable','Target.setAutoAttach']:
+        for method in ['Fetch.disable','Fetch.continueRequest','Fetch.enable','Target.setAutoAttach','Network.setExtraHTTPHeaders']:
             with self.assertRaises(replay.ReplayError):self.broker.host({'id':1,'method':method})
         with self.assertRaises(replay.ReplayError):self.broker.host({'id':replay.INTERNAL_ID,'method':'Page.enable'})
         self.broker.host({'id':1,'method':'Target.attachToTarget','params':{'targetId':'root'}});self.broker.browser({'id':1,'result':{'sessionId':'page'}})
@@ -494,6 +548,27 @@ class DiscoveryTests(unittest.TestCase):
     def report(self):
         self.assertFalse(self.broker.host({'id':99,'method':'SmartJobseeker.discoveryReport','params':{}}))
         return self.emitted[-1]['result']
+    def test_initial_document_accept_observation_is_exact_anonymous_and_single_use(self):
+        self.frame(resource_type='Document',url='https://fixture.invalid/form',method='GET',headers={'Accept':'text/html,application/xhtml+xml;q=0.9'})
+        report=self.report();self.assertEqual(report['entry_document_requests'],1)
+        self.assertEqual(report['entry_request_accept'],'text/html,application/xhtml+xml;q=0.9')
+        self.frame(resource_type='Document',url='https://fixture.invalid/form',method='GET',headers={'Accept':'text/html,application/xhtml+xml;q=0.9'})
+        report=self.report();self.assertEqual(report['entry_document_requests'],2);self.assertIsNone(report['entry_request_accept'])
+
+    def test_document_request_probe_never_uses_sensitive_body_or_ambiguous_header_context(self):
+        for changes in [
+            {'headers':{}},{'headers':{'Accept':'text/html','accept':'text/html'}},
+            {'headers':{'Accept':'text/html,\napplication/json'}},
+            {'headers':{'Accept':'text/html','Cookie':'fictional-secret'}},
+            {'headers':{'Accept':'text/html','Origin':'https://fixture.invalid'}},
+            {'headers':{'Accept':'text/html','Content-Length':'0'}},
+            {'headers':{'Accept':'text/html','Access-Control-Request-Method':'GET'}},
+            {'hasPostData':True},{'postData':''},{'postDataEntries':[]},
+        ]:
+            self.broker=replay.Broker(self.fixture.archive(),self.sent.append,self.emitted.append,discovery=True);self.broker.sessions['page']='page'
+            request={'url':'https://fixture.invalid/form','method':'GET','headers':{'Accept':'text/html'},**changes}
+            self.frame(resource_type='Document',**request);report=self.report()
+            self.assertIsNone(report['entry_request_accept']);self.assertNotIn('fictional-secret',json.dumps(report))
     def outline(self, nodes):
         self.assertFalse(self.broker.host({'id': 81, 'method': 'SmartJobseeker.publicFormOutline', 'sessionId': 'page', 'params': {}}))
         command = self.sent[-1]

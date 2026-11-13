@@ -57,6 +57,8 @@ pub(super) struct SnapshotRequestBinding {
     origin: bool,
     preflight: bool,
     stylesheet: bool,
+    accept: bool,
+    requested_with_absent: bool,
 }
 #[derive(Clone, Copy, Default)]
 pub(super) enum SnapshotScope {
@@ -103,6 +105,43 @@ pub(super) fn snapshot_binding_scoped(
                 && !names.contains("access-control-request-method")
         });
     let stylesheet = matches!(scope, SnapshotScope::OriginAbsentStylesheet);
+    let mime: Vec<_> = response
+        .headers
+        .iter()
+        .filter(|h| h.name.eq_ignore_ascii_case("content-type"))
+        .collect();
+    let html = mime.len() == 1
+        && std::str::from_utf8(&mime[0].value).is_ok_and(|value| {
+            matches!(
+                value
+                    .split(';')
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .to_ascii_lowercase()
+                    .as_str(),
+                "text/html" | "application/xhtml+xml"
+            )
+        });
+    let redirect = matches!(response.status, 301 | 302 | 303 | 307 | 308);
+    let anonymous_navigation = !stylesheet
+        && response.request_method == "GET"
+        && origin_absent
+        && preflight_absent
+        && (html || redirect)
+        && names.as_ref().is_some_and(|names| {
+            !names.iter().any(|name| {
+                matches!(
+                    name.as_str(),
+                    "cookie"
+                        | "authorization"
+                        | "proxy-authorization"
+                        | "content-length"
+                        | "transfer-encoding"
+                        | "content-type"
+                )
+            })
+        });
     if stylesheet {
         let mime: Vec<_> = response
             .headers
@@ -162,6 +201,28 @@ pub(super) fn snapshot_binding_scoped(
             if field.eq_ignore_ascii_case("accept-encoding") {
                 continue;
             }
+            if field.eq_ignore_ascii_case("accept")
+                && anonymous_navigation
+                && response
+                    .request_accept
+                    .as_ref()
+                    .is_some_and(|value| waypoint_net::PublicDocumentAccept::parse(value).is_ok())
+                && names.as_ref().is_some_and(|names| names.contains("accept"))
+            {
+                binding.accept = true;
+                binding.origin = true;
+                continue;
+            }
+            if field.eq_ignore_ascii_case("x-requested-with")
+                && anonymous_navigation
+                && names
+                    .as_ref()
+                    .is_some_and(|names| !names.contains("x-requested-with"))
+            {
+                binding.requested_with_absent = true;
+                binding.origin = true;
+                continue;
+            }
             if field.eq_ignore_ascii_case("origin") && (origin_absent || origin_present) {
                 binding.origin = true;
             } else if preflight_absent
@@ -174,29 +235,13 @@ pub(super) fn snapshot_binding_scoped(
             }
         }
     }
-    if binding.origin && !origin_present && !stylesheet {
-        let headers: Vec<_> = response
-            .headers
-            .iter()
-            .filter(|h| h.name.eq_ignore_ascii_case("content-type"))
-            .collect();
-        if response.request_method != "GET"
-            || headers.len() != 1
-            || !std::str::from_utf8(&headers[0].value).is_ok_and(|value| {
-                matches!(
-                    value
-                        .split(';')
-                        .next()
-                        .unwrap_or("")
-                        .trim()
-                        .to_ascii_lowercase()
-                        .as_str(),
-                    "text/html" | "application/xhtml+xml"
-                )
-            })
-        {
-            return Err("Absent Origin snapshots require HTML navigation resources".into());
-        }
+    if binding.origin
+        && !origin_present
+        && !stylesheet
+        && (response.request_method != "GET"
+            || !(html || redirect && (binding.accept || binding.requested_with_absent)))
+    {
+        return Err("Absent Origin snapshots require HTML navigation resources".into());
     }
     Ok(binding)
 }
@@ -339,7 +384,7 @@ impl SnapshotBuilder {
             return Err("Bodyless snapshot response contains data".into());
         }
         let mut names = BTreeSet::new();
-        let mut headers = Vec::new();
+        let mut headers: Vec<Value> = Vec::new();
         let mut connection_names = BTreeSet::new();
         let mut ignored_cookie = false;
         let binding = match scope {
@@ -353,6 +398,7 @@ impl SnapshotBuilder {
                 connection_names.extend(value.split(',').map(|v| v.trim().to_ascii_lowercase()));
             }
         }
+        let request_accept = response.request_accept.clone();
         let request_origin = response
             .request_origin
             .as_ref()
@@ -389,8 +435,7 @@ impl SnapshotBuilder {
             }
             let value = std::str::from_utf8(&h.value)
                 .map_err(|_| "Non-UTF8 snapshot header needs review")?;
-            if !names.insert(name.clone())
-                || value.len() > 8192
+            if value.len() > 8192
                 || value.chars().any(|c| c.is_control())
                 || h.name.is_empty()
                 || h.name.len() > 256
@@ -400,6 +445,32 @@ impl SnapshotBuilder {
                     .all(|c| c.is_ascii_alphanumeric() || b"!#$%&'*+.^_`|~-".contains(&c))
             {
                 return Err("Invalid or duplicate snapshot response header".into());
+            }
+            if !names.insert(name.clone()) {
+                // Vary is a list field. Retain every selecting dimension when
+                // serializing repeated field lines; never discard a variant.
+                if name != "vary" {
+                    return Err("Invalid or duplicate snapshot response header".into());
+                }
+                let previous = headers
+                    .iter_mut()
+                    .find(|header| {
+                        header["name"]
+                            .as_str()
+                            .is_some_and(|name| name.eq_ignore_ascii_case("vary"))
+                    })
+                    .ok_or("Missing snapshot Vary header")?;
+                let combined = format!(
+                    "{}, {value}",
+                    previous["value"]
+                        .as_str()
+                        .ok_or("Invalid snapshot Vary header")?
+                );
+                if combined.len() > 8192 {
+                    return Err("Snapshot Vary header budget exceeded".into());
+                }
+                previous["value"] = json!(combined);
+                continue;
             }
             headers.push(json!({"name":h.name,"value":value}));
         }
@@ -450,6 +521,12 @@ impl SnapshotBuilder {
         }
         if binding.preflight {
             resource["request_preflight_absent"] = json!(true);
+        }
+        if binding.accept {
+            resource["request_accept"] = json!(request_accept);
+        }
+        if binding.requested_with_absent {
+            resource["request_x_requested_with_absent"] = json!(true);
         }
         self.resources.push(resource);
         if ignored_cookie {
@@ -520,6 +597,126 @@ mod tests {
     }
     fn builder(root: &Path) -> SnapshotBuilder {
         SnapshotBuilder::start(&root.join("capture"), "https://fixture.invalid/form#apply").unwrap()
+    }
+    #[test]
+    fn anonymous_navigation_variants_retain_native_request_proof_and_all_vary_lines() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut capture = builder(temp.path());
+        let mut value = response(
+            "<label>Fictional</label>",
+            "text/html",
+            "Vary: Accept-Encoding\r\nVary: Accept, X-Requested-With, Origin\r\n",
+        );
+        value.request_header_names =
+            Some(vec!["host".into(), "accept".into(), "user-agent".into()]);
+        value.request_accept = Some("*/*".into());
+        capture.add("https://fixture.invalid/form", value).unwrap();
+        let snapshot = capture.finish().unwrap();
+        let manifest: Value =
+            serde_json::from_slice(&fs::read(snapshot.root.join(snapshot.manifest)).unwrap())
+                .unwrap();
+        let resource = &manifest["resources"][0];
+        assert_eq!(resource["request_accept"], "*/*");
+        assert_eq!(resource["request_x_requested_with_absent"], true);
+        assert_eq!(resource["request_origin_absent"], true);
+        let vary: Vec<_> = resource["headers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|header| {
+                header["name"]
+                    .as_str()
+                    .unwrap()
+                    .eq_ignore_ascii_case("vary")
+            })
+            .collect();
+        assert_eq!(vary.len(), 1);
+        assert_eq!(
+            vary[0]["value"],
+            "Accept-Encoding, Accept, X-Requested-With, Origin"
+        );
+    }
+
+    #[test]
+    fn navigation_variant_refuses_unproved_credentialed_body_or_non_document_scope() {
+        let mut original = response(
+            "<p>Fictional</p>",
+            "text/html",
+            "Vary: Accept, X-Requested-With, Origin\r\n",
+        );
+        original.request_header_names = Some(vec!["host".into(), "accept".into()]);
+        original.request_accept = Some("*/*".into());
+        assert!(snapshot_origin_binding(&original).is_ok());
+        for accept in [
+            None,
+            Some("not a media range"),
+            Some(" */*"),
+            Some("*/*\r\nX: x"),
+        ] {
+            let mut invalid = original.clone();
+            invalid.request_accept = accept.map(str::to_owned);
+            assert!(snapshot_origin_binding(&invalid).is_err());
+        }
+        for names in [
+            None,
+            Some(vec!["host"]),
+            Some(vec!["accept"]),
+            Some(vec!["host", "accept", "Accept"]),
+            Some(vec!["host", "bad name", "accept"]),
+        ] {
+            let mut invalid = original.clone();
+            invalid.request_header_names =
+                names.map(|names| names.into_iter().map(str::to_owned).collect());
+            assert!(snapshot_origin_binding(&invalid).is_err());
+        }
+        for header in [
+            "cookie",
+            "authorization",
+            "proxy-authorization",
+            "origin",
+            "content-length",
+            "transfer-encoding",
+            "content-type",
+            "access-control-request-method",
+            "access-control-request-headers",
+            "x-requested-with",
+        ] {
+            let mut invalid = original.clone();
+            invalid
+                .request_header_names
+                .as_mut()
+                .unwrap()
+                .push(header.into());
+            assert!(snapshot_origin_binding(&invalid).is_err(), "{header}");
+        }
+        for mime in ["application/json", "text/css", "text/plain"] {
+            let mut invalid = original.clone();
+            invalid.headers[0].value = mime.as_bytes().to_vec();
+            assert!(snapshot_origin_binding(&invalid).is_err());
+        }
+        let mut invalid = original.clone();
+        invalid.headers.push(invalid.headers[0].clone());
+        assert!(snapshot_origin_binding(&invalid).is_err());
+        for method in ["HEAD", "POST", "OPTIONS"] {
+            let mut invalid = original.clone();
+            invalid.request_method = method.into();
+            assert!(snapshot_origin_binding(&invalid).is_err());
+        }
+        assert!(snapshot_binding_scoped(&original, SnapshotScope::OriginAbsentStylesheet).is_err());
+        for vary in ["Accept, Cookie", "Accept, *", "Accept, Accept-Language"] {
+            let mut invalid = original.clone();
+            invalid
+                .headers
+                .iter_mut()
+                .find(|header| header.name.eq_ignore_ascii_case("vary"))
+                .unwrap()
+                .value = vary.as_bytes().to_vec();
+            assert!(snapshot_origin_binding(&invalid).is_err());
+        }
+        let mut redirect = original;
+        redirect.status = 302;
+        redirect.headers[0].value = b"text/plain".to_vec();
+        assert!(snapshot_origin_binding(&redirect).is_ok());
     }
     #[test]
     fn snapshot_preflight_and_positive_origin_require_complete_native_get_proof() {

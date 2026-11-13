@@ -134,6 +134,10 @@ pub(crate) struct Probe {
     #[serde(default)]
     pub asset_origin_absent_stylesheets: std::collections::BTreeSet<String>,
     #[serde(default)]
+    pub entry_request_accept: Option<String>,
+    #[serde(default)]
+    pub entry_document_requests: u64,
+    #[serde(default)]
     pub preload_projection_failures: usize,
     pub omitted_requests: u64,
     pub ineligible_requests: u64,
@@ -181,6 +185,11 @@ impl Probe {
                     })
             })
             && self.preload_projection_failures <= 512
+            && self.entry_document_requests <= 128
+            && self
+                .entry_request_accept
+                .as_ref()
+                .is_none_or(|value| waypoint_net::PublicDocumentAccept::parse(value).is_ok())
             && self.pending_commands <= 128
             && self.unsupported_targets.len() <= 16
             && self
@@ -188,6 +197,54 @@ impl Probe {
                 .as_ref()
                 .is_none_or(PublicFormOutline::valid)
     }
+}
+
+#[cfg(windows)]
+pub fn document_request_accept(
+    python: &std::path::Path,
+    config: crate::rehearsal::RehearsalConfig,
+    root: &std::path::Path,
+) -> Result<waypoint_net::PublicDocumentAccept, String> {
+    // This entirely owned sentinel has no script, form, person or live source.
+    // The same zero-capability renderer reveals its native navigation Accept;
+    // no public URL is fetched to obtain that request preference.
+    let url = "https://smart-jobseeker.invalid/document-request";
+    let body = "<!doctype html><meta charset=utf-8><link rel=icon href=data:,><title>Local request check</title>";
+    let raw = format!(
+        "HTTP/1.1 200 Fixture\r\nContent-Type: text/html\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    );
+    let response =
+        waypoint_net::read_asset_response(&mut std::io::Cursor::new(raw.into_bytes()), "GET", 4096)
+            .map_err(|_| "Cannot create controlled request check")?;
+    let mut builder = crate::rehearsal_capture::SnapshotBuilder::start(root, url)?;
+    builder.add(url, response)?;
+    let snapshot = builder.finish()?;
+    let engine_files_sha256 = waypoint_domain::sha256_hex(
+        &serde_json::to_vec(&config.engine_files)
+            .map_err(|_| "Cannot bind request-check engine")?,
+    );
+    let manifest_sha256 = snapshot
+        .files
+        .get(&snapshot.manifest)
+        .cloned()
+        .ok_or("Request-check manifest identity is unavailable")?;
+    let probe = render(python, config, snapshot, 250)?;
+    if probe.entry_document_requests != 1
+        || probe.unsupported() != 0
+        || probe.unreplayed_transports != 0
+        || !probe.urls.is_empty()
+        || probe.pending_commands != 0
+    {
+        return Err("Controlled document request observation is incomplete".into());
+    }
+    let accept = probe
+        .entry_request_accept
+        .ok_or("Controlled document Accept is unavailable")?;
+    let value = waypoint_net::PublicDocumentAccept::parse(&accept)
+        .map_err(|_| "Controlled document Accept is invalid")?;
+    crate::rehearsal_capture::write_new(root, "request-observation.json", &serde_json::to_vec(&serde_json::json!({"schema":1,"source":"owned_scriptless_sentinel","entry_document_requests":1,"request_accept":accept,"engine_files_sha256":engine_files_sha256,"sentinel_manifest_sha256":manifest_sha256,"external_delivery":"not_performed"})).map_err(|_| "Cannot encode request observation")?)?;
+    Ok(value)
 }
 
 #[cfg(windows)]
