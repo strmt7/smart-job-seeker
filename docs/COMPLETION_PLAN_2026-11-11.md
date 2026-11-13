@@ -6,9 +6,16 @@ model mechanisms, but broad real-world application coverage and clean-host
 installation are not established. Older measured checkpoints retain their
 original source and fixture scopes.
 
-Latest verified hosted checkpoint: `5b1c986370bc972c457785ffa16aeabf7aa9fcff`,
-with successful CI (43400124148), coverage (43400124204) and CodeQL (43400124363).
-The newer [scoped mapping/deep discovery batch](g1/SCOPED_MAPPING_AND_DEEP_DISCOVERY_2026-11-13.md)
+Latest verified hosted checkpoint: `22c682c90cb68296716c5afe5af985d5ea9670d4`,
+with successful CI (43441505816), coverage (43441506106) and CodeQL (43441504873).
+The local [choice/radio checkpoint](g1/CHOICE_CONTEXT_AND_RADIO_CAPTURE_2026-11-13.md)
+adds exact prompt capacity and complete radio images. It retains measured French
+6/7 and English 1/2 results, six required unknowns untouched, and two frame-review
+limits. The post-crop local-model retest awaits resource admission; scope
+completeness and whole-workflow/held-out gates remain open. No new hosted result
+or release is claimed for that local source.
+
+The earlier [scoped mapping/deep discovery batch](g1/SCOPED_MAPPING_AND_DEEP_DISCOVERY_2026-11-13.md)
 has local native/model/client/workspace evidence: the known contact case improves
 to3/3, while French6/7, saved-employer4/6 and its unverified résumé remain open.
 Resource variants and whole-workflow/held-out gates are incomplete. Historical

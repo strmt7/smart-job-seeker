@@ -1,3 +1,15 @@
+## Choice context and radio images — 2026-11-13
+
+The mapper now includes bounded native choices and sizes each complete prompt,
+fixing a reproduced skipped-field batch. Radio images retain the full question
+on main pages and independently targeted child frames. Native checks verify two
+selections and preserve two frame-review outcomes. Workspace tests pass (1,361
+passed, 610 ignored), as do Clippy, build and formatting. The French model case
+remains 6/7; the new English case was 1/2 before the crop repair. Its model retest
+is pending resource admission, with six required unknowns kept untouched.
+[Evidence](docs/g1/CHOICE_CONTEXT_AND_RADIO_CAPTURE_2026-11-13.md). No whole-workflow
+or held-out pass, and no release.
+
 ## Visible field capture and session reuse — 2026-11-13
 
 Field screenshots no longer request an inactive responsive image during review.

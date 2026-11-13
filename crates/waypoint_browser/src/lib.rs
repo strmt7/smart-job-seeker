@@ -168,6 +168,43 @@ enum FieldContextCrop {
     Standard,
     FileFeedback,
     Detail,
+    Radio,
+}
+
+// A radio's question and option text usually extend beyond its tiny input box.
+// Share the same bounded context in the page and in isolated child documents.
+fn radio_context_bounds(control: [f64; 4], viewport: [f64; 4]) -> Result<[f64; 4], DriverError> {
+    let [left, top, right, bottom] = control;
+    let [view_left, view_top, view_right, view_bottom] = viewport;
+    if control
+        .iter()
+        .chain(viewport.iter())
+        .any(|v| !v.is_finite())
+        || view_left < 0.0
+        || view_top < 0.0
+        || left < view_left
+        || top < view_top
+        || right > view_right
+        || bottom > view_bottom
+        || right <= left
+        || bottom <= top
+        || view_right <= view_left
+        || view_bottom <= view_top
+    {
+        return Err(DriverError(
+            "Radio context is outside the visible viewport".into(),
+        ));
+    }
+    let width = (view_right - view_left).min(720.0);
+    let start = (right + 240.0 - width).clamp(view_left, view_right - width);
+    let top_context = (top - 100.0).max(view_top);
+    let bottom_context = (bottom + 26.0).min(view_bottom).min(top_context + 400.0);
+    if start > left || start + width < right || bottom_context < bottom {
+        return Err(DriverError(
+            "Radio is too large for one bounded context image".into(),
+        ));
+    }
+    Ok([start, top_context, start + width, bottom_context])
 }
 
 fn detail_vertical_bounds(
@@ -2255,6 +2292,17 @@ impl CdpDriver {
         allow_larger_element: bool,
         feedback: bool,
     ) -> Result<String, DriverError> {
+        let numbers = self.node_capture_bounds(node)?;
+        let file_context = context && feedback && self.is_native_file_node(node)?;
+        self.screenshot_bounds(&numbers, context, allow_larger_element, file_context)
+    }
+
+    fn screenshot_radio_node(&mut self, node: u64) -> Result<String, DriverError> {
+        let numbers = self.node_capture_bounds(node)?;
+        self.screenshot_bounds_with_crop(&numbers, true, false, FieldContextCrop::Radio)
+    }
+
+    fn node_capture_bounds(&mut self, node: u64) -> Result<Vec<f64>, DriverError> {
         let model = self
             .cdp
             .call("DOM.getBoxModel", json!({"nodeId":node}))
@@ -2264,8 +2312,7 @@ impl CdpDriver {
             .and_then(Value::as_array)
             .ok_or_else(|| DriverError("Field has no capture bounds".into()))?;
         let numbers: Vec<f64> = quad.iter().filter_map(Value::as_f64).collect();
-        let file_context = context && feedback && self.is_native_file_node(node)?;
-        self.screenshot_bounds(&numbers, context, allow_larger_element, file_context)
+        Ok(numbers)
     }
 
     fn is_native_file_node(&mut self, node: u64) -> Result<bool, DriverError> {
@@ -2385,7 +2432,18 @@ impl CdpDriver {
         {
             return Err(DriverError("Control is outside the visible viewport; scroll it into view before visual capture".into()));
         }
-        let (left, top, width, height, scale) = if context {
+        let (left, top, width, height, scale) = if crop == FieldContextCrop::Radio {
+            let [left, top, right, bottom] = radio_context_bounds(
+                [x + page_x, y + page_y, right, bottom],
+                [
+                    page_x,
+                    page_y,
+                    viewport_right.min(page_width),
+                    viewport_bottom.min(page_height),
+                ],
+            )?;
+            (left, top, right - left, bottom - top, 1)
+        } else if context {
             let left = context_left_edge(x + page_x, right, page_x, page_width);
             let (top, height) = if crop == FieldContextCrop::Detail {
                 detail_vertical_bounds(
@@ -8116,6 +8174,39 @@ mod traversal_tests {
         let wrong_tag = serde_json::json!({"nodeName":"DIV","attributes":["id","role-a"]});
         assert!(unique_section_text(&wrong_tag, "role-a", 100).is_none());
         assert!(unique_section_text(&root, "role-a", 5).unwrap().1);
+    }
+
+    #[test]
+    fn radio_context_keeps_centered_questions_and_options_in_visible_bounds() {
+        assert_eq!(
+            radio_context_bounds([315.0, 172.0, 335.0, 192.0], [0.0, 0.0, 1280.0, 900.0]).unwrap(),
+            [0.0, 72.0, 720.0, 218.0]
+        );
+        assert_eq!(
+            radio_context_bounds(
+                [435.0, 1072.0, 455.0, 1092.0],
+                [120.0, 900.0, 1400.0, 1800.0]
+            )
+            .unwrap(),
+            [120.0, 972.0, 840.0, 1118.0]
+        );
+        assert_eq!(
+            radio_context_bounds([200.0, 60.0, 220.0, 80.0], [0.0, 0.0, 320.0, 200.0]).unwrap(),
+            [0.0, 0.0, 320.0, 106.0]
+        );
+        for control in [
+            [-1.0, 10.0, 20.0, 30.0],
+            [10.0, 10.0, 1281.0, 30.0],
+            [10.0, 10.0, 750.0, 30.0],
+            [10.0, 10.0, 30.0, 500.0],
+            [10.0, 10.0, 10.0, 30.0],
+            [10.0, 10.0, f64::NAN, 30.0],
+        ] {
+            assert!(radio_context_bounds(control, [0.0, 0.0, 1280.0, 900.0]).is_err());
+        }
+        assert!(
+            radio_context_bounds([10.0, 10.0, 20.0, 30.0], [-1.0, 0.0, 1280.0, 900.0]).is_err()
+        );
     }
 
     #[test]

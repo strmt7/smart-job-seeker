@@ -10,6 +10,16 @@ frame/shadow traversal, candidate-file import, structured history and semantic
 fit assessment also exist. Their broad qualification and recovery limits remain
 open; the earlier statements that those mechanisms are absent are superseded.
 
+Current choice/radio continuation, 2026-11-13: complete prompt sizing repairs a
+reproduced skipped-field batch. Main-page radio images no longer clip the full
+question. The local French case remains 6/7; the new English boundary case was
+1/2 before the crop repair, with six required unknowns untouched. Native root and
+independently targeted child selections now verify; same-origin uninspected
+scopes and target-less same-site children still need review. The post-crop model
+retest was not started because development RAM admission was unavailable; all
+previous owned model PIDs were confirmed gone. No workflow or held-out credit.
+[Evidence](docs/g1/CHOICE_CONTEXT_AND_RADIO_CAPTURE_2026-11-13.md).
+
 Current viewport continuation, 2026-11-13: field clipping no longer introduces an
 inactive responsive-image request. The local 12B run on the changed source passes its
 pre-action visual gate, and the saved-copy image shows the optional dialog gone.

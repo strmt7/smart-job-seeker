@@ -13,6 +13,13 @@ applications by the shipped local model. Search, documents, installation,
 recovery and whole-interface acceptance also remain open. A completion
 percentage or zero-defect claim would not be evidence-based.
 
+The [choice/radio continuation](g1/CHOICE_CONTEXT_AND_RADIO_CAPTURE_2026-11-13.md)
+fixes complete-prompt batching and clipped radio questions. Three measured local
+model runs retain zero wrong or unknown entries, but French 6/7 and English 1/2
+remain the observed scores; the repaired crop awaits model retest. Native scope
+checks expose two unresolved frame cases. Workspace tests pass (1,361 passed,
+610 ignored); the app remains a prototype with incomplete workflow qualification.
+
 The [visible-viewport continuation](g1/VISIBLE_VIEWPORT_CAPTURE_2026-11-13.md)
 repairs a screenshot-induced resource gap and session-reuse race. A fresh local 12B
 run passes optional-control visual review but stops on a later blocked POST, with

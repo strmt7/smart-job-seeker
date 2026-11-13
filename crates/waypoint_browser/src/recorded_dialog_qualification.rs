@@ -2,6 +2,182 @@ use super::*;
 use waypoint_applications::driver::BrowserDriver;
 
 #[test]
+#[ignore = "explicit contained engine; fictional centered radio questions in root and child documents"]
+fn centered_radio_context_preserves_question_and_native_choice() {
+    let (template, folder, python) = crate::capture_session::qualification::qualification_config();
+    let entry = "https://fixture.invalid/radio-context";
+    let html="<!doctype html><html lang=en><meta charset=utf-8><link rel=icon href=data:,><style>body{font:18px Arial;max-width:650px;margin:24px auto;padding:0 20px}label{display:inline-block;margin-right:20px}input{width:20px;height:20px;vertical-align:middle}</style><div role=radiogroup aria-label='Current country of residence'><p>Current country of residence *</p><label><input id=ca name=residence type=radio value=ca required>Canada</label><label><input id=fr name=residence type=radio value=fr required>France</label></div></html>";
+    let response = |text: &str| {
+        let wire = format!(
+            "HTTP/1.1 200 Fictional\r\nContent-Type: text/html\r\nContent-Length: {}\r\n\r\n{text}",
+            text.len()
+        );
+        waypoint_net::read_asset_response(
+            &mut std::io::Cursor::new(wire.into_bytes()),
+            "GET",
+            1024 * 1024,
+        )
+        .unwrap()
+    };
+    let mut observations = Vec::new();
+    for name in ["root", "same-origin", "same-site", "cross-site"] {
+        let embedded = name != "root";
+        let child = if name == "cross-site" {
+            "https://embedded.invalid/radio-context-child"
+        } else if name == "same-site" {
+            "https://child.fixture.invalid/radio-context-child"
+        } else {
+            "https://fixture.invalid/radio-context-child"
+        };
+        let mut builder = crate::rehearsal_capture::SnapshotBuilder::start(
+            &folder.join(format!("radio-{name}")),
+            entry,
+        )
+        .unwrap();
+        if embedded {
+            builder.add(entry,response(&format!("<!doctype html><link rel=icon href=data:,><iframe title='Fictional contact form' width=1000 height=650 src={child}></iframe>"))).unwrap();
+            builder.add(child, response(html)).unwrap();
+        } else {
+            builder.add(entry, response(html)).unwrap();
+        }
+        let snapshot = builder.finish().unwrap();
+        let mut config = template.clone();
+        config.schema = 2;
+        config.content_root = snapshot.root;
+        config.content_files = snapshot.files;
+        config.entry = snapshot.entry;
+        config.replay_manifest = Some(snapshot.manifest);
+        let (mut driver, ready) = CdpDriver::launch_rehearsal(&python, config).unwrap();
+        assert!(ready.appcontainer && ready.capabilities == 0);
+        let mut phase = "open";
+        let mut native_form = Value::Null;
+        let result = (|| -> Result<Value, DriverError> {
+            let mut form = driver.open(entry)?;
+            native_form = json!({"schema":form.schema,"walls":form.walls});
+            if matches!(name, "same-site" | "cross-site") {
+                phase = "enter_cross_origin";
+                let frames = driver.captured_frames()?;
+                if name == "same-site" && frames.frames.is_empty() && frames.uninspected > 0 {
+                    if !form.independent_field_entry_blocked()
+                        || driver
+                            .trace
+                            .iter()
+                            .any(|event| event.starts_with("clicked"))
+                    {
+                        return Err(DriverError(
+                            "An unavailable child target lost its review barrier".into(),
+                        ));
+                    }
+                    return Ok(
+                        json!({"document":name,"status":"needs_review","reason":"no_independent_child_target","fields_entered":0,"external_delivery":"not_performed","scope":"Existing target refusal only; no crop or model success credit"}),
+                    );
+                }
+                if frames.frames.len() != 1 {
+                    return Err(DriverError(
+                        "Cross-origin radio fixture expected one isolated child".into(),
+                    ));
+                }
+                form = driver.enter_captured_frame(&frames.frames[0])?;
+            }
+            phase = "check_native_inventory";
+            native_form = json!({"schema":form.schema,"walls":form.walls});
+            if form.schema.fields.len() != 1 || !form.schema.fields[0].required {
+                return Err(DriverError("Radio fixture native field count/requiredness differs from the authored source".into()));
+            }
+            let selector = form.schema.fields[0].selector.clone();
+            if name == "same-origin" {
+                // This existing scope barrier is not repaired by a pixel crop.
+                // Preserve the refusal rather than treating visible fields as
+                // proof that every embedded scope was completely inspected.
+                if !form.independent_field_entry_blocked()
+                    || !form
+                        .walls
+                        .iter()
+                        .any(|wall| wall == crate::UNINSPECTED_FRAME_REVIEW)
+                {
+                    return Err(DriverError(
+                        "Same-origin scope qualification needs reassessment".into(),
+                    ));
+                }
+                let before = driver.observed_non_read_requests()?;
+                let mut reviewed = false;
+                let attempted = driver.rehearse_recorded_field_reviewed(
+                    &form,
+                    &selector,
+                    "Canada",
+                    &[],
+                    |_| {
+                        reviewed = true;
+                        Ok(())
+                    },
+                );
+                if attempted.is_ok()
+                    || reviewed
+                    || driver.inspect_current()?.schema != form.schema
+                    || driver.observed_non_read_requests()? != before
+                    || driver
+                        .trace
+                        .iter()
+                        .any(|event| event.starts_with("clicked"))
+                {
+                    return Err(DriverError(
+                        "Uninspected inline scope reached a radio interaction".into(),
+                    ));
+                }
+                return Ok(
+                    json!({"document":name,"status":"needs_review","reason":"uninspected_inline_scope","fields_entered":0,"external_delivery":"not_performed","scope":"Existing refusal only; no crop or model success credit"}),
+                );
+            }
+            let mut before = None;
+            phase = "rehearse_radio";
+            let capture = driver.rehearse_recorded_field_reviewed(
+                &form,
+                &selector,
+                "Canada",
+                &[],
+                |target| {
+                    let file = format!("radio-{name}-before.base64");
+                    crate::rehearsal_capture::write_new(&folder, &file, target.image().as_bytes())
+                        .map_err(DriverError)?;
+                    before = Some(file);
+                    Ok(())
+                },
+            )?;
+            phase = "verify_radio";
+            driver.verify_recorded_field(&capture)?;
+            if capture.value() != "Canada" {
+                return Err(review());
+            }
+            let after = format!("radio-{name}-after.base64");
+            crate::rehearsal_capture::write_new(&folder, &after, capture.image().as_bytes())
+                .map_err(DriverError)?;
+            let replay = driver.rehearsal_replay_report()?;
+            if replay["blocked"] != 0 || replay["cached_non_read_replies"] != 0 {
+                return Err(review());
+            }
+            Ok(
+                json!({"document":name,"status":"native_choice_verified","before":before,"after":after,"native_value":capture.value(),"replay":replay,"external_delivery":"not_performed","scope":"Native/image capture only; no model-vision credit"}),
+            )
+        })();
+        let closed = driver.execute(&waypoint_applications::form_mapping::BrowserCommand::Close);
+        observations.push(json!({"result":result.as_ref().map_err(|e|e.to_string()),"browser_closed":closed.is_ok(),"phase":phase,"native_form":native_form,"document":name}));
+        if result.is_err() || closed.is_err() {
+            break;
+        }
+    }
+    crate::rehearsal_capture::write_new(
+        &folder,
+        "radio-context.private.json",
+        &serde_json::to_vec_pretty(&observations).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(observations.len(), 4);
+    assert!(observations
+        .iter()
+        .all(|o| o["result"].get("Ok").is_some() && o["browser_closed"] == true));
+}
+
+#[test]
 #[ignore = "explicit isolated engine; fictional responsive resource requests during clipping"]
 fn responsive_capture_resource_probe() {
     let (template, folder, python) = crate::capture_session::qualification::qualification_config();

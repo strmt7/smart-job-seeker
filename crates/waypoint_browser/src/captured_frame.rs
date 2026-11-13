@@ -978,7 +978,7 @@ impl CdpDriver {
         if self.captured_scope.is_some() {
             self.screenshot_captured_node(node, true, true, false)
         } else {
-            self.screenshot_node(node, true, false)
+            self.screenshot_radio_node(node)
         }
     }
     fn require_recorded_frames(&mut self) -> Result<(), DriverError> {
@@ -1609,16 +1609,11 @@ fn recorded_field_crop(
         ));
     }
     let (left, top, right, bottom) = if radio {
-        // Include the group heading and adjacent option labels when the
-        // selected radio is positioned far across the row.
-        let width = point.child_width.min(720.0);
-        let start = (right + 240.0 - width).clamp(0.0, point.child_width - width);
-        (
-            start,
-            (top - 100.0).max(0.0),
-            start + width,
-            (bottom + 26.0).min(point.child_height),
-        )
+        let [left, top, right, bottom] = crate::radio_context_bounds(
+            [left, top, right, bottom],
+            [0.0, 0.0, point.child_width, point.child_height],
+        )?;
+        (left, top, right, bottom)
     } else if context && file_context {
         // File progress/errors can be below the chooser. Share the main-page
         // file context budget, clipped to this exact child. Other crops stay small.
