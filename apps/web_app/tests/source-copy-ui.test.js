@@ -230,6 +230,20 @@ function harness(api, onFinished) {
   assert.match(status(first).textContent, /Check the saved record/);
   assert.doesNotMatch(status(first).textContent, /0 resources/);
 
+  for (const pending of [true, false, undefined, 'true']) {
+    const inspection = harness(async route => {
+      if (route.endsWith('/pending')) return {active:false};
+      if (route.endsWith('/start')) return {task_id:'style-copy'};
+      if (route.endsWith('/status')) return {task_id:'style-copy',job_id:'style-job',status:'complete',attempt_id:'style-record',result:{needs_review:true,report:{recorded_resources:2,records:[],discovery:{rounds:[{stylesheet_inspection_pending:pending}]}}}};
+      throw Error('Unexpected route');
+    });
+    const panel=inspection.create('style-job');await settle();
+    await button(panel,'Save page copy').listeners.click();
+    const warning=find(panel,node=>node.textContent==='Some styling could not be inspected. Review this copy.');
+    assert.equal(Boolean(warning),pending===true);
+    if (warning) assert.equal(warning.className,'review-label');
+  }
+
   let cancelled = false;
   const active = harness(async route => {
     if (route.endsWith('/pending')) return { active: true, task_id: 'copy-b', job_id: 'b' };

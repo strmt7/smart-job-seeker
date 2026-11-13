@@ -10,6 +10,17 @@ frame/shadow traversal, candidate-file import, structured history and semantic
 fit assessment also exist. Their broad qualification and recovery limits remain
 open; the earlier statements that those mechanisms are absent are superseded.
 
+Current inspector-context continuation, 2026-11-13: the stylesheet mismatch below
+is now repaired by observing post-load CSS inspection during collection. Fresh
+source with 35 representations for 34 URLs removes that refusal. Missing imagery,
+unsupported representations, delayed POSTs, requiredness, custom controls and
+three review walls remain. The local 12B model proposes optional decline but
+still stops before acting; zero fields entered, no workflow or held-out score.
+Native runtime VRAM self-report and
+whole-adapter WDDM usage disagree in scope; neither alone proves model GPU peak
+or universal 16 GiB suitability.
+[Evidence](docs/g1/INSPECTOR_REQUEST_CONTEXT_2026-11-13.md).
+
 Current request-representation continuation, 2026-11-13: independently captured,
 disjoint same-URL variants now pass native replay with both stylesheet bodies.
 Fresh permitted source collection still records only one of a later stylesheet's

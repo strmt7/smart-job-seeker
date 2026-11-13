@@ -453,6 +453,7 @@ impl CaptureSession {
                     unsupported_targets: unsupported,
                     unreplayed_transports: probe.unreplayed_transports,
                     preload_projection_failures: probe.preload_projection_failures,
+                    stylesheet_inspection_pending: probe.stylesheet_inspection_pending,
                 };
                 let requests = probe.child_documents.iter().map(|url| (url, None)).chain(
                     probe
@@ -552,6 +553,7 @@ impl CaptureSession {
                     || result.omitted_requests > 0
                     || result.ineligible_requests > 0
                     || result.pending_commands > 0
+                    || result.stylesheet_inspection_pending
                     || unsupported > 0
                     || result.unreplayed_transports > 0;
                 let no_new = result.newly_recorded == 0;
@@ -2959,15 +2961,20 @@ mod tests {
             "pending_commands",
             "unreplayed_transports",
             "unmanaged_child_sessions",
+            "stylesheet_inspection_pending",
         ] {
             let mut h = ready();
             let report=h.session.discover_with_probe(2,|_,_| {
                 let mut value=serde_json::to_value(serde_json::json!({"schema":1,"mode":"resource_discovery","urls":[],
                     "omitted_requests":0,"ineligible_requests":0,"pending_commands":0,
                     "unsupported_targets":{},"unreplayed_transports":0,"unmanaged_child_sessions":0})).unwrap();
-                value[field]=serde_json::json!(1);Ok(serde_json::from_value(value).unwrap())
+                value[field]=if field=="stylesheet_inspection_pending" {serde_json::json!(true)}else{serde_json::json!(1)};Ok(serde_json::from_value(value).unwrap())
             }).unwrap();
             assert_eq!(report.stopped, DiscoveryStop::ReviewRequired, "{field}");
+            assert_eq!(
+                report.rounds[0].stylesheet_inspection_pending,
+                field == "stylesheet_inspection_pending"
+            );
         }
     }
     #[test]

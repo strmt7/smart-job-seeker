@@ -1,3 +1,16 @@
+## Inspect stylesheet request contexts — 2026-11-13
+
+Discovery now observes the CSS-inspector request that final screenshots create.
+Fresh saved-source collection records 35 representations for 34 URLs and removes
+the stylesheet mismatch; other resources, POSTs and three walls still need review.
+Pending inspection is explicit in records and the client. Workspace tests pass
+(1,354 passed, 604 ignored), as do native, portable, client, four-width rendered,
+Clippy, build and format checks. A local 12B run on the changed source still stops
+before action on replay gaps, with zero entries. The private runtime and process
+tree closed; the shared runtime remained unchanged.
+[Evidence](docs/g1/INSPECTOR_REQUEST_CONTEXT_2026-11-13.md). No workflow, held-out
+or release-readiness claim; R03 remains active.
+
 ## Independent request representations — 2026-11-13
 
 Saved archives can retain disjoint, independently collected representations of a

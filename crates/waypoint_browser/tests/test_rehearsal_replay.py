@@ -705,13 +705,16 @@ class DiscoveryTests(unittest.TestCase):
                   ('DOM.setFileInputFiles',{'files':['private.pdf']}),('Runtime.evaluate',{'expression':'document.forms[0].submit()'}),
                   ('Runtime.callFunctionOn',{}),('Page.setDocumentContent',{}),('Network.setExtraHTTPHeaders',{}),
                   ('Page.navigate',{'url':'https://fixture.invalid/submit'}),('Target.createTarget',{'url':'https://fixture.invalid/submit'}),
-                  ('Target.createTarget',{'url':'about:blank','browserContextId':'other'})]
+                  ('Target.createTarget',{'url':'about:blank','browserContextId':'other'}),
+                  ('CSS.createStyleSheet',{'frameId':'root','force':True}),
+                  ('CSS.setStyleSheetText',{'styleSheetId':'source','text':'body{display:none}'}),
+                  ('CSS.enable',{'unknown':True}),('DOM.enable',{'includeWhitespace':'all'})]
         for method,params in commands:
             with self.subTest(method=method),self.assertRaisesRegex(replay.ReplayError,'discovery_command_refused'):
                 self.broker.host({'id':1,'method':method,'params':params})
         self.assertEqual(self.sent,[])
     def test_navigation_is_bound_to_the_recorded_entry_and_empty_domain_enables(self):
-        for method,params in [('Page.enable',{}),('Network.enable',{}),('Browser.getVersion',{}),
+        for method,params in [('Page.enable',{}),('Network.enable',{}),('DOM.enable',{}),('CSS.enable',{}),('Browser.getVersion',{}),
                               ('Target.createTarget',{'url':'about:blank'})]:
             self.assertTrue(self.broker.host({'id':1,'method':method,'params':params}))
         navigation={'id':2,'method':'Page.navigate','params':{'url':self.fixture.archive().entry_url}}

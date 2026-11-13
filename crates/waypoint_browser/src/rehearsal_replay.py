@@ -722,7 +722,7 @@ class Broker:
         method, params = message['method'], message.get('params')
         if not isinstance(params, dict):
             raise ReplayError('discovery_command_refused')
-        if method in ('Page.enable', 'Network.enable', 'Browser.getVersion',
+        if method in ('Page.enable', 'Network.enable', 'DOM.enable', 'CSS.enable', 'Browser.getVersion',
                       'SmartJobseeker.discoveryReport', 'SmartJobseeker.replayReport',
                       'SmartJobseeker.publicFormOutline') and not params:
             return

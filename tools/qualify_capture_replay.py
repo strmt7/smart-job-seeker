@@ -80,6 +80,20 @@ def main():
             report['request_variants']={'native_sha256':sha(native)}
             (folder/'request-variants.png').write_bytes(base64.b64decode((folder/'request-variants-screenshot.base64').read_bytes(),validate=True))
             report['request_variants']['image_sha256']=sha(folder/'request-variants.png')
+            report['inspector_runs']={}
+            for case in ['inspector_stylesheet_request_context_is_observed_without_entry','discovery_collects_inspector_stylesheet_context_before_final_inspection']:
+                case_log=folder/(case+'.private.log')
+                result=run([cargo,'test','-p','waypoint_browser','--lib','capture_session::qualification::'+case,'--','--ignored','--nocapture','--test-threads=1'],env,case_log,180)
+                report['inspector_runs'][case]=result
+                if result['exit_code']:raise RuntimeError('Inspector context qualification failed; inspect '+str(case_log))
+                test_denominator(case_log.read_text(encoding='utf-8'),'rust',1)
+            inspector=json.loads((folder/'inspector-variants.private.json').read_bytes())
+            if inspector!={'complete':True,'manifest_schema':2,'rounds':2,'recorded_resources':3,'recorded_urls':2,'transport_requests':5,'native_fields':1,'styles':{'border':'rgb(1, 2, 3)','background':'rgb(255, 255, 255)'},'fields_entered':0,'external_delivery':'not_performed'}:raise RuntimeError('Inspector-only collection evidence differs')
+            witness=json.loads((folder/'inspector-context.private.json').read_bytes())
+            if witness.get('browser_closed') is not True or witness.get('fields_entered')!=0 or witness.get('external_delivery')!='not_performed':raise RuntimeError('Inspector witness lifecycle differs')
+            report['inspector_context']={name:sha(folder/name) for name in ['inspector-variants.private.json','inspector-context.private.json']}
+            (folder/'inspector-variants.png').write_bytes(base64.b64decode((folder/'inspector-variants-screenshot.base64').read_bytes(),validate=True))
+            report['inspector_context']['image_sha256']=sha(folder/'inspector-variants.png')
         if args.deep_discovery:
             native=folder/'deep-discovery.private.json'
             observed=json.loads(native.read_bytes())

@@ -101,6 +101,7 @@ pub struct DiscoveryRound {
     pub unsupported_targets: u64,
     pub unreplayed_transports: u64,
     pub preload_projection_failures: usize,
+    pub stylesheet_inspection_pending: bool,
 }
 #[derive(Clone, Serialize)]
 pub struct DiscoverySummary {
@@ -153,6 +154,8 @@ pub(crate) struct Probe {
     pub entry_document_requests: u64,
     #[serde(default)]
     pub preload_projection_failures: usize,
+    #[serde(default)]
+    pub stylesheet_inspection_pending: bool,
     pub omitted_requests: u64,
     pub ineligible_requests: u64,
     pub pending_commands: u64,
@@ -330,6 +333,12 @@ pub(crate) fn render(
                 .map_err(|e| e.to_string())?;
             cdp.call("Network.enable", json!({}))
                 .map_err(|e| e.to_string())?;
+            // Final field captures enable the CSS inspector. Chromium can then
+            // request stylesheet source in a distinct anonymous context. Observe
+            // that context before freezing the collector, without editing CSS.
+            cdp.call("DOM.enable", json!({}))
+                .map_err(|e| e.to_string())?;
+            cdp.events.retain(|(name, _)| name != "Page.loadEventFired");
             let navigation = cdp
                 .call("Page.navigate", json!({"url":ready.entry_url}))
                 .map_err(|e| e.to_string())?;
@@ -342,7 +351,15 @@ pub(crate) fn render(
                 return Err("Discovery entry navigation failed".into());
             }
             let deadline = Instant::now() + Duration::from_millis(settle_ms);
+            let mut inspector_enabled = false;
             while Instant::now() < deadline {
+                // Enabling before navigation lets Chromium retain source while
+                // parsing, hiding the late request made by final inspection.
+                if !inspector_enabled && cdp.saw_event("Page.loadEventFired") {
+                    cdp.call("CSS.enable", json!({}))
+                        .map_err(|e| e.to_string())?;
+                    inspector_enabled = true;
+                }
                 cdp.pump_checked(
                     deadline
                         .saturating_duration_since(Instant::now())
@@ -360,6 +377,7 @@ pub(crate) fn render(
             if !report.valid() {
                 return Err("Resource discovery report exceeded its contract".into());
             }
+            report.stylesheet_inspection_pending = !inspector_enabled;
             report.outline_snapshot_sha256 = Some(outline_snapshot_sha256);
             Ok(report)
         })();

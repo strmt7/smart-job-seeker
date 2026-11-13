@@ -425,6 +425,14 @@ impl Drop for VariantHttp {
 #[test]
 #[ignore = "explicit zero-capability engine; independently captured Origin stylesheet variants"]
 fn observed_request_variants_collect_and_render_independent_styles() {
+    run_request_variants(false);
+}
+#[test]
+#[ignore = "explicit zero-capability engine; inspector-only stylesheet context collection"]
+fn discovery_collects_inspector_stylesheet_context_before_final_inspection() {
+    run_request_variants(true);
+}
+fn run_request_variants(inspector_only: bool) {
     use crate::capture_discovery::{DiscoveryStop, MAX_DISCOVERY_ROUNDS};
     let (mut config, folder, python) = qualification_config();
     let entry = "https://fixture.invalid/variants";
@@ -439,12 +447,17 @@ fn observed_request_variants_collect_and_render_independent_styles() {
             wire("User-agent: *\nAllow: /", "text/plain", ""),
         );
     }
-    let html=format!("<!doctype html><html lang=en><head><meta charset=utf-8><link rel=icon href=data:,><title>Fictional request variants</title><link rel=stylesheet crossorigin=anonymous href={style}><link rel=stylesheet href={style}></head><body><h1>Fictional request variants</h1><label>Email<input type=email id=email></label></body></html>");
+    let second = if inspector_only {
+        String::new()
+    } else {
+        format!("<link rel=stylesheet href={style}>")
+    };
+    let html=format!("<!doctype html><html lang=en><head><meta charset=utf-8><link rel=icon href=data:,><title>Fictional request variants</title><link rel=stylesheet crossorigin=anonymous href={style}>{second}</head><body><h1>Fictional request variants</h1><label>Email<input type=email id=email></label></body></html>");
     responses.insert((entry.into(), None), wire(&html, "text/html", ""));
     responses.insert(
         (style.into(), Some("https://fixture.invalid".into())),
         wire(
-            "input{border:3px solid rgb(1,2,3);font:18px Arial}",
+            "input{border:3px solid rgb(1,2,3);background:white;font:18px Arial}",
             "text/css",
             "Vary: Origin\r\nAccess-Control-Allow-Origin: *\r\n",
         ),
@@ -460,7 +473,11 @@ fn observed_request_variants_collect_and_render_independent_styles() {
     let requests = Arc::new(Mutex::new(vec![]));
     let dropped = Arc::new(AtomicBool::new(false));
     let mut capture = CaptureSession::with_transport(
-        &folder.join("variant-capture"),
+        &folder.join(if inspector_only {
+            "inspector-variant-capture"
+        } else {
+            "variant-capture"
+        }),
         entry,
         vec![
             CaptureOrigin {
@@ -485,10 +502,15 @@ fn observed_request_variants_collect_and_render_independent_styles() {
     let discovery = capture
         .discover_resources(&python, config.clone(), MAX_DISCOVERY_ROUNDS, 700)
         .unwrap();
+    std::fs::write(folder.join(if inspector_only {"inspector-discovery.private.json"}else{"variants-discovery.private.json"}),serde_json::to_vec_pretty(&serde_json::json!({"discovery":discovery,"capture":capture.report(),"transport_requests":*requests.lock().unwrap()})).unwrap()).unwrap();
     assert_eq!(discovery.stopped, DiscoveryStop::NoNewRequests);
     assert_eq!(discovery.rounds.len(), 2);
     assert_eq!(discovery.rounds[0].proposed, 2);
     assert_eq!(discovery.rounds[0].newly_recorded, 2);
+    assert!(discovery
+        .rounds
+        .iter()
+        .all(|round| !round.stylesheet_inspection_pending));
     let frozen = capture.freeze().unwrap();
     assert!(dropped.load(Ordering::Acquire));
     assert_eq!(frozen.report.recorded_resources, 3);
@@ -513,16 +535,107 @@ fn observed_request_variants_collect_and_render_independent_styles() {
     let styles: Value =
         serde_json::from_str(observed["result"]["value"].as_str().unwrap()).unwrap();
     assert_eq!(styles["border"], "rgb(1, 2, 3)");
-    assert_eq!(styles["background"], "rgb(4, 5, 6)");
+    assert_eq!(
+        styles["background"],
+        if inspector_only {
+            "rgb(255, 255, 255)"
+        } else {
+            "rgb(4, 5, 6)"
+        }
+    );
     let replay = browser.rehearsal_replay_report().unwrap();
     assert_eq!(replay["blocked"], 0);
     std::fs::write(
-        folder.join("request-variants-screenshot.base64"),
+        folder.join(if inspector_only {
+            "inspector-variants-screenshot.base64"
+        } else {
+            "request-variants-screenshot.base64"
+        }),
         browser.screenshot_base64().unwrap(),
     )
     .unwrap();
     browser.execute(&BrowserCommand::Close).unwrap();
-    std::fs::write(folder.join("request-variants.private.json"),serde_json::to_vec_pretty(&serde_json::json!({"complete":true,"manifest_schema":2,"rounds":2,"recorded_resources":3,"recorded_urls":2,"transport_requests":5,"native_fields":1,"styles":styles,"fields_entered":0,"external_delivery":"not_performed"})).unwrap()).unwrap();
+    std::fs::write(folder.join(if inspector_only {"inspector-variants.private.json"}else{"request-variants.private.json"}),serde_json::to_vec_pretty(&serde_json::json!({"complete":true,"manifest_schema":2,"rounds":discovery.rounds.len(),"recorded_resources":3,"recorded_urls":2,"transport_requests":5,"native_fields":1,"styles":styles,"fields_entered":0,"external_delivery":"not_performed"})).unwrap()).unwrap();
+}
+
+#[test]
+#[ignore = "explicit zero-capability engine; fictional inspector request-context observation"]
+fn inspector_stylesheet_request_context_is_observed_without_entry() {
+    use crate::{cdp::Cdp, rehearsal::RehearsalOwner};
+    use std::time::{Duration, Instant};
+    let (mut config, folder, python) = qualification_config();
+    let entry = "https://fixture.invalid/inspector";
+    let style = "https://cdn.fixture.invalid/inspector.css";
+    let response = |body: &str, mime: &str| {
+        let wire = format!("HTTP/1.1 200 Fictional\r\nContent-Type: {mime}\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\n\r\n{body}", body.len());
+        waypoint_net::read_asset_response(&mut Cursor::new(wire.into_bytes()), "GET", 1024 * 1024)
+            .unwrap()
+    };
+    let mut builder = SnapshotBuilder::start(&folder.join("inspector-source"), entry).unwrap();
+    builder.add(entry, response(&format!("<!doctype html><link rel=icon href=data:,><link rel=stylesheet crossorigin=anonymous href={style}><label>Email<input id=email></label>"), "text/html")).unwrap();
+    let mut css = response("input{border:3px solid rgb(1,2,3)}", "text/css");
+    css.request_origin =
+        Some(waypoint_net::PublicRequestOrigin::parse("https://fixture.invalid").unwrap());
+    css.request_header_names = Some(vec!["host".into(), "origin".into()]);
+    builder.add(style, css).unwrap();
+    let snapshot = builder.finish().unwrap();
+    config.schema = 2;
+    config.content_root = snapshot.root;
+    config.content_files = snapshot.files;
+    config.entry = snapshot.entry;
+    config.replay_manifest = Some(snapshot.manifest);
+    let (mut owner, pipe, ready) = RehearsalOwner::start(&python, config).unwrap();
+    assert!(ready.appcontainer && ready.capabilities == 0);
+    let result = (|| -> Result<Vec<Value>, String> {
+        let mut cdp = Cdp::new_rehearsal(pipe).map_err(|e| e.to_string())?;
+        for command in ["Page.enable", "DOM.enable", "Network.enable"] {
+            cdp.call(command, serde_json::json!({}))
+                .map_err(|e| e.to_string())?;
+        }
+        cdp.call("Page.navigate", serde_json::json!({"url":ready.entry_url}))
+            .map_err(|e| e.to_string())?;
+        let mut phases = Vec::new();
+        for phase in ["page", "css_enabled", "inspector_sheet"] {
+            if phase == "css_enabled" {
+                cdp.call("CSS.enable", serde_json::json!({}))
+                    .map_err(|e| e.to_string())?;
+            }
+            if phase == "inspector_sheet" {
+                let tree = cdp
+                    .call("Page.getFrameTree", serde_json::json!({}))
+                    .map_err(|e| e.to_string())?;
+                cdp.call(
+                    "CSS.createStyleSheet",
+                    serde_json::json!({"frameId":tree["frameTree"]["frame"]["id"],"force":true}),
+                )
+                .map_err(|e| e.to_string())?;
+            }
+            let deadline =
+                Instant::now() + Duration::from_millis(if phase == "page" { 1500 } else { 500 });
+            while Instant::now() < deadline {
+                cdp.pump_checked(
+                    deadline
+                        .saturating_duration_since(Instant::now())
+                        .min(Duration::from_millis(100)),
+                )
+                .map_err(|e| e.to_string())?;
+            }
+            phases.push(serde_json::json!({"phase":phase,"replay":cdp.call_browser("SmartJobseeker.replayReport",serde_json::json!({})).map_err(|e|e.to_string())?}));
+        }
+        Ok(phases)
+    })();
+    let closed = owner.shutdown();
+    std::fs::write(folder.join("inspector-context.private.json"),serde_json::to_vec_pretty(&serde_json::json!({"result":result,"browser_closed":closed.is_ok(),"fields_entered":0,"external_delivery":"not_performed"})).unwrap()).unwrap();
+    closed.unwrap();
+    let phases = result.unwrap();
+    assert_eq!(phases[0]["replay"]["blocked"], 0);
+    assert!(phases[1]["replay"]["refused_request_samples"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|r| r["resource_type"] == "Stylesheet"
+            && r["origin_state"] == "absent"
+            && r["reason"] == "origin_variant_not_recorded"));
 }
 
 fn qualification_config() -> (RehearsalConfig, PathBuf, PathBuf) {
