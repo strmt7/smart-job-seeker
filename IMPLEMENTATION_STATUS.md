@@ -1,3 +1,14 @@
+## Blind visual coverage and native detail views - 2026-11-13
+
+A bounded blind recheck now uses a separately saved native detail view for missing
+pre-entry targets. Original observations, images and strict conflict/ambiguity
+checks remain intact. The frozen French local12B case improves from 2/7 to 4/7
+verified controls; country selection remains visually unverified and both unknown
+answers stay untouched. The prior family retains 4/6. Neither workflow passes.
+Workspace 1,336 passed/598 ignored; Clippy/build, scoped native and actual record/
+image-inspector checks pass. Verified model caches were reused. No release or
+held-out claim. [Evidence and next work](docs/g1/BLIND_VISUAL_COVERAGE_2026-11-13.md).
+
 ## Semantic contact proposals and native loading - 2026-11-13
 
 Contained rehearsals reuse semantic contact mapping, native options/constraints

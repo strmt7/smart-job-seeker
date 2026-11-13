@@ -27,6 +27,35 @@ const NOW: i64 = 1_758_900_000;
 /// The name the fill plan asks for; the driver resolves it in the upload dir.
 const PACKET_FILE: &str = "waypoint-packet.docx";
 
+#[test]
+#[ignore = "headless native detail capture on a fictional file; no field entry or model"]
+fn native_detail_preserves_primary_images_and_refuses_unseen_controls() {
+    let mut driver = CdpDriver::launch(vec![]).unwrap();
+    let before = driver.open(&file_url("form_visual_detail.html")).unwrap();
+    let primary = driver.screenshot_field_context("#email").unwrap();
+    let detail = driver.screenshot_field_detail("#email").unwrap();
+    let repeated = driver.screenshot_field_context("#email").unwrap();
+    // The focused control's caret can blink between captures. Compare the PNG
+    // header geometry, not transient pixel bytes, and native form state below.
+    assert_eq!(&repeated[..44], &primary[..44]);
+    assert_eq!(driver.inspect_current().unwrap(), before);
+    assert_ne!(primary, detail);
+    assert!(detail.len() < primary.len());
+    assert!(driver.screenshot_field_detail("#hidden").is_err());
+    assert!(driver.screenshot_field_detail("#offscreen").is_err());
+    if let Some(folder) = std::env::var_os("WAYPOINT_DETAIL_CAPTURE_DIR") {
+        let folder = PathBuf::from(folder).canonicalize().unwrap();
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target")
+            .canonicalize()
+            .unwrap();
+        assert!(folder.starts_with(root));
+        std::fs::write(folder.join("primary.base64"), primary).unwrap();
+        std::fs::write(folder.join("detail.base64"), detail).unwrap();
+    }
+    driver.execute(&BrowserCommand::Close).unwrap();
+}
+
 fn fixtures_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
 }

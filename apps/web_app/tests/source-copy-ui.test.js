@@ -35,6 +35,17 @@ function harness(api, onFinished) {
     assert.equal(find(panel,node=>node.textContent==='Four'),undefined,'Long note lists stay bounded');
     assert.equal(find(panel,node=>node.textContent==='Text and image match'),undefined,'A proposal never looks like entry verification');
   }
+  for(const [status,recheck,message] of [
+    ['visually_matched',{scope:'same_immutable_image',attempts:2,status:'complete',overlap_conflict:false},'A second image check was used.'],
+    ['visually_matched',{scope:'same_native_target_detail',attempts:2,status:'complete',overlap_conflict:false},'A second image check was used.'],
+    ['visual_unobserved',{scope:'same_immutable_image',attempts:2,status:'complete',overlap_conflict:true},'The image checks need review.'],
+    ['visual_review_failed',{scope:'same_immutable_image',attempts:2,status:'failed',overlap_conflict:false},'The image checks need review.'],
+    ['visually_matched',{scope:'wrong',attempts:2,status:'complete',overlap_conflict:false},null],
+  ]) {
+    const panel=harness(async()=>{}).preview({...preview,rehearsal:{scope:'fictional_saved_form',fields:[],visual_gate:{targets:[{view:1,label:'Field',status,transcription:{coverage_recheck:recheck}}]}}},{});
+    if(message)assert(find(panel,node=>node.textContent===message));
+    else assert.equal(find(panel,node=>node.textContent==='A second image check was used.'),undefined);
+  }
   for (const [activity,message] of [
     [{status:'unavailable'},'Request activity was unavailable for this check.'],
     [{status:'observed',scope:'entry_and_review_interval',delta:{blocked:1}},'During this check, the saved page blocked 1 request. The website response remains unverified.'],

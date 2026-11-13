@@ -161,6 +161,42 @@ fn context_left_edge(
 // Keep heading space and spend the remaining existing 400px budget below the
 // control, where upload progress and validation messages often appear. This is
 // bounded context, not proof that every page message is visible.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FieldContextCrop {
+    Standard,
+    FileFeedback,
+    Detail,
+}
+
+fn detail_vertical_bounds(
+    top: f64,
+    bottom: f64,
+    viewport_top: f64,
+    viewport_bottom: f64,
+) -> Result<(f64, f64), DriverError> {
+    if [top, bottom, viewport_top, viewport_bottom]
+        .iter()
+        .any(|value| !value.is_finite())
+        || bottom <= top
+    {
+        return Err(DriverError("Invalid field detail bounds".into()));
+    }
+    let start = (top - 48.0).max(viewport_top).max(0.0);
+    let end = (bottom + 12.0).min(viewport_bottom);
+    if !start.is_finite()
+        || !end.is_finite()
+        || start > top
+        || end < bottom
+        || end <= start
+        || end - start > 400.0
+    {
+        return Err(DriverError(
+            "The field cannot fit a bounded detail image".into(),
+        ));
+    }
+    Ok((start, end - start))
+}
+
 fn context_vertical_bounds(
     field_top: f64,
     field_bottom: f64,
@@ -2134,6 +2170,29 @@ impl CdpDriver {
         self.screenshot_element(selector, true, false)
     }
 
+    /// Capture a tighter main-page label/control region without changing focus.
+    /// A distant or clipped label can remain unreadable; this grants no action.
+    pub fn screenshot_field_detail(&mut self, selector: &str) -> Result<String, DriverError> {
+        if self.captured_scope.is_some() {
+            return Err(DriverError(
+                "Embedded controls keep their existing bounded context".into(),
+            ));
+        }
+        let node = self
+            .node_id(selector)?
+            .ok_or_else(|| DriverError("Field is unavailable for detail capture".into()))?;
+        let model = self
+            .cdp
+            .call("DOM.getBoxModel", json!({"nodeId":node}))
+            .map_err(derr)?;
+        let quad = model
+            .pointer("/model/border")
+            .and_then(Value::as_array)
+            .ok_or_else(|| DriverError("Field has no detail bounds".into()))?;
+        let numbers: Vec<f64> = quad.iter().filter_map(Value::as_f64).collect();
+        self.screenshot_bounds_with_crop(&numbers, true, false, FieldContextCrop::Detail)
+    }
+
     /// Capture post-entry context, including more of a native file chooser's
     /// progress/validation area. Other control and pre-entry crops stay stable.
     pub fn screenshot_field_feedback(&mut self, selector: &str) -> Result<String, DriverError> {
@@ -2231,6 +2290,26 @@ impl CdpDriver {
         allow_larger_element: bool,
         file_context: bool,
     ) -> Result<String, DriverError> {
+        self.screenshot_bounds_with_crop(
+            numbers,
+            context,
+            allow_larger_element,
+            if file_context {
+                FieldContextCrop::FileFeedback
+            } else {
+                FieldContextCrop::Standard
+            },
+        )
+    }
+
+    fn screenshot_bounds_with_crop(
+        &mut self,
+        numbers: &[f64],
+        context: bool,
+        allow_larger_element: bool,
+        crop: FieldContextCrop,
+    ) -> Result<String, DriverError> {
+        let file_context = crop == FieldContextCrop::FileFeedback;
         if numbers.len() != 8 || numbers.iter().any(|number| !number.is_finite()) {
             return Err(DriverError("Invalid field capture bounds".into()));
         }
@@ -2299,13 +2378,22 @@ impl CdpDriver {
         }
         let (left, top, width, height, scale) = if context {
             let left = context_left_edge(x + page_x, right, page_x, page_width);
-            let (top, height) = context_vertical_bounds(
-                y + page_y,
-                bottom,
-                page_y,
-                page_height.min(viewport_bottom),
-                file_context,
-            );
+            let (top, height) = if crop == FieldContextCrop::Detail {
+                detail_vertical_bounds(
+                    y + page_y,
+                    bottom,
+                    page_y,
+                    page_height.min(viewport_bottom),
+                )?
+            } else {
+                context_vertical_bounds(
+                    y + page_y,
+                    bottom,
+                    page_y,
+                    page_height.min(viewport_bottom),
+                    file_context,
+                )
+            };
             let requested_width = if file_context {
                 720.0
             } else {
@@ -8117,6 +8205,30 @@ mod traversal_tests {
             loading_observation_window(Duration::MAX),
             Duration::from_secs(30)
         );
+    }
+
+    #[test]
+    fn detail_context_keeps_the_control_inside_a_bounded_visible_region() {
+        assert_eq!(
+            detail_vertical_bounds(160.0, 202.0, 0.0, 900.0).unwrap(),
+            (112.0, 102.0)
+        );
+        assert_eq!(
+            detail_vertical_bounds(20.0, 62.0, 0.0, 900.0).unwrap(),
+            (0.0, 74.0)
+        );
+        assert_eq!(
+            detail_vertical_bounds(850.0, 890.0, 0.0, 900.0).unwrap(),
+            (802.0, 98.0)
+        );
+        for (top, bottom, start, end) in [
+            (160.0, 602.0, 0.0, 900.0),
+            (160.0, 202.0, 200.0, 900.0),
+            (850.0, 920.0, 0.0, 900.0),
+            (f64::NAN, 100.0, 0.0, 900.0),
+        ] {
+            assert!(detail_vertical_bounds(top, bottom, start, end).is_err());
+        }
     }
 
     #[test]

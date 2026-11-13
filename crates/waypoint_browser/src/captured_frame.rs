@@ -140,6 +140,8 @@ pub struct RecordedFieldCapture {
 /// The caller may refuse the action; accepting never bypasses native checks.
 pub struct RecordedTargetCapture {
     image: String,
+    detail_image: Option<String>,
+    detail_error: Option<String>,
     label: String,
     kind: &'static str,
     required_marker: bool,
@@ -281,6 +283,12 @@ impl RecordedTargetCapture {
     }
     pub fn image(&self) -> &str {
         &self.image
+    }
+    pub fn detail_image(&self) -> Option<&str> {
+        self.detail_image.as_deref()
+    }
+    pub fn detail_error(&self) -> Option<&str> {
+        self.detail_error.as_deref()
     }
     pub fn label(&self) -> &str {
         &self.label
@@ -496,6 +504,8 @@ impl CdpDriver {
         let image = self.screenshot_field_context(&target.selector)?;
         review_target(&RecordedTargetCapture {
             witness: None,
+            detail_image: None,
+            detail_error: None,
             image,
             label: target.label.clone(),
             required_marker: false,
@@ -662,8 +672,21 @@ impl CdpDriver {
             self.scroll_field_into_view(selector)?;
             self.screenshot_field_context(selector)?
         };
+        let (detail_image, detail_error) =
+            if matches!(kind, RecordedFieldKind::Text | RecordedFieldKind::Select)
+                && self.captured_scope.is_none()
+            {
+                match self.screenshot_field_detail(selector) {
+                    Ok(image) => (Some(image), None),
+                    Err(error) => (None, Some(error.to_string())),
+                }
+            } else {
+                (None, None)
+            };
         let control = self.recorded_control_identity(form, selector)?;
         review_target(&RecordedTargetCapture {
+            detail_image,
+            detail_error,
             witness: Some(RecordedFieldWitness {
                 selector: selector.to_owned(),
                 control: control.clone(),

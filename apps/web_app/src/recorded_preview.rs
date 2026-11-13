@@ -552,9 +552,33 @@ impl RehearsalVision {
             record["image"] = json!(image);
             record["sha256"] = json!(digest);
         }
-        let (outcome, transcription) = if let (Some(model), Ok(_), Ok(())) =
-            (self.model.as_mut(), saved, crate::check_inference_memory())
-        {
+        if let Some(error) = target.detail_error() {
+            record["detail_capture_error"] = json!(bounded_text(error));
+        }
+        let detail_saved = match target.detail_image() {
+            Some(image) => match save_image(directory, 60 + self.targets.len(), image) {
+                Ok((image, digest)) => {
+                    record["detail_image"] = json!(image);
+                    record["detail_sha256"] = json!(digest);
+                    true
+                }
+                Err(_) => {
+                    record["detail_capture_error"] =
+                        json!("The field detail image could not be saved");
+                    false
+                }
+            },
+            None => true,
+        };
+        let (outcome, transcription) = if let (Some(model), Ok(_), Ok(())) = (
+            self.model.as_mut(),
+            if detail_saved {
+                saved
+            } else {
+                Err("Detail evidence unavailable".into())
+            },
+            crate::check_inference_memory(),
+        ) {
             crate::visual_review::review_recorded_target(model, self.addr, target)
         } else {
             (RecordedVisionOutcome::Stopped, None)

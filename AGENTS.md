@@ -260,6 +260,20 @@ used by development tools and tests. Do not add WSL or Docker as product require
 
 ## Real pitfalls already hit (don't rediscover these)
 
+- A missing visual target differs from an ambiguous or contradicted target.
+  Blind coverage rechecks must preserve the first observations, admit no expected
+  label/value hints, and retain all native/image bindings. Compare singleton
+  observations before retrying: repeated labels must not become a successful
+  second guess. Conflicting overlapping observations veto entry. Keep the original
+  image/fast path; store any native detail view separately. Country selection's
+  retained post-entry omission remains unverified even when a developer can read it.
+- A focused control's caret can change screenshot pixels without a form change.
+  Native geometry/state regressions must not assume byte-identical timed captures.
+  Preserve actual image digests for each observation. Debug test relinks can also
+  exceed a 3 GiB job despite successful incremental runs; retain allocation failures
+  and use sufficient RAM-admitted build capacity rather than diagnosing host RAM
+  exhaustion or weakening product resource guards.
+
 - Qualification job limits cover the model, browser and ownership helpers
   together. The fictional semantic-profile run exceeded 8 GiB committed memory;
   an 8 GiB test run stopped on an empty helper response, while the 10 GiB job

@@ -244,6 +244,17 @@
             row.append(button);
           }
           details.append(row);
+          if (typeof target.detail_image === 'string') {
+            const detail = el('button', 'View detail image', 'secondary');
+            detail.type = 'button';
+            detail.addEventListener('click', () => showImage({image:target.detail_image,sha256:target.detail_sha256}, detail));
+            details.append(detail);
+          }
+          const recheck = target.transcription?.coverage_recheck;
+          if (['same_immutable_image','same_native_target_detail'].includes(recheck?.scope) && recheck.attempts === 2) {
+            const accepted = target.status === 'visually_matched' && recheck.status === 'complete' && recheck.overlap_conflict === false;
+            details.append(el('p', accepted ? 'A second image check was used.' : 'The image checks need review.', 'footnote'));
+          }
         }
         const transition = Array.isArray(rehearsal.sections) ? rehearsal.sections.slice(0, 7).find(item => item?.view === viewNumber) : null;
         if (transition?.status === 'advanced' && typeof transition.control === 'string') {

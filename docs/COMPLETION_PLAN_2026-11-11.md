@@ -20,22 +20,21 @@ historical statuses or authorize another goal, delegation, release or submission
 
 ## Latest continuation
 
-[Semantic contact rehearsal](g1/SEMANTIC_PROFILE_REHEARSAL_2026-11-13.md) connects
-the existing mapper to contained execution, retaining strict failure/unknown,
-native option/constraint and visual checks. A measured loading-budget defect is
-repaired without lowering its stability criterion. Workspace 1,331 passed/597
-ignored, Clippy/build and scoped native/actual-renderer checks pass. The fictional
-local12B case proposes six contacts and verifies 2/7 before a blind email-target
-omission stops entry; two unknowns remain untouched. A measured 8.52 GiB aggregate
-job peak explains why the earlier 8 GiB test ceiling was inadequate for this phase.
-All earlier exclusions remain visible; no field/workflow/held-out gate passes.
+[Blind visual coverage](g1/BLIND_VISUAL_COVERAGE_2026-11-13.md) preserves the
+original fast path and adds one conditional blind detail observation for absent
+pre-entry targets. It retains first observations and refuses ambiguity, conflict,
+limits and failures. The frozen French local12B case improves from 2/7 to 4/7;
+Country remains visually unverified, Phone unreached and residence radio withheld.
+The prior saved family retains 4/6, including its unresolved upload. Unknowns
+stay untouched. Workspace 1,336 passed/598 ignored, Clippy/build and scoped native/
+actual UI checks pass. No field/workflow/held-out or general completion gate passes.
 
-Next R04 slice: improve blind visual coverage on that retained email failure,
-preserving native/image identity and raw observations. Supply no expected label
-or value to the observer and do not weaken gates or expand unrelated crops.
-Qualify changes against relevant prior cases before promotion. R01 lazy model/
-cache admission, R02 held-out/full-workflow truth, server-dependent uploads,
-arbitrary facts/histories, installation and other packages remain open.
+Next R04 slice: extend the same evidence-preserving coverage mechanism to
+missing post-entry values on that retained Country image. Keep expected answers
+out of prompts, exact/native telephone comparison rules and current-state checks;
+never retry away a mismatch. Preserve all raw observations and image bindings.
+R01 lifecycle/lazy admission, R02 held-out/full-workflow truth, server-dependent
+uploads, arbitrary facts/histories, installation and other packages remain open.
 
 ## Immediate execution order
 

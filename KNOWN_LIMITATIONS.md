@@ -10,6 +10,16 @@ frame/shadow traversal, candidate-file import, structured history and semantic
 fit assessment also exist. Their broad qualification and recovery limits remain
 open; the earlier statements that those mechanisms are absent are superseded.
 
+Current blind-coverage continuation, 2026-11-13: a native detail view recovers the
+French email target, improving that frozen development case to 4/7. Country is
+natively correct but its post-entry visual transcription omits it; it stays
+unverified, with Phone unreached and the residence radio withheld. Two unknowns
+stay untouched. Prompt-only rechecking failed and remains recorded. The prior
+family remains 4/6 with an unverified server-dependent upload. Neither field nor
+workflow gates pass. Held-out model scores remain zero; broader value inspection,
+facts/histories, source fidelity and full workflows remain open.
+[Latest evidence](docs/g1/BLIND_VISUAL_COVERAGE_2026-11-13.md).
+
 Current semantic-contact continuation, 2026-11-13: the fictional local12B case
 proposes six contacts and verifies two of seven answerable controls. Blind vision
 omits a visible email target, stopping entry; an answerable residence radio is
