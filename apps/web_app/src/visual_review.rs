@@ -325,7 +325,33 @@ fn validate(output: &Value) -> Result<Value, String> {
     Ok(json!({"observations":clean}))
 }
 
+#[derive(Clone, Copy, Default)]
+enum ValueComparison {
+    #[default]
+    Exact,
+    InternationalTelephone,
+}
+
+impl ValueComparison {
+    fn matches(self, expected: &str, observed: &str) -> bool {
+        match self {
+            Self::Exact => expected == observed,
+            Self::InternationalTelephone => {
+                waypoint_domain::telephone::same_international(expected, observed)
+            }
+        }
+    }
+}
+
 fn compare(observed: &Value, expected: &[(String, String)]) -> Value {
+    compare_values(observed, expected, ValueComparison::Exact)
+}
+
+fn compare_values(
+    observed: &Value,
+    expected: &[(String, String)],
+    comparison: ValueComparison,
+) -> Value {
     let items = observed["observations"]
         .as_array()
         .expect("validated observations");
@@ -363,7 +389,10 @@ fn compare(observed: &Value, expected: &[(String, String)]) -> Value {
                 == 1;
             let status = if !unique_expected || matches.len() != 1 {
                 "unobserved"
-            } else if matches[0]["visible_value"].as_str() == Some(value.as_str()) {
+            } else if matches[0]["visible_value"]
+                .as_str()
+                .is_some_and(|observed| comparison.matches(value, observed))
+            {
                 "matches_transcription"
             } else {
                 "differs_from_transcription"
@@ -382,8 +411,17 @@ fn compare_required_marker(
     expected: &[(String, String)],
     allowed: bool,
 ) -> Value {
+    compare_required_marker_values(observed, expected, allowed, ValueComparison::Exact)
+}
+
+fn compare_required_marker_values(
+    observed: &Value,
+    expected: &[(String, String)],
+    allowed: bool,
+    comparison: ValueComparison,
+) -> Value {
     if !allowed || expected.len() != 1 || expected[0].0.trim_end().ends_with('*') {
-        return compare(observed, expected);
+        return compare_values(observed, expected, comparison);
     }
     let label = normalized_label(&expected[0].0);
     let mut aligned = observed.clone();
@@ -405,7 +443,7 @@ fn compare_required_marker(
             changed = true;
         }
     }
-    let mut review = compare(&aligned, expected);
+    let mut review = compare_values(&aligned, expected, comparison);
     review["observations"] = observed["observations"].clone();
     if changed {
         review["required_marker_alignment"] = json!(true);
@@ -1065,9 +1103,11 @@ pub(crate) fn review_recorded_field(
     model: &mut VisionIdentityGuard,
     addr: std::net::SocketAddr,
     capture: &waypoint_browser::RecordedFieldCapture,
-) -> RecordedVisionOutcome {
+) -> (RecordedVisionOutcome, Option<Value>) {
     let label = capture.label();
-    let expected = [(label.to_owned(), capture.value().to_owned())];
+    // Expected text is withheld from the transcription prompt. Only the native
+    // telephone proof admits separator equality; other fields stay exact.
+    let expected = [(label.to_owned(), capture.observed_value().to_owned())];
     let name = model.model.clone();
     let guard = model.request_guard.clone();
     let text = matches!(capture.kind(), waypoint_browser::RecordedFieldKind::Text);
@@ -1086,18 +1126,28 @@ pub(crate) fn review_recorded_field(
                     context: None,
                     verified_text_present: text,
                     required_marker: capture.required_marker(),
+                    comparison: if capture.value_comparison()
+                        == "international_telephone_presentation"
+                    {
+                        ValueComparison::InternationalTelephone
+                    } else {
+                        ValueComparison::Exact
+                    },
                     guard: guard.as_ref(),
                 },
             ))
         },
     ) {
-        Ok(Ok(review)) => match review["comparisons"][0]["status"].as_str() {
-            Some("matches_transcription") => RecordedVisionOutcome::Matched,
-            Some("differs_from_transcription") => RecordedVisionOutcome::Difference,
-            _ => RecordedVisionOutcome::Unobserved,
-        },
-        Ok(Err(_)) => RecordedVisionOutcome::Failed,
-        Err(_) => RecordedVisionOutcome::Stopped,
+        Ok(Ok(review)) => {
+            let outcome = match review["comparisons"][0]["status"].as_str() {
+                Some("matches_transcription") => RecordedVisionOutcome::Matched,
+                Some("differs_from_transcription") => RecordedVisionOutcome::Difference,
+                _ => RecordedVisionOutcome::Unobserved,
+            };
+            (outcome, Some(review))
+        }
+        Ok(Err(_)) => (RecordedVisionOutcome::Failed, None),
+        Err(_) => (RecordedVisionOutcome::Stopped, None),
     }
 }
 
@@ -1106,6 +1156,7 @@ struct TargetOptions<'a> {
     context: Option<u32>,
     verified_text_present: bool,
     required_marker: bool,
+    comparison: ValueComparison,
     guard: Option<&'a RequestGuard>,
 }
 
@@ -1121,6 +1172,7 @@ fn analyze_targeted(
         context,
         verified_text_present,
         required_marker,
+        comparison,
         guard,
     } = options;
     validate_targeted_expected(label, expected)?;
@@ -1147,11 +1199,12 @@ fn analyze_targeted(
         guard,
     )?;
     let observed = validate(&result)?;
-    Ok(compare_required_marker(
-        &observed,
-        expected,
-        required_marker,
-    ))
+    let mut review =
+        compare_required_marker_values(&observed, expected, required_marker, comparison);
+    if matches!(comparison, ValueComparison::InternationalTelephone) {
+        review["visual_value_comparison"] = json!("international_telephone_presentation");
+    }
+    Ok(review)
 }
 
 fn validate_targeted_expected(label: &str, expected: &[(String, String)]) -> Result<(), String> {
@@ -3243,6 +3296,80 @@ mod tests {
                 ["comparisons"][0]["status"],
             "differs_from_transcription"
         );
+    }
+
+    #[test]
+    fn telephone_visual_comparison_preserves_raw_transcription_and_exact_default() {
+        let expected = [("Phone".into(), "+1 202-555-0123".into())];
+        let observed = validate(&json!({"observations":[
+            {"label":"Applicant — Phone*","visible_value":"+1202-555-0123"}
+        ]}))
+        .unwrap();
+        let review = compare_required_marker_values(
+            &observed,
+            &expected,
+            true,
+            ValueComparison::InternationalTelephone,
+        );
+        assert_eq!(review["comparisons"][0]["status"], "matches_transcription");
+        assert_eq!(review["observations"], observed["observations"]);
+        assert_eq!(review["comparisons"][0]["expected"], expected[0].1);
+        assert_eq!(
+            compare_required_marker(&observed, &expected, true)["comparisons"][0]["status"],
+            "differs_from_transcription"
+        );
+        assert_eq!(
+            compare_required_marker_values(
+                &observed,
+                &expected,
+                false,
+                ValueComparison::InternationalTelephone
+            )["comparisons"][0]["status"],
+            "unobserved"
+        );
+    }
+
+    #[test]
+    fn telephone_visual_comparison_refuses_inferred_digits_and_ambiguous_controls() {
+        let expected = [("Phone".into(), "+1 202-555-0123".into())];
+        for value in [
+            "202-555-0123",
+            "1202-555-0123",
+            "+1 202-555-0124",
+            "+44 202-555-0123",
+            "+1 202-555-0123 x4",
+            "+1 ２０２５５５０１２３",
+        ] {
+            let observed =
+                validate(&json!({"observations":[{"label":"Phone","visible_value":value}]}))
+                    .unwrap();
+            let review = compare_required_marker_values(
+                &observed,
+                &expected,
+                true,
+                ValueComparison::InternationalTelephone,
+            );
+            assert_eq!(
+                review["comparisons"][0]["status"], "differs_from_transcription",
+                "{value}"
+            );
+        }
+        for observations in [
+            json!([{ "label":"Phone", "visible_value":"+12025550123" }, { "label":"Phone*", "visible_value":"+12025550123" }]),
+            json!([{ "label":"Applicant — Phone", "visible_value":"+12025550123" }, { "label":"Reference — Phone", "visible_value":"+12025550123" }]),
+            json!([{ "label":"Other Phone", "visible_value":"+12025550123" }]),
+        ] {
+            let observed = validate(&json!({"observations":observations})).unwrap();
+            assert_eq!(
+                compare_required_marker_values(
+                    &observed,
+                    &expected,
+                    true,
+                    ValueComparison::InternationalTelephone
+                )["comparisons"][0]["status"],
+                "unobserved"
+            );
+        }
     }
 
     #[test]

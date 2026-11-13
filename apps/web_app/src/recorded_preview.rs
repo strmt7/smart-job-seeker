@@ -540,16 +540,19 @@ impl RehearsalVision {
         }
     }
 
-    fn review_field(&mut self, capture: &waypoint_browser::RecordedFieldCapture) -> &'static str {
+    fn review_field(
+        &mut self,
+        capture: &waypoint_browser::RecordedFieldCapture,
+    ) -> (&'static str, Option<Value>) {
         if crate::check_inference_memory().is_err() {
-            return "visual_unavailable";
+            return ("visual_unavailable", None);
         }
         let Some(model) = self.model.as_mut() else {
-            return "visual_unavailable";
+            return ("visual_unavailable", None);
         };
-        recorded_vision_status(crate::visual_review::review_recorded_field(
-            model, self.addr, capture,
-        ))
+        let (outcome, transcription) =
+            crate::visual_review::review_recorded_field(model, self.addr, capture);
+        (recorded_vision_status(outcome), transcription)
     }
 }
 
@@ -696,7 +699,11 @@ impl Rehearsal {
                         false
                     };
                     if image_saved {
-                        result["status"] = json!(self.vision.review_field(&capture));
+                        let (status, transcription) = self.vision.review_field(&capture);
+                        result["status"] = json!(status);
+                        if let Some(transcription) = transcription {
+                            result["transcription"] = transcription;
+                        }
                     }
                     if !image_saved || result["status"] != "visually_matched" {
                         self.halted = true;
@@ -751,7 +758,9 @@ impl Rehearsal {
             for (index, capture, image_saved) in captures {
                 if unchanged && driver.verify_recorded_field(&capture).is_ok() {
                     self.fields[index]["native_verified"] = json!(true);
-                    self.fields[index]["native_value"] = json!(capture.value());
+                    self.fields[index]["native_value"] = json!(capture.observed_value());
+                    self.fields[index]["intended_value"] = json!(capture.value());
+                    self.fields[index]["value_comparison"] = json!(capture.value_comparison());
                     if matches!(capture.kind(), waypoint_browser::RecordedFieldKind::File) {
                         self.fields[index]["attachment"] = json!({
                             "name":capture.value(), "sha256":waypoint_domain::sha256_hex(SAMPLE_PDF),

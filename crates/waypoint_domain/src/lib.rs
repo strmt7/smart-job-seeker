@@ -4,6 +4,8 @@
 //! Acceptance: schemas must reject unknown state, missing source, invalid
 //! currency basis and unbound approval.
 
+pub mod telephone;
+
 use serde::{Deserialize, Serialize};
 
 /// A typed, immutable identifier for an entity kind.

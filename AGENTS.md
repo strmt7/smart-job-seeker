@@ -258,6 +258,14 @@ used by development tools and tests. Do not add WSL or Docker as product require
 
 ## Real pitfalls already hit (don't rediscover these)
 
+- Preserve commanded values, actual native values and raw visual transcriptions
+  separately. A telephone control may reformat an explicit international number;
+  separator equality is allowed only through the native telephone proof and an
+  explicitly declared comparison mode. Never infer a country prefix, normalize
+  other text, discard a visual difference or reuse an image after its native
+  value changes. Corpus defaults remain exact; see
+  `docs/g1/TELEPHONE_PRESENTATION_2026-11-13.md`.
+
 - Native inspection snapshots include selector and section identities. Adding an
   embedded-document namespace must use `LiveForm::with_control_scope`; mutating
   those identities afterward makes unchanged forms stale. Only a current native

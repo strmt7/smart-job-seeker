@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
-  "reviewed_on": "2026-11-11",
-  "reviewed_source": "8cd7441013a7e54d1cf157c9dc97ef48d6c2146d",
+  "reviewed_on": "2026-11-13",
+  "reviewed_source": "f7117503da0eb9847d666b2fa26e39e8844b4d16",
   "goal": "Continue the existing active Smart Jobseeker product-development goal",
   "plan": "docs/COMPLETION_PLAN_2026-11-11.md",
   "assessment": "docs/REPO_STATE_REVIEW_2026-11-11.md",
-  "next_task": "R04",
+  "next_task": "R02",
   "boundaries": [
     "main only",
     "headless development only",
@@ -82,7 +82,8 @@
       "evidence": [
         "docs/FORM_EVALUATION.md",
         "docs/g1/FORM_CORPUS_SCOPE_2026-11-11.md",
-        "docs/g1/INDEPENDENT_ENTRY_EVIDENCE_2026-11-11.md"
+        "docs/g1/INDEPENDENT_ENTRY_EVIDENCE_2026-11-11.md",
+        "docs/g1/TELEPHONE_PRESENTATION_2026-11-13.md"
       ],
       "execution_batch": "B",
       "steps": [
@@ -96,7 +97,8 @@
       "completed_scopes": [
         "Bounded corpus identity/partition/input protocol and explicit field gate; two development cases, no held-out coverage.",
         "Actual compiled local12B-model before/after evidence, deterministic final accounting and verified owned cleanup.",
-        "Schema2 independent expected values, control/section identity, bound actual image hashes and explicit workflow truth protocol; legacy reports retain original meaning. One known-source initial9-control development case frozen before model entry; field gate correctly fails3/6 with one unverified Phone."
+        "Schema2 independent expected values, control/section identity, bound actual image hashes and explicit workflow truth protocol; legacy reports retain original meaning. One known-source initial9-control development case frozen before model entry; field gate correctly fails3/6 with one unverified Phone.",
+        "2026-11-13 known-source continuation verifies4/6 initial answerable controls with explicit telephone equality; two uploads unreached and whole workflow not qualified. Historical3/6 exact-mode failures retained."
       ],
       "start_requirements": [
         "Existing versioned input-binding/evaluation protocol is implemented; reviewed in tools/form_corpus.py and docs/FORM_EVALUATION.md."
@@ -164,7 +166,8 @@
         "Independent before/after visual and native checks; no-progress review fallback"
       ],
       "evidence": [
-        "docs/g1/INDEPENDENT_ENTRY_EVIDENCE_2026-11-11.md"
+        "docs/g1/INDEPENDENT_ENTRY_EVIDENCE_2026-11-11.md",
+        "docs/g1/TELEPHONE_PRESENTATION_2026-11-13.md"
       ],
       "execution_batch": "C",
       "steps": [
@@ -174,7 +177,7 @@
         "After every action, read back native state and perform local-model visual review; detect stale state and no progress.",
         "Measure the local model on the frozen corpus; provide actionable review records rather than invented answers."
       ],
-      "next_action": "Research authoritative telephone input/number presentation rules, inspect native tel type/validity evidence, then implement narrowly typed presentation equivalence consistently across native verification, actual-value recording, visual comparison and schema2 truth. Preserve all validity/freshness/authorization checks and exact matching for other text; qualify negative fixtures before the known-source model case.",
+      "next_action": "Prepare generic candidate-supported attachment/action planning, including section-qualified upload semantics, without adding employer/label-specific cases. The current fictional mapper skips both upload controls; page-review walls still prevent section advance. Preserve unknowns and qualify varied frozen held-out cases/full-workflow truth before promotion.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "start_requirements": [
         "The frozen schema2 known-source initial-control case and native mutation fixture admit investigation of the observed actuator failure. This does not admit broad planner promotion; that still requires the varied held-out tranche and full workflow truth.",
@@ -182,7 +185,8 @@
       ],
       "completed_scopes": [
         "Native-bound failed-entry witness and coherent diagnostic image/text without accepting the entry; challenge/schema/document changes refuse observations.",
-        "Actual failed Phone image/value retained: +1 202-555-0123 versus intended +12025550123. Independent gate stays failed; no section advances."
+        "Actual failed Phone image/value retained: +1 202-555-0123 versus intended +12025550123. Independent gate stays failed; no section advances.",
+        "Native tel-only presentation proof and stable actual-value captures, separate raw local-model transcription and explicit oracle comparison; final known-source run verifies4/6 initial answerable controls. No held-out or full-workflow claim."
       ]
     },
     {
@@ -537,6 +541,38 @@
     "build_state": "Last focused test compile failed; three stale start callers remain in current source. No current full-workspace pass claimed."
   },
   "working_tree_checkpoint": {
+    "baseline_head": "f7117503da0eb9847d666b2fa26e39e8844b4d16",
+    "validated_changes": "Native-proven international telephone presentation equality, preserved actual/intended values and raw post-entry vision, explicit schema2 equality and honest record UI. Known-source local12B run verifies4/6 initial answerable controls; two uploads remain unreached.",
+    "validated_source_sha256": {
+      "crates/waypoint_browser/src/capture_discovery.rs": "65d9c2820864510ecb91833bfec22670eaab32b665bab6842b62dfcd1a6e7d7e",
+      "crates/waypoint_browser/src/capture_session.rs": "385d3104724925220a60cdaa1af65a84120a39e40b68374942008dfb6fa5d834",
+      "crates/waypoint_browser/src/rehearsal_capture.rs": "52103fab8b10d0a8fda030d592fa05ee1dbb8de230e7e1635b8bcae623d37d39",
+      "crates/waypoint_browser/src/rehearsal_replay.py": "53c913e7e980ba2c1e8be35829977f54c123e703229a61aedad62b8093270a93",
+      "crates/waypoint_browser/src/captured_frame.rs": "414d8952725829fba48b81b9899deeae8f448c012f5224d7752e754d63290533",
+      "crates/waypoint_browser/src/lib.rs": "f1b38a034e32191bbc147005ca5f89c0b7f7058692cffa29fc4b4c4e3a5d99f8",
+      "apps/web_app/src/recorded_preview.rs": "39bf896e3646a1c8a1aec08128fc9be59d3814470f80aeccad23f3e06e7a0b2a",
+      "apps/web_app/src/visual_review.rs": "fab86cc7a204e90a772b0e214c3e5007a30d947692d7d5c58b882bf40f3653e1",
+      "crates/waypoint_domain/src/lib.rs": "a9c1d2b7b10b45a8fb535e2b31f4cb8e85d9e970c80d78348efbc0c9b2562912",
+      "crates/waypoint_domain/src/telephone.rs": "04739a3b0eceeb31ee9eadd9a64835e0a903f1a9d797245523b23d0e668011c7",
+      "apps/web_app/data/rehearsal-profile.json": "ce6e680f2e7180e1f7f6a7bf027123beaae25bb4dfb790098b6fe67afcd919e5",
+      "apps/web_app/src/rehearsal-sample.pdf": "67174a6e3717b70a030dcb988b825d5e77e839448ba2f02ca3f2131b0058ca2d",
+      "tools/form_corpus.py": "7255b7a95a65c459da48dd4f61f726afd926a1defe035b5d051433c876b3c7ca",
+      "apps/web_app/src/local_model_worker.py": "e038a37a2181823574fb9424cc63d7e2485ec9bf1d6b292dd7c9f33a334def5d",
+      "apps/web_app/web/source-copy.js": "1bb20c891e6ba20c1d3bf75ca7196abe73ae11f6daa6915c6b8352dfa3692852"
+    },
+    "app_sha256": "ddb0ff27141c578e3700bce60357d913285152ebb5cdc0b729556ef6c4082ce5",
+    "build_state": "Workspace1316 passed/595 ignored, tools90 passed; Clippy/build pass. Windows GPU-counter availability1 passed. Known development model run4/6 correct,2 unreached,3 unknown,0 incorrect/unexpected/ambiguous; field/workflow gates remain failed/not_qualified. Headless record view and quick layout22 passed; final native case1 passed on unchanged final browser source.",
+    "evidence": "docs/g1/TELEPHONE_PRESENTATION_2026-11-13.md",
+    "host_checkpoint": {
+      "available_ram_bytes": 30546604032,
+      "matching_processes": 0,
+      "resident_models": 0,
+      "persistent_registrations": 0,
+      "scope": "Final read-only audit plus owned-tree teardown; not a sustained leak proof."
+    }
+  },
+  "dependency_semantics": "depends_on are completion prerequisites; start_requirements admit bounded implementation before the whole prerequisite package completes. Containment, UI consistency and resource ownership apply continuously.",
+  "last_validated_checkpoint": {
     "baseline_head": "8cd7441013a7e54d1cf157c9dc97ef48d6c2146d",
     "validated_changes": "Independent schema2 answer/control/image truth and native-bound failed-entry evidence; actual Phone presentation mismatch retained without accepting it.",
     "validated_source_sha256": {
@@ -553,44 +589,29 @@
     "build_state": "Workspace1312 passed/595 ignored, tools88 passed, Clippy/build pass. Native failure case1 passed; known local12B case3/6 correct,1 unverified,2 unreached,3 unknown. Field/workflow gates fail honestly.",
     "evidence": "docs/g1/INDEPENDENT_ENTRY_EVIDENCE_2026-11-11.md"
   },
-  "dependency_semantics": "depends_on are completion prerequisites; start_requirements admit bounded implementation before the whole prerequisite package completes. Containment, UI consistency and resource ownership apply continuously.",
-  "last_validated_checkpoint": {
-    "baseline_head": "fc5a4a436d2a8c89e64261449d7b677d296f0bec",
-    "validated_changes": "Absent-Origin stylesheet binding with native/compiled/read-only/offline model evidence; remaining Phone entry fails and is unverified.",
-    "validated_source_sha256": {
-      "crates/waypoint_browser/src/capture_discovery.rs": "65d9c2820864510ecb91833bfec22670eaab32b665bab6842b62dfcd1a6e7d7e",
-      "crates/waypoint_browser/src/capture_session.rs": "385d3104724925220a60cdaa1af65a84120a39e40b68374942008dfb6fa5d834",
-      "crates/waypoint_browser/src/rehearsal_capture.rs": "52103fab8b10d0a8fda030d592fa05ee1dbb8de230e7e1635b8bcae623d37d39",
-      "crates/waypoint_browser/src/rehearsal_replay.py": "53c913e7e980ba2c1e8be35829977f54c123e703229a61aedad62b8093270a93",
-      "crates/waypoint_browser/src/capture_session_qualification.rs": "e39a585bb312c59121bfa95260df629a9b8c3f78f456bec625c4000edb4879de",
-      "crates/waypoint_browser/tests/test_rehearsal_replay.py": "340196b78c67d36b273839c4dc1c0bbbab336b3ed9618a23ff84d8716059286c"
-    },
-    "app_sha256": "f24e10758f0badc63a6c6453706df8ef3db44fa8d5042576359d08526fe91488",
-    "build_state": "Managed workspace1312 passed/594 ignored, Clippy/fmt/build pass; replay54, native1, source-copy16 resources, model3 verified fields + unverified Phone. No full-workflow or held-out claim.",
-    "evidence": "docs/g1/ABSENT_ORIGIN_STYLESHEETS_2026-11-11.md"
-  },
   "current_hosted_checks": {
-    "head": "fc5a4a436d2a8c89e64261449d7b677d296f0bec",
+    "head": "f7117503da0eb9847d666b2fa26e39e8844b4d16",
     "all_completed_successfully": true,
     "run_ids": {
-      "ci": 43031531235,
-      "coverage": 43031531157,
-      "codeql": 43031529824
+      "ci": 43050096389,
+      "coverage": 43050096076,
+      "codeql": 43050093487
     },
-    "private_receipts": "target/repo-overview/"
+    "private_receipts": "target/telephone-presentation/",
+    "scope": "Previously pushed baseline only; current local changes are not hosted validation."
   },
   "immediate_slices": [
     {
-      "task": "R04",
-      "deliverable": "Evidence-backed strictly typed telephone presentation handling across native/visual/oracle layers; actual values stay actual and all non-tel/constraint/freshness checks remain strict."
-    },
-    {
       "task": "R02",
-      "deliverable": "Varied frozen held-out cases, permission lineage, independent complete-form truth and repeated promotion evidence."
+      "deliverable": "Freeze diverse held-out employer/layout families and independent answer/control/image/complete-form truth before tuning; retain unavailable cases and permission lineage."
     },
     {
       "task": "R04",
-      "deliverable": "Connect generic candidate-aware planning over the qualified capabilities, with typed repairs and manual review."
+      "deliverable": "Generic candidate-supported attachment/action planning with section-qualified controls, explicit skipped-decision reasons and bounded review fallback; no employer-specific label patches."
+    },
+    {
+      "task": "R03",
+      "deliverable": "Expand faithful read-only source collection and record missing resources/server-dependent states without performing live form actions."
     }
   ]
 }

@@ -101,6 +101,27 @@ class ValueCorpusTests(unittest.TestCase):
         self.row['native_value']='wrong@example.invalid'
         result=self.evaluate();self.assertFalse(result['field_gate_passed'])
         self.assertEqual(result['fields']['incorrect_values'],1);self.assertEqual(result['critical_entry_or_uncertainty'],1)
+    def test_telephone_comparison_requires_explicit_truth_and_native_proof(self):
+        self.field['expected']={'value':'+12025550123'}
+        self.row.update(native_value='+1 202-555-0123',intended_value='+12025550123',
+                        value_comparison=corpus.PHONE_COMPARISON)
+        self.assertFalse(self.evaluate()['field_gate_passed'])
+        self.field['expected']['comparison']=corpus.PHONE_COMPARISON
+        self.assertTrue(self.evaluate()['field_gate_passed'])
+        for change in [{'native_value':'+1 202-555-0124'},{'native_value':'2025550123'},
+                       {'native_value':'+1 2025550123 x2'},{'native_value':'+1 2025550123;ext=2'},
+                       {'native_value':'+1 ２０２５５５０１２３'},{'native_value':'+1 2025550123\n'},
+                       {'value_comparison':'unobserved'},{'value_comparison':'exact'},
+                       {'intended_value':'+12025550124'},{'native_verified':False}]:
+            with self.subTest(change=change):self.assertFalse(self.evaluate([{**self.row,**change}])['field_gate_passed'])
+        self.row.update(value_comparison='exact',intended_value=self.row['native_value'])
+        self.assertTrue(self.evaluate()['field_gate_passed'])
+    def test_telephone_truth_never_changes_other_field_kinds_or_ambiguous_numbers(self):
+        for kind,value in [('select','+12025550123'),('file','+12025550123'),('text','12025550123'),
+                           ('text','+012025550123'),('text','+12025550123 x2')]:
+            self.field.update(kind=kind,expected={'value':value,'comparison':corpus.PHONE_COMPARISON})
+            with self.subTest(kind=kind,value=value),self.assertRaises(ValueError):self.bind()
+
     def test_missing_or_false_native_proof_is_unverified_not_correct(self):
         for proof in [None,False,1,'true']:
             self.row['native_verified']=proof

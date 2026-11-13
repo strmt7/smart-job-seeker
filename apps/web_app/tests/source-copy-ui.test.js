@@ -25,6 +25,12 @@ function harness(api, onFinished) {
     {kind:'page',label:'Page',image:'0001.png',sha256:digest,fields:[{label:'Parent name'}]},
     {kind:'frame',label:'Qualifications',image:'0002.png',sha256:digest,fields:[{label:'Child answer',required:true}]},
   ] };
+  for (const [native, state, visible] of [[true,'visually_matched',true],[false,'visually_matched',false],[true,'entry_unverified',false]]) {
+    const formatted = harness(async () => {}).preview({...preview, rehearsal:{scope:'fictional_saved_form',fields:[{
+      view:1,label:'International contact',kind:'text',native_verified:native,status:state,value_comparison:'international_telephone_presentation',
+    }]}},{});
+    assert.equal(Boolean(find(formatted,node=>node.textContent==='The form formats this number differently; the digits match.')),visible);
+  }
   let release;
   const panel = harness(async () => {}).preview(preview,{jobId:'job',attemptId:'attempt',api:async (_route,body) => {
     if(body.name==='0001.png') return new Promise(resolve => { release=resolve; });

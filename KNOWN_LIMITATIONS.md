@@ -10,12 +10,14 @@ frame/shadow traversal, candidate-file import, structured history and semantic
 fit assessment also exist. Their broad qualification and recovery limits remain
 open; the earlier statements that those mechanisms are absent are superseded.
 
-Current independent-entry continuation: schema2 compares external expected values,
-native control/section identity and actual image bytes. Failed Phone now retains
-+1 202-555-0123 versus intended +12025550123 and a diagnostic screenshot. It stays
-unverified;3/6 initially answerable controls verify,2 are unreached,3 answers are
-unknown, no section advances and held-out/full-workflow coverage is absent.
-[Current evidence](docs/g1/INDEPENDENT_ENTRY_EVIDENCE_2026-11-11.md).
+Current independent-entry continuation, 2026-11-13: native-proven international
+telephone formatting is handled explicitly across native/visual/oracle checks,
+with intended, actual and raw transcribed values preserved separately. The
+known-source local12B run verifies4/6 initially answerable controls; two PDF
+uploads remain unreached because the fictional mapper skips section-qualified
+labels. Three answers remain unknown. No section advances or held-out/full-
+workflow success are claimed; broad generic planning remains open.
+[Current evidence](docs/g1/TELEPHONE_PRESENTATION_2026-11-13.md).
 
 Historical stylesheet continuation: two native-bound CSS resources now render on a
 new saved real page, and local12B vision recognizes Phone before entry. Phone

@@ -5449,6 +5449,72 @@ impl CdpDriver {
 
     /// Report only fixed browser validity categories, never site-provided text
     /// or the candidate's value. Failure to inspect remains an unknown reason.
+    /// A narrow fallback after literal retention failed. No mutation or country
+    /// inference: native tel semantics, visibility and all constraints must hold.
+    fn retained_international_telephone(
+        &mut self,
+        object: &str,
+        expected: &str,
+    ) -> Result<bool, DriverError> {
+        if waypoint_domain::telephone::canonical_international(expected).is_none() {
+            return Ok(false);
+        }
+        let described = self
+            .cdp
+            .call("DOM.describeNode", json!({"objectId":object}))
+            .map_err(derr)?;
+        let attributes = described["node"]["attributes"].as_array();
+        if described["node"]["nodeName"] != "INPUT"
+            || !attributes.is_some_and(|attributes| {
+                attributes.len() <= 512
+                    && attributes.len() % 2 == 0
+                    && attributes
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
+                        .filter(|pair| {
+                            pair[0]
+                                .as_str()
+                                .is_some_and(|name| name.eq_ignore_ascii_case("type"))
+                        })
+                        .count()
+                        == 1
+                    && attributes.as_chunks::<2>().0.iter().any(|pair| {
+                        pair[0]
+                            .as_str()
+                            .is_some_and(|name| name.eq_ignore_ascii_case("type"))
+                            && pair[1]
+                                .as_str()
+                                .is_some_and(|value| value.eq_ignore_ascii_case("tel"))
+                    })
+            })
+        {
+            return Ok(false);
+        }
+        let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,
+            "functionDeclaration":r#"function() {
+                if (!(this instanceof HTMLInputElement) || this.type !== 'tel' || !this.isConnected
+                    || this.matches(':disabled') || this.readOnly || this.hasAttribute('list')
+                    || this.closest('[aria-disabled="true" i], [aria-readonly="true" i]')
+                    || (this.hasAttribute('role') && this.getAttribute('role').toLowerCase() !== 'textbox')
+                    || ['list','both','inline'].includes(this.getAttribute('aria-autocomplete')?.toLowerCase())
+                    || !this.validity.valid || !this.getClientRects().length || this.value.length > 128) return null;
+                for (let node=this, depth=0; node; node=node.parentElement) {
+                    if (++depth > 64) return null;
+                    const style=getComputedStyle(node);
+                    if (style.visibility==='hidden' || style.visibility==='collapse' || Number(style.opacity)===0) return null;
+                }
+                return this.value;
+            }"#, "returnByValue":true})).map_err(derr)?;
+        Ok(result.get("exceptionDetails").is_none()
+            && result
+                .pointer("/result/value")
+                .and_then(Value::as_str)
+                .is_some_and(|actual| {
+                    waypoint_domain::telephone::same_international(expected, actual)
+                }))
+    }
+
     fn native_text_validation_reason(
         &mut self,
         object: &str,
@@ -5632,8 +5698,9 @@ impl CdpDriver {
                 self.ensure_text_focus(node, object)?;
                 self.stop_if_non_read_request_observed(network_before)?;
                 let retained = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(value) { return (this.isConnected && !this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]')) && ((this.getAttribute('contenteditable')?.toLowerCase() === 'plaintext-only' || (['','true'].includes(this.getAttribute('contenteditable')?.toLowerCase()) && this.getAttribute('role')?.toLowerCase() === 'textbox' && (this.getAttribute('aria-label')?.trim() || this.getAttribute('aria-labelledby')?.trim()))) ? this.isContentEditable && !this.querySelector('input,textarea,select,button,[contenteditable]') && this.getAttribute('aria-disabled') !== 'true' && this.getAttribute('aria-readonly') !== 'true' && this.innerText === value : !this.matches(':disabled') && !this.readOnly && !this.hasAttribute('list') && this.getAttribute('role')?.toLowerCase() !== 'combobox' && !['list','both','inline'].includes(this.getAttribute('aria-autocomplete')?.toLowerCase()) && this.value === value && this.validity.valid); }","arguments":[{"value":t}],"returnByValue":true})).map_err(derr)?;
-                if retained.get("exceptionDetails").is_some()
-                    || retained.pointer("/result/value").and_then(Value::as_bool) != Some(true)
+                if (retained.get("exceptionDetails").is_some()
+                    || retained.pointer("/result/value").and_then(Value::as_bool) != Some(true))
+                    && !self.retained_international_telephone(object, t)?
                 {
                     if let Some(reason) = self.native_text_validation_reason(object, t) {
                         return Err(DriverError(format!("The field retained the text but failed a browser constraint: {reason}. Review it manually")));
@@ -6570,8 +6637,9 @@ impl BrowserDriver for CdpDriver {
             .and_then(Value::as_str)
             .ok_or_else(|| DriverError("Existing field value cannot be inspected".into()))?;
         let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(expected) { if (!this.isConnected || this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]')) return false; const editable = (this.getAttribute('contenteditable')?.toLowerCase() === 'plaintext-only' || (['','true'].includes(this.getAttribute('contenteditable')?.toLowerCase()) && this.getAttribute('role')?.toLowerCase() === 'textbox' && (this.getAttribute('aria-label')?.trim() || this.getAttribute('aria-labelledby')?.trim()))) && this.isContentEditable && !this.querySelector('input,textarea,select,button,[contenteditable]'); if (editable) return this.innerText === '' || this.innerText === expected; if (!(this instanceof HTMLTextAreaElement || (this instanceof HTMLInputElement && ['text','email','tel','url','search','number','date','month','time','datetime-local'].includes(this.type))) || this.matches(':disabled') || this.readOnly || this.hasAttribute('list') || this.getAttribute('role')?.toLowerCase() === 'combobox' || ['list','both','inline'].includes(this.getAttribute('aria-autocomplete')?.toLowerCase())) return false; return this.value === '' || this.value === expected; }","arguments":[{"value":expected}],"returnByValue":true})).map_err(derr)?;
-        if result.get("exceptionDetails").is_some()
-            || result.pointer("/result/value").and_then(Value::as_bool) != Some(true)
+        if (result.get("exceptionDetails").is_some()
+            || result.pointer("/result/value").and_then(Value::as_bool) != Some(true))
+            && !self.retained_international_telephone(object, expected)?
         {
             return Err(DriverError("Field already contains a different value or cannot be inspected; review it in the browser".into()));
         }
@@ -6596,8 +6664,9 @@ impl BrowserDriver for CdpDriver {
             .and_then(Value::as_str)
             .ok_or_else(|| DriverError("Cannot inspect previously filled field".into()))?;
         let result = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function(value) { if (!this.getClientRects().length) return false; for (let node = this, depth = 0; node; node = node.parentElement) { if (++depth > 64) return false; const style = getComputedStyle(node); if (style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0) return false; } return (this.isConnected && !this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]')) && ((this.getAttribute('contenteditable')?.toLowerCase() === 'plaintext-only' || (['','true'].includes(this.getAttribute('contenteditable')?.toLowerCase()) && this.getAttribute('role')?.toLowerCase() === 'textbox' && (this.getAttribute('aria-label')?.trim() || this.getAttribute('aria-labelledby')?.trim()))) ? this.isContentEditable && !this.querySelector('input,textarea,select,button,[contenteditable]') && this.getAttribute('aria-disabled') !== 'true' && this.getAttribute('aria-readonly') !== 'true' && this.innerText === value : (this instanceof HTMLTextAreaElement || (this instanceof HTMLInputElement && ['text','email','tel','url','search','number','date','month','time','datetime-local'].includes(this.type))) && !this.matches(':disabled') && !this.readOnly && !this.hasAttribute('list') && this.getAttribute('role')?.toLowerCase() !== 'combobox' && !['list','both','inline'].includes(this.getAttribute('aria-autocomplete')?.toLowerCase()) && this.value === value && this.validity.valid); }","arguments":[{"value":expected}],"returnByValue":true})).map_err(derr)?;
-        if result.get("exceptionDetails").is_some()
-            || result.pointer("/result/value").and_then(Value::as_bool) != Some(true)
+        if (result.get("exceptionDetails").is_some()
+            || result.pointer("/result/value").and_then(Value::as_bool) != Some(true))
+            && !self.retained_international_telephone(object, expected)?
         {
             if let Some(reason) = self.native_text_validation_reason(object, expected) {
                 return Err(DriverError(format!(

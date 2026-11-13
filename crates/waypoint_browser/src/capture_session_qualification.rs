@@ -563,6 +563,10 @@ fn run_coordinator(discovery: bool, privacy: bool, custom_controls: bool, failed
         assert!(driver.observe_recorded_field(&witness).is_err());
         driver.cdp.call("Runtime.evaluate", serde_json::json!({"expression":"history.replaceState(null,'',location.href+'#changed')"})).unwrap();
         assert!(driver.observe_recorded_field(&witness).is_err());
+        // Finish the original witness refusals before adding any new fields;
+        // otherwise the extra schema alone would make the barrier test vacuous.
+        driver.cdp.call("Runtime.evaluate", serde_json::json!({"expression":format!("history.replaceState(null,'',{});document.querySelector('#masked').removeAttribute('aria-label')", serde_json::to_string(&ready.entry_url).unwrap())})).unwrap();
+        qualify_telephone_presentation(&mut driver, &folder);
     }
     let replay = driver.rehearsal_replay_report().unwrap();
     assert_eq!(
@@ -591,4 +595,77 @@ fn run_coordinator(discovery: bool, privacy: bool, custom_controls: bool, failed
     std::fs::write(folder.join("http-captured.private.json"),serde_json::to_vec_pretty(&serde_json::json!({
         "complete":true,"scope":"fictional transport responses through policy/robots coordinator, frozen archive and contained browser; no public form capture",
         "capture":frozen.report,"report":replay,"privacy_guard_exercised":privacy,"transport_dropped_before_entry":true})).unwrap()).unwrap();
+}
+
+fn qualify_telephone_presentation(driver: &mut CdpDriver, folder: &Path) {
+    driver.cdp.call("Runtime.evaluate", serde_json::json!({"expression":r#"(()=>{
+        const label=document.createElement('label'); label.textContent='International contact';
+        const input=document.createElement('input'); input.id='international-contact'; input.type='tel';
+        input.oninput=()=>{if(input.value.replace(/[^0-9]/g,'')==='12025550123') input.value='+1 202-555-0123'};
+        label.append(input); document.body.append(label);
+    })()"#})).unwrap();
+    let form = driver.inspect_current().unwrap();
+    let field = form
+        .schema
+        .fields
+        .iter()
+        .find(|field| field.label == "International contact")
+        .unwrap();
+    let capture = driver
+        .rehearse_recorded_field(&form, &field.selector, "+12025550123")
+        .unwrap();
+    assert_eq!(capture.value(), "+12025550123");
+    assert_eq!(capture.observed_value(), "+1 202-555-0123");
+    assert_eq!(
+        capture.value_comparison(),
+        "international_telephone_presentation"
+    );
+    driver.verify_recorded_field(&capture).unwrap();
+    std::fs::write(
+        folder.join("telephone-presentation-screenshot.base64"),
+        capture.image(),
+    )
+    .unwrap();
+    let report = serde_json::json!({"intended":capture.value(),"observed":capture.observed_value(),
+        "comparison":capture.value_comparison(),"control":capture.control()});
+    driver.cdp.call("Runtime.evaluate", serde_json::json!({"expression":"document.querySelector('#international-contact').value='+1 (202) 555-0123'"})).unwrap();
+    driver
+        .verify_text_value(&field.selector, "+12025550123")
+        .unwrap();
+    // Even equivalent reformatting invalidates the older image/value snapshot.
+    assert!(driver.verify_recorded_field(&capture).is_err());
+    let mut denied = 0;
+    for (kind, actual, attribute, attr_value) in [
+        ("text", "+1 202-555-0123", "", ""),
+        ("tel", "+44 202-555-0123", "", ""),
+        ("tel", "202-555-0123", "", ""),
+        ("tel", "+1 202-555-0123 x2", "", ""),
+        ("tel", "+1 202-555-0123", "pattern", r"\+[0-9]{11}"),
+        ("tel", "+1 202-555-0123", "aria-invalid", "true"),
+        ("tel", "+1 202-555-0123", "readonly", ""),
+        ("tel", "+1 202-555-0123", "disabled", ""),
+        ("tel", "+1 202-555-0123", "role", "combobox"),
+        ("tel", "+1 202-555-0123", "aria-autocomplete", "list"),
+        ("tel", "+1 202-555-0123", "style", "display:none"),
+    ] {
+        let setup = format!("(()=>{{const old=document.querySelector('#negative-contact');if(old)old.remove();const input=document.createElement('input');input.id='negative-contact';input.type={};input.value={};if({})input.setAttribute({},{});document.body.append(input)}})()",
+            serde_json::to_string(kind).unwrap(),serde_json::to_string(actual).unwrap(),!attribute.is_empty(),
+            serde_json::to_string(attribute).unwrap(),serde_json::to_string(attr_value).unwrap());
+        driver
+            .cdp
+            .call("Runtime.evaluate", serde_json::json!({"expression":setup}))
+            .unwrap();
+        assert!(
+            driver
+                .verify_text_value("#negative-contact", "+12025550123")
+                .is_err(),
+            "{kind} {attribute}"
+        );
+        denied += 1;
+    }
+    driver.cdp.call("Runtime.evaluate", serde_json::json!({"expression":"const el=document.querySelector('#negative-contact');el.removeAttribute('style');el.setCustomValidity('Fictional constraint')"})).unwrap();
+    assert!(driver
+        .verify_text_value("#negative-contact", "+12025550123")
+        .is_err());
+    std::fs::write(folder.join("telephone-presentation.private.json"),serde_json::to_vec_pretty(&serde_json::json!({"capture":report,"negative_cases":denied+1,"stale_image_refused":true})).unwrap()).unwrap();
 }

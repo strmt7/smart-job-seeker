@@ -65,6 +65,9 @@ def main():
             (folder/'failed-entry.png').write_bytes(base64.b64decode((folder/'failed-entry-screenshot.base64').read_bytes(),validate=True))
             report['failed_entry_sha256']=sha(folder/'failed-entry.private.json')
             report['failed_entry_image_sha256']=sha(folder/'failed-entry.png')
+            (folder/'telephone-presentation.png').write_bytes(base64.b64decode((folder/'telephone-presentation-screenshot.base64').read_bytes(),validate=True))
+            report['telephone_sha256']=sha(folder/'telephone-presentation.private.json')
+            report['telephone_image_sha256']=sha(folder/'telephone-presentation.png')
         if hashes()!=report['source_sha256'] or inventory(args.engine)!=files:raise RuntimeError('Source or engine changed during capture qualification')
         report['complete']=True
     finally:

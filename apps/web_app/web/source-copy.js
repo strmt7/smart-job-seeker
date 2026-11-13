@@ -201,6 +201,9 @@
             row.append(button);
           }
           details.append(row);
+          if (check.status === 'visually_matched' && check.native_verified === true && check.value_comparison === 'international_telephone_presentation') {
+            details.append(el('p', 'The form formats this number differently; the digits match.', 'footnote'));
+          }
           if (typeof check.review_reason === 'string' && check.review_reason) details.append(el('p', check.review_reason.slice(0, 500), 'footnote'));
         }
         const targets = Array.isArray(rehearsal.visual_gate?.targets) ? rehearsal.visual_gate.targets.slice(0, 10).filter(target => target?.view === viewNumber) : [];

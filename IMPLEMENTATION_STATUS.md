@@ -1,3 +1,14 @@
+## Telephone presentation and retained visual evidence - 2026-11-13
+
+Native-proven international telephone formatting now preserves the intended
+fact, actual value and raw visual transcription separately. The independent
+known-source local12B run verifies four of six answerable initial controls;
+two PDF uploads remain unreached by the fictional mapper. Three answers stay
+unknown. Field/workflow gates remain failed/not qualified; this is development
+data, with no held-out or general completion claim. Workspace1,316 passed /
+595 opt-in tests ignored, and Clippy/build passed. Headless record-view and
+quick layout checks passed. [Evidence and limits](docs/g1/TELEPHONE_PRESENTATION_2026-11-13.md).
+
 ## Independent entry truth and failed-state captures - 2026-11-11
 
 Versioned expected-answer/control/image comparisons now distinguish successful

@@ -130,6 +130,8 @@ pub struct RecordedFieldCapture {
     network_before: u64,
     document: RecordedDocument,
     control: RecordedControlIdentity,
+    observed_value: String,
+    value_comparison: &'static str,
 }
 
 /// A fresh, focused target image made by the recorded driver before an action.
@@ -239,6 +241,13 @@ struct RecordedDocument {
 }
 
 impl RecordedFieldCapture {
+    /// Actual captured native text, not the commanded candidate fact.
+    pub fn observed_value(&self) -> &str {
+        &self.observed_value
+    }
+    pub fn value_comparison(&self) -> &'static str {
+        self.value_comparison
+    }
     pub fn control(&self) -> &RecordedControlIdentity {
         &self.control
     }
@@ -636,16 +645,37 @@ impl CdpDriver {
         }
         self.stop_if_non_read_request_observed(network_before)?;
         self.verify_recorded_command(&command)?;
+        let observed_value = if matches!(kind, RecordedFieldKind::Text) {
+            self.text_value_snapshot(selector)?.value
+        } else {
+            value.to_owned()
+        };
+        let value_comparison = if observed_value == value {
+            "exact"
+        } else if matches!(kind, RecordedFieldKind::Text)
+            && waypoint_domain::telephone::same_international(value, &observed_value)
+        {
+            "international_telephone_presentation"
+        } else {
+            return Err(review());
+        };
         let image = if matches!(kind, RecordedFieldKind::Radio) {
             self.screenshot_recorded_radio(selector, value, true)?
         } else {
             self.screenshot_field_context(selector)?
         };
+        if matches!(kind, RecordedFieldKind::Text)
+            && self.text_value_snapshot(selector)?.value != observed_value
+        {
+            return Err(review());
+        }
         check_scope(self, "after field entry")?;
         self.verify_recorded_command(&command)?;
         self.observed_non_read_requests()?;
         self.stop_if_non_read_request_observed(network_before)?;
         Ok(RecordedFieldCapture {
+            observed_value,
+            value_comparison,
             control,
             image,
             label: field.label.clone(),
@@ -752,6 +782,14 @@ impl CdpDriver {
         capture: &RecordedFieldCapture,
     ) -> Result<(), DriverError> {
         self.verify_recorded_command(&capture.command)?;
+        if matches!(capture.kind, RecordedFieldKind::Text) {
+            let BrowserCommand::Fill { selector, .. } = &capture.command else {
+                return Err(review());
+            };
+            if self.text_value_snapshot(selector)?.value != capture.observed_value {
+                return Err(review());
+            }
+        }
         if self.recorded_document()? != capture.document {
             return Err(review());
         }

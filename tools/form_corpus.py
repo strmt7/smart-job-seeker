@@ -23,6 +23,49 @@ def bounded_value(value):
             and not any(ord(c) < 32 and c not in '\r\n\t' or ord(c) == 127 for c in value))
 
 
+PHONE_COMPARISON = 'international_telephone_presentation'
+
+
+def canonical_international_telephone(value):
+    # Independent evaluator implementation; no browser/model normalizer is reused.
+    if not isinstance(value, str) or not 2 <= len(value) <= 128 or not value.startswith('+'):
+        return None
+    digits, group_start = [], None
+    for char in value[1:]:
+        if char in '0123456789':
+            if not digits and char == '0' or len(digits) == 15:
+                return None
+            digits.append(char)
+        elif char in ' -.' and digits:
+            pass
+        elif char == '(' and digits and group_start is None:
+            group_start = len(digits)
+        elif char == ')' and group_start is not None and len(digits) > group_start:
+            group_start = None
+        else:
+            return None
+    if not digits or group_start is not None or value[-1] not in '0123456789)':
+        return None
+    return '+' + ''.join(digits)
+
+
+def expected_value_matches(field, row):
+    if field['kind'] == 'file':
+        return isinstance(row.get('attachment'), dict) and row['attachment'].get('sha256') == field['expected']['sha256']
+    actual = row.get('native_value')
+    if not bounded_value(actual):
+        return False
+    expected = field['expected']
+    if 'comparison' not in expected:
+        return actual == expected['value']
+    actual_key = canonical_international_telephone(actual)
+    intended = row.get('intended_value')
+    mode = row.get('value_comparison')
+    proof = (mode == 'exact' and actual == intended or mode == PHONE_COMPARISON
+             and actual_key is not None and actual_key == canonical_international_telephone(intended))
+    return proof and actual_key is not None and actual_key == canonical_international_telephone(expected['value'])
+
+
 def section_key(sections):
     if (not isinstance(sections, list) or len(sections) > 16
             or any(not isinstance(x, str) or not 1 <= len(x) <= 400 or any(ord(c) < 32 for c in x) for x in sections)):
@@ -106,9 +149,11 @@ def bind_case(path, case_id, input_manifest, profile):
                 if field['answerability'] == 'unknown':
                     if expected is not None:
                         raise ValueError('Unknown answers cannot contain expected values')
-                elif (not isinstance(expected, dict) or set(expected) != ({'sha256'} if field['kind'] == 'file' else {'value'})
-                      or field['kind'] == 'file' and (not isinstance(expected['sha256'], str) or not SHA.fullmatch(expected['sha256']))
-                      or field['kind'] != 'file' and not bounded_value(expected['value'])):
+                elif (not isinstance(expected, dict)
+                      or field['kind'] == 'file' and (set(expected) != {'sha256'} or not isinstance(expected['sha256'], str) or not SHA.fullmatch(expected['sha256']))
+                      or field['kind'] != 'file' and (set(expected) not in [{'value'}, {'value', 'comparison'}] or not bounded_value(expected['value']))
+                      or 'comparison' in expected and (field['kind'] != 'text' or expected['comparison'] != PHONE_COMPARISON
+                          or canonical_international_telephone(expected['value']) is None)):
                     raise ValueError('Missing independent expected value')
         if version == 2 and case['workflow'] is not None:
             workflow = case['workflow']
@@ -220,8 +265,7 @@ def evaluate_values(binding, rehearsal, admission, actual, evidence_root):
                  and row.get('label') == field['label'] and row.get('kind') == field['kind'] and image_bound(row))
         if not proof:
             counts['unverified_entries'] += 1; critical.add(i); continue
-        same = (isinstance(row.get('attachment'), dict) and row['attachment'].get('sha256') == field['expected']['sha256'] if field['kind'] == 'file'
-                else bounded_value(row.get('native_value')) and row['native_value'] == field['expected']['value'])
+        same = expected_value_matches(field, row)
         if same:
             counts['verified_answerable'] += 1
         else:

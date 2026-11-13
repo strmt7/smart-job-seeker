@@ -50,6 +50,16 @@ content proof. The absolute owned attempt screenshot directory must be supplied
 to `evaluate_case(..., evidence_root=...)`; missing/changed images cannot pass.
 The compiled qualifier supplies that directory for its actual result attempt.
 
+Exact value comparison is the default. A text answer may explicitly declare
+`expected: {"value":"+12025550123","comparison":"international_telephone_presentation"}`.
+This narrow mode preserves the explicit plus and every ASCII digit, allows only
+bounded display separators and refuses inferred prefixes or extensions. The
+actual native value, intended value and recorded comparison mode must be
+consistent; visual success and the same control/image checks are still required.
+It is not general text normalization or proof of number assignment. Old corpus
+versions keep their original literal expectations. See the
+[telephone checkpoint](g1/TELEPHONE_PRESENTATION_2026-11-13.md).
+
 Incorrect values, unverified entries, unknown-answer entry, duplicate controls
 and unexpected entries retain separate counts. Every answerable field remains
 in the denominator, including controls never reached. A passing field gate

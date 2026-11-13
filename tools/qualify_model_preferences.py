@@ -75,7 +75,7 @@ def main():
     assert request('http://127.0.0.1:11434/api/ps')['models'] == []
     report = {'complete': False, 'scope': 'Compiled app, fictional saved form, installed local vision model; no live employer interaction',
               'app_sha256': hashlib.sha256(app.read_bytes()).hexdigest()}
-    sources = [Path(__file__).resolve(), REPO / 'Cargo.lock', REPO / 'tools/form_corpus.py', REPO / 'apps/web_app/data/rehearsal-profile.json', REPO / 'crates/waypoint_policy/data/source_permissions.json',
+    sources = [Path(__file__).resolve(), *sorted((REPO / 'crates/waypoint_domain/src').glob('*.rs')), REPO / 'Cargo.lock', REPO / 'tools/form_corpus.py', REPO / 'apps/web_app/data/rehearsal-profile.json', REPO / 'crates/waypoint_policy/data/source_permissions.json',
                *sorted((REPO / 'crates/waypoint_browser/src').glob('*.*')),
                *sorted((REPO / 'crates/waypoint_applications/src').glob('*.rs')), REPO / 'crates/waypoint_inference/src/ollama.rs', *sorted((REPO / 'apps/web_app/src').glob('*.*')),
                *sorted((REPO / 'apps/web_app/web').glob('*.*'))]
