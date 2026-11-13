@@ -184,4 +184,74 @@ class ValueCorpusTests(unittest.TestCase):
         result=self.evaluate(workflow=observed)
         self.assertTrue(result['field_gate_passed']);self.assertEqual(result['workflow_completion'],'not_qualified')
 
+
+class LogicalCorpusTests(unittest.TestCase):
+    def setUp(self):
+        ValueCorpusTests.setUp(self)
+        self.data['schema']=3
+        self.logical={'schema':1,'document_url':'https://fixture.invalid/application',
+                      'selector':'html:nth-child(1) > body:nth-child(2) > input:nth-child(1)',
+                      'scopes':[{'kind':'frame','owner_selector':'iframe:nth-child(1)',
+                                 'document_url':'https://fixture.invalid/shared-form'}]}
+        self.control['logical']=copy.deepcopy(self.logical)
+        self.row['control']['logical']=copy.deepcopy(self.logical)
+    bind=ValueCorpusTests.bind
+    evaluate=ValueCorpusTests.evaluate
+    def test_native_binding_changes_do_not_change_logical_truth(self):
+        self.control.pop('selector')
+        self.row['control']['selector']='waypoint-frame:901:902:#runtime-generated'
+        self.assertTrue(self.evaluate()['field_gate_passed'])
+        self.row['control']['selector']='waypoint-captured:another-lease:#other-id'
+        self.assertTrue(self.evaluate()['field_gate_passed'])
+    def test_same_url_sibling_controls_never_collapse(self):
+        second=copy.deepcopy(self.field);second['id']='second-email'
+        second['control']['logical']['scopes'][0]['owner_selector']='iframe:nth-child(2)'
+        second['expected']['value']='jordan@example.invalid'
+        self.case['expected_fields'].append(second)
+        row=copy.deepcopy(self.row);row['control']=copy.deepcopy(second['control']);row['native_value']='jordan@example.invalid'
+        self.assertEqual(self.evaluate([self.row,row])['fields']['verified_answerable'],2)
+        row['control']['logical']=copy.deepcopy(self.logical)
+        result=self.evaluate([self.row,row]);self.assertFalse(result['field_gate_passed'])
+        self.assertEqual(result['fields']['ambiguous'],1)
+        self.assertGreater(result['critical_entry_or_uncertainty'],0)
+    def test_other_document_or_shadow_scope_is_not_the_same_control(self):
+        for changed in [
+            {**self.logical,'document_url':'https://fixture.invalid/other-application'},
+            {**self.logical,'scopes':[{'kind':'shadow','owner_selector':'iframe:nth-child(1)'}]},
+            {**self.logical,'scopes':[]}]:
+            row=copy.deepcopy(self.row);row['control']['logical']=changed
+            result=self.evaluate([row]);self.assertFalse(result['field_gate_passed'])
+            self.assertEqual(result['fields']['unexpected_entries'],1)
+    def test_missing_structural_identity_never_falls_back_to_native_or_label(self):
+        row=copy.deepcopy(self.row);row['control'].pop('logical')
+        row['control']['logical_error']='Native ownership could not be observed'
+        result=self.evaluate([row]);self.assertFalse(result['field_gate_passed'])
+        self.assertEqual(result['fields']['unbound_entry_identities'],1)
+        row['status']='before_entry_review_required'
+        self.assertEqual(self.evaluate([row])['critical_entry_or_uncertainty'],0)
+    def test_legacy_contract_keeps_native_key_with_optional_structural_metadata(self):
+        self.data['schema']=2
+        self.assertTrue(self.evaluate()['field_gate_passed'])
+        self.row['control'].pop('logical');self.row['control']['logical_error']='Read-only structural metadata unavailable'
+        self.assertTrue(self.evaluate()['field_gate_passed'])
+        self.row['control']['selector']='#other'
+        self.assertFalse(self.evaluate()['field_gate_passed'])
+    def test_malformed_structural_truth_is_rejected_before_inference(self):
+        for changed in [
+            {**self.logical,'schema':True},
+            {**self.logical,'selector':'bad\nselector'},
+            {**self.logical,'scopes':self.logical['scopes']*9},
+            {**self.logical,'scopes':[{'kind':'window','owner_selector':'x'}]},
+            {**self.logical,'scopes':[{'kind':'frame','owner_selector':'x','document_url':'x','backend':8}]},
+            {**self.logical,'extra':'unexpected'}]:
+            self.control['logical']=changed
+            with self.subTest(changed=changed),self.assertRaises(ValueError):self.bind()
+    def test_workflow_requires_the_declared_logical_final_review(self):
+        self.case['workflow']={'final_review':copy.deepcopy(self.control),'required_sections':[['Personal']]}
+        workflow={'final_review':copy.deepcopy(self.control),'visited_sections':[['Personal']],
+                  'native_verified':True,'unresolved_required_controls':0,'image':'0001.png','sha256':corpus.sha(self.image)}
+        self.assertEqual(self.evaluate(workflow=workflow)['workflow_completion'],'verified_declared_final_review')
+        workflow['final_review']['logical']['scopes'][0]['owner_selector']='iframe:nth-child(2)'
+        self.assertEqual(self.evaluate(workflow=workflow)['workflow_completion'],'not_qualified')
+
 if __name__=='__main__':unittest.main()

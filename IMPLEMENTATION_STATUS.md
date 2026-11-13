@@ -1,3 +1,14 @@
+## Structural frame evaluation - 2026-11-13
+
+Schema 3 separates stable structural evaluation keys from native action/lease
+identity. Six read-only native scenarios pass, preserving identical sibling
+controls across reloads. The compiled local 12B model verifies 2/2 supported
+answers in one embedded development case twice, leaving all six unknowns
+untouched each time. No incorrect, ambiguous, unexpected or unverified entries.
+Workspace 1,371 passed / 612 ignored; Clippy, build and fmt pass.
+[Evidence](docs/g1/STRUCTURAL_CONTROL_EVALUATION_2026-11-13.md).
+Whole-workflow and model-scored held-out qualification remain open.
+
 ## Inline form entry - 2026-11-13
 
 Fully inspected same-origin inline documents now support bounded field entry,

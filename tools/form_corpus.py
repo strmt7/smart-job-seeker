@@ -73,13 +73,45 @@ def section_key(sections):
     return tuple(sections)
 
 
-def control_key(control):
-    if (not isinstance(control, dict) or set(control) != {'origin', 'selector', 'sections'}
+def logical_key(logical):
+    def text(value, limit):
+        return (isinstance(value, str) and 1 <= len(value) <= limit
+                and not any(ord(c) < 32 or ord(c) == 127 for c in value))
+    if (not isinstance(logical, dict) or set(logical) != {'schema', 'document_url', 'selector', 'scopes'}
+            or type(logical['schema']) is not int or logical['schema'] != 1
+            or not text(logical['document_url'], 8192) or not text(logical['selector'], 4096)
+            or not isinstance(logical['scopes'], list) or len(logical['scopes']) > 8
+            or len(json.dumps(logical, ensure_ascii=False, separators=(',', ':')).encode('utf-8')) > 32768):
+        raise ValueError('Missing or invalid structural control identity')
+    scopes = []
+    for scope in logical['scopes']:
+        if not isinstance(scope, dict) or scope.get('kind') not in ['frame', 'shadow']:
+            raise ValueError('Invalid structural control scope')
+        frame = scope['kind'] == 'frame'
+        if (set(scope) != {'kind', 'owner_selector'} | ({'document_url'} if frame else set())
+                or not text(scope['owner_selector'], 4096)
+                or frame and not text(scope['document_url'], 8192)):
+            raise ValueError('Invalid structural control scope')
+        scopes.append((scope['kind'], scope['owner_selector'], scope.get('document_url')))
+    return 'logical-v1', logical['document_url'], logical['selector'], tuple(scopes)
+
+
+def control_key(control, version=2):
+    required = {'origin', 'sections'} | ({'logical'} if version == 3 else {'selector'})
+    if (not isinstance(control, dict) or not required <= set(control)
+            or not set(control) <= {'origin', 'selector', 'sections', 'logical', 'logical_error'}
             or not isinstance(control['origin'], str) or not 1 <= len(control['origin']) <= 512
-            or not isinstance(control['selector'], str) or not 1 <= len(control['selector']) <= 4096
-            or any(ord(c) < 32 or ord(c) == 127 for c in control['origin'] + control['selector'])):
+            or any(ord(c) < 32 or ord(c) == 127 for c in control['origin'])
+            or 'selector' in control and (not isinstance(control['selector'], str)
+                or not 1 <= len(control['selector']) <= 4096
+                or any(ord(c) < 32 or ord(c) == 127 for c in control['selector']))
+            or 'logical_error' in control and (not isinstance(control['logical_error'], str)
+                or not 1 <= len(control['logical_error']) <= 2048)
+            or 'logical' in control and 'logical_error' in control):
         raise ValueError('Missing native control identity')
-    return control['origin'], control['selector'], section_key(control['sections'])
+    logical = logical_key(control['logical']) if 'logical' in control else None
+    selector = logical if version == 3 else control['selector']
+    return control['origin'], selector, section_key(control['sections'])
 
 
 def bind_case(path, case_id, input_manifest, profile):
@@ -96,7 +128,7 @@ def bind_case(path, case_id, input_manifest, profile):
         return result
     corpus = json.loads(raw, object_pairs_hook=unique_pairs)
     if (not isinstance(corpus, dict) or set(corpus) != {'schema', 'corpus_id', 'revision', 'cases'}
-            or corpus['schema'] not in [1, 2] or type(corpus['schema']) is not int
+            or corpus['schema'] not in [1, 2, 3] or type(corpus['schema']) is not int
             or not isinstance(corpus['corpus_id'], str) or not ID.fullmatch(corpus['corpus_id'])
             or type(corpus['revision']) is not int or corpus['revision'] < 1
             or not isinstance(corpus['cases'], list) or not 1 <= len(corpus['cases']) <= 256):
@@ -106,7 +138,7 @@ def bind_case(path, case_id, input_manifest, profile):
     for case in corpus['cases']:
         if not isinstance(case, dict) or set(case) != {
                 'id', 'family', 'partition', 'source_kind', 'used_for_tuning',
-                'input_manifest_sha256', 'profile_sha256', 'coverage_scope', 'expected_fields'} | ({'workflow'} if version == 2 else set()):
+                'input_manifest_sha256', 'profile_sha256', 'coverage_scope', 'expected_fields'} | ({'workflow'} if version >= 2 else set()):
             raise ValueError('Invalid case metadata')
         if any(not isinstance(case[key], str) or not ID.fullmatch(case[key]) for key in ['id', 'family']):
             raise ValueError('Invalid case/family identity')
@@ -132,7 +164,7 @@ def bind_case(path, case_id, input_manifest, profile):
             raise ValueError('Invalid expected field denominator')
         field_ids, controls = set(), set()
         for field in fields:
-            if (not isinstance(field, dict) or set(field) != {'id', 'label', 'kind', 'answerability'} | ({'control', 'expected', 'required'} if version == 2 else set())
+            if (not isinstance(field, dict) or set(field) != {'id', 'label', 'kind', 'answerability'} | ({'control', 'expected', 'required'} if version >= 2 else set())
                     or not isinstance(field['id'], str) or not ID.fullmatch(field['id']) or field['id'] in field_ids
                     or not isinstance(field['label'], str) or not 1 <= len(field['label']) <= 300
                     or any(ord(c) < 32 for c in field['label'])
@@ -140,8 +172,8 @@ def bind_case(path, case_id, input_manifest, profile):
                     or field['answerability'] not in ['answerable', 'unknown']):
                 raise ValueError('Invalid or duplicate expected field')
             field_ids.add(field['id'])
-            if version == 2:
-                control = control_key(field['control'])
+            if version >= 2:
+                control = control_key(field['control'], version)
                 if control in controls or type(field['required']) is not bool:
                     raise ValueError('Ambiguous control or required flag')
                 controls.add(control)
@@ -155,13 +187,13 @@ def bind_case(path, case_id, input_manifest, profile):
                       or 'comparison' in expected and (field['kind'] != 'text' or expected['comparison'] != PHONE_COMPARISON
                           or canonical_international_telephone(expected['value']) is None)):
                     raise ValueError('Missing independent expected value')
-        if version == 2 and case['workflow'] is not None:
+        if version >= 2 and case['workflow'] is not None:
             workflow = case['workflow']
             if (case['coverage_scope'] != 'declared_form' or not isinstance(workflow, dict)
                     or set(workflow) != {'final_review', 'required_sections'}
                     or not isinstance(workflow['required_sections'], list) or len(workflow['required_sections']) > 32):
                 raise ValueError('Invalid whole-workflow truth')
-            control_key(workflow['final_review'])
+            control_key(workflow['final_review'], version)
             for section in workflow['required_sections']:
                 section_key(section)
         if case['id'] == case_id:
@@ -186,7 +218,7 @@ def evaluate_case(binding, rehearsal, admission, *, evidence_root=None):
     actual = rehearsal.get('fields')
     if not isinstance(actual, list) or len(actual) > 128 or any(not isinstance(row, dict) for row in actual):
         raise ValueError('Invalid actual field observations')
-    if binding['schema'] == 2:
+    if binding['schema'] >= 2:
         return evaluate_values(binding, rehearsal, admission, actual, evidence_root)
     expected = case['expected_fields']
     counts = {'answerable': 0, 'verified_answerable': 0, 'unknown': 0,
@@ -244,11 +276,14 @@ def evaluate_values(binding, rehearsal, admission, actual, evidence_root):
     recognized, critical = set(), set()
     keys = []
     for row in actual:
-        try: keys.append(control_key(row.get('control')))
+        try: keys.append(control_key(row.get('control'), binding['schema']))
         except ValueError: keys.append(None)
+    if binding['schema'] == 3:
+        counts['unbound_entry_identities'] = sum(key is None and row.get('status') != 'before_entry_review_required'
+                                               for key, row in zip(keys, actual))
     for field in expected:
         counts[field['answerability']] += 1
-        matches = [i for i, key in enumerate(keys) if key == control_key(field['control'])]
+        matches = [i for i, key in enumerate(keys) if key == control_key(field['control'], binding['schema'])]
         if len(matches) > 1:
             counts['ambiguous'] += 1
             recognized.update(matches)
@@ -279,7 +314,7 @@ def evaluate_values(binding, rehearsal, admission, actual, evidence_root):
     workflow = 'not_qualified'
     if workflow_truth is not None and isinstance(observed, dict):
         try:
-            final = control_key(observed.get('final_review')) == control_key(workflow_truth['final_review'])
+            final = control_key(observed.get('final_review'), binding['schema']) == control_key(workflow_truth['final_review'], binding['schema'])
             visited = observed.get('visited_sections')
             visited_ok = (isinstance(visited, list) and len(visited) <= 32
                           and {section_key(x) for x in workflow_truth['required_sections']} <= {section_key(x) for x in visited})
@@ -293,4 +328,4 @@ def evaluate_values(binding, rehearsal, admission, actual, evidence_root):
     return {'status': 'accounted', 'field_gate_passed': gate, 'binding': binding, 'fields': counts,
             'model_digest': admission['digest'], 'context_length': admission['context_length'],
             'critical_entry_or_uncertainty': len(critical), 'workflow_completion': workflow,
-            'scope': 'Independent schema-2 value/control truth and native image identity; declared scope only, no submission claim'}
+            'scope': f"Independent schema-{binding['schema']} value/control truth and native image identity; declared scope only, no submission claim"}

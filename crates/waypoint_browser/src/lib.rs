@@ -24,6 +24,8 @@ mod captured_frame;
 mod frame_identity;
 #[cfg(all(test, windows))]
 mod inline_frame_qualification;
+#[cfg(all(test, windows))]
+mod logical_control_qualification;
 pub use captured_frame::{
     CapturedFrame, CapturedFrames, RecordedControlIdentity, RecordedFieldCapture,
     RecordedFieldKind, RecordedFieldObservation, RecordedFieldWitness, RecordedTargetCapture,
@@ -58,6 +60,11 @@ struct InspectedForm {
     walls: Vec<String>,
     reviews: Vec<waypoint_applications::driver::CompletionReview>,
     scope_identity: Option<String>,
+}
+
+struct ResolvedControlNode {
+    node: u64,
+    scopes: Vec<captured_frame::LogicalControlScope>,
 }
 
 struct InspectedDocument {
@@ -2907,6 +2914,16 @@ impl CdpDriver {
     }
 
     fn node_id(&mut self, selector: &str) -> Result<Option<u64>, DriverError> {
+        Ok(self
+            .resolve_control_node(selector, false)?
+            .map(|resolved| resolved.node))
+    }
+
+    fn resolve_control_node(
+        &mut self,
+        selector: &str,
+        logical: bool,
+    ) -> Result<Option<ResolvedControlNode>, DriverError> {
         let selector = self.decode_captured_selector(selector)?;
         let selector = selector.as_ref();
         let root = self.document_with_frames(
@@ -2920,6 +2937,7 @@ impl CdpDriver {
         let mut root_id = root_id;
         let mut inner = selector;
         let mut depth = 0;
+        let mut scopes = Vec::new();
         loop {
             let (scope, shadow) = if let Some(scope) = inner.strip_prefix("waypoint-frame:") {
                 (scope, false)
@@ -2979,6 +2997,25 @@ impl CdpDriver {
             let Some(child_id) = child.get("nodeId").and_then(Value::as_u64) else {
                 return Ok(None);
             };
+            if logical {
+                let owner_selector = self.control_visibility_and_path(host_id)?.1;
+                if shadow {
+                    scopes.push(captured_frame::LogicalControlScope::Shadow { owner_selector });
+                } else {
+                    let document_url = child
+                        .get("documentURL")
+                        .and_then(Value::as_str)
+                        .filter(|url| !url.is_empty() && url.len() <= 8192)
+                        .ok_or_else(|| {
+                            DriverError("Embedded document identity is unavailable".into())
+                        })?
+                        .to_owned();
+                    scopes.push(captured_frame::LogicalControlScope::Frame {
+                        owner_selector,
+                        document_url,
+                    });
+                }
+            }
             root_id = child_id;
             document = child.clone();
             inner = next;
@@ -2993,8 +3030,9 @@ impl CdpDriver {
             .map_err(derr)?;
         Ok(found
             .get("nodeId")
-            .and_then(|v| v.as_u64())
-            .filter(|id| *id != 0))
+            .and_then(Value::as_u64)
+            .filter(|id| *id != 0)
+            .map(|node| ResolvedControlNode { node, scopes }))
     }
 
     /// Visible-ish text of the page: text nodes outside script/style/template.

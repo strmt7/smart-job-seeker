@@ -157,12 +157,36 @@ pub struct RecordedTargetCapture {
     witness: Option<RecordedFieldWitness>,
 }
 
-/// Native logical control identity, independent of a temporary frame lease.
+/// Legacy native identity plus separate read-only structural evaluation identity.
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct RecordedControlIdentity {
     origin: String,
     selector: String,
     sections: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    logical: Option<LogicalControlIdentity>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    logical_error: Option<String>,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+struct LogicalControlIdentity {
+    schema: u8,
+    document_url: String,
+    selector: String,
+    scopes: Vec<LogicalControlScope>,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(super) enum LogicalControlScope {
+    Frame {
+        owner_selector: String,
+        document_url: String,
+    },
+    Shadow {
+        owner_selector: String,
+    },
 }
 
 /// Only an observed recorded target can create this read-only witness.
@@ -827,7 +851,21 @@ impl CdpDriver {
         if fields.next().is_some() {
             return Err(review());
         }
+        let logical = self.logical_control_identity(selector);
+        let logical_error = logical.as_ref().err().map(|error| {
+            let detail: String = error.0.chars().take(1900).collect();
+            format!(
+                "Structural identity unavailable: {detail}{}",
+                if error.0.chars().count() > 1900 {
+                    " (truncated)"
+                } else {
+                    ""
+                }
+            )
+        });
         Ok(RecordedControlIdentity {
+            logical: logical.ok(),
+            logical_error,
             origin: form.origin.clone(),
             selector: self.decode_captured_selector(selector)?.into_owned(),
             sections: field
@@ -837,6 +875,48 @@ impl CdpDriver {
                 .map(|section| section.label.clone())
                 .collect(),
         })
+    }
+
+    fn logical_control_identity(
+        &mut self,
+        selector: &str,
+    ) -> Result<LogicalControlIdentity, DriverError> {
+        let mut scopes = Vec::new();
+        let document_url = if let Some(scope) = &self.captured_scope {
+            let frame = scope.frame.clone();
+            let owner = self.parent_frame_owner(&frame)?;
+            let owner_selector = self.with_protocol_session(&frame.parent_session, |driver| {
+                driver
+                    .control_visibility_and_path(owner)
+                    .map(|visibility| visibility.1)
+            })?;
+            scopes.push(LogicalControlScope::Frame {
+                owner_selector,
+                document_url: frame.url.clone(),
+            });
+            frame.parent_url
+        } else {
+            self.current_url()?
+        };
+        let resolved = self
+            .resolve_control_node(selector, true)?
+            .ok_or_else(review)?;
+        scopes.extend(resolved.scopes);
+        let selector = self.control_visibility_and_path(resolved.node)?.1;
+        let identity = LogicalControlIdentity {
+            schema: 1,
+            document_url,
+            selector,
+            scopes,
+        };
+        if identity.scopes.len() > 8
+            || identity.document_url.is_empty()
+            || identity.document_url.len() > 8192
+            || serde_json::to_vec(&identity).map_err(|_| review())?.len() > 32 * 1024
+        {
+            return Err(review());
+        }
+        Ok(identity)
     }
 
     /// Inspect after a failed action without changing values, retrying or

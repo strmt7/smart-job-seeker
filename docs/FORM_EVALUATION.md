@@ -18,7 +18,7 @@ not replace the planned generic candidate-aware application planner.
 ## Schema 2: independent answers and control identity
 
 Schema 1 remains readable with its original label/status-based meaning. New
-schema-2 cases add independent expected answers and logical native control
+schema-2 cases add independent expected answers and native control
 identities. The controller never sends annotations or answer keys to the model.
 Do not upgrade old reports by relabeling them or treating their field credit as
 value-level correctness.
@@ -28,11 +28,11 @@ bindings. Each expected field additionally requires:
 
 | Field | Meaning |
 | --- | --- |
-| `control` | Exact native `origin`, lease-independent `selector` and ordered section-label path; repeated labels do not match by order |
+| `control` | Exact native `origin`, driver-decoded `selector` and ordered section-label path; repeated labels do not match by order |
 | `required` | Explicit Boolean; an unknown required answer prevents workflow credit |
 | `expected` | Literal `value` for text/select/radio, or `sha256` for a file; exactly `null` for unknown answers |
 
-Native saved-page inventories now expose kinds and logical identities without
+Native saved-page inventories expose kinds and identities without
 candidate values. The view retains its full `field_count` and explicit
 `omitted_fields` count when the bounded 40-field list is incomplete. It describes
 supported native controls; custom-control walls and unseen sections remain
@@ -73,6 +73,36 @@ gate are all necessary for `verified_declared_final_review`. This is a scoped
 final-review result, never submission or delivery. The general product does not
 yet emit this complete workflow proof; metadata-only unit tests of that contract
 do not establish real application completion.
+
+## Schema 3: structural identity across native document replacement
+
+Schema 3 keeps schema 2's independent answer, requiredness, image and workflow
+checks. Its control key uses `origin`, ordered `sections` and a separate
+`logical` object. A logical identity has schema `1`, exact root `document_url`,
+structural leaf `selector` and ordered `scopes`. Each frame scope records its
+structural `owner_selector` and exact child `document_url`; a shadow scope
+records its structural `owner_selector`. Structural paths exclude generated
+HTML IDs. The owner path distinguishes sibling frames even when their document
+URLs and leaf controls are identical. Changes to source structure require
+revalidated annotations; this is not a claim of identity across arbitrary
+layout changes.
+
+Native selectors, backend nodes, document/loader identities and frame leases
+remain the sole action/freshness mechanism. Structural metadata is read-only
+and cannot authorize, resolve or repair an action. A failed extraction retains
+`logical_error` and the original native identity. Schema 3 refuses missing or
+malformed logical identity without falling back to labels or native IDs; its
+report additionally counts `unbound_entry_identities`. Such performed entries
+remain unexpected and critical. Duplicate structural keys remain ambiguous.
+Schema 1/2 keep their original matching semantics, with optional validated
+structural metadata ignored for matching. Historical reports are unchanged.
+
+Logical metadata is bounded to eight scopes and 32 KiB, with bounded nonempty
+URLs and selectors. Expected identities must be frozen from independently
+reviewed source ownership and a read-only native inventory before inference.
+Keep the expected answer key outside the app/model workspace and bind the exact
+source manifest. A successful identity test is not visual verification, model
+accuracy, whole-workflow completion or an authorization grant.
 
 ## Failed-entry evidence
 
@@ -127,7 +157,7 @@ fails if this gate is unmet, while retaining observations and completing cleanup
 The controller's outer `complete` flag also covers collection/teardown; neither
 flag is a model-promotion or whole-application result. Workflow
 completion remains explicitly `not_qualified`; field counts do not prove that
-all sections or a final review page were reached. Schema 2 adds control/value comparisons above. Complete-form native proof,
+all sections or a final review page were reached. Schemas 2/3 add control/value comparisons above. Complete-form native proof,
 aggregate held-out acceptance and repeated model-promotion comparisons remain
 work in R02/R04.
 

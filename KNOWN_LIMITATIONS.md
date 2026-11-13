@@ -1,11 +1,20 @@
 # Known limitations register (T050)
 
+The [structural evaluation continuation](docs/g1/STRUCTURAL_CONTROL_EVALUATION_2026-11-13.md)
+adds bounded schema-3 identities and two local 12B runs of one embedded development
+variation, each 2/2 supported answers with six unknowns unentered. Six native
+identity scenarios close cleanly. This is fixed-source structural identity,
+not identity across arbitrary layout changes or broad frame/model accuracy.
+Whole-workflow, held-out, tall/offscreen and target-less frame qualification
+remain open. Both model trees drain; sampled host RAM stays above 20 GiB.
+
 The [inline-frame continuation](docs/g1/INLINE_FRAME_COMPLETENESS_2026-11-13.md)
 adds native inspection-completeness evidence and bounded same-origin field entry,
 including inherited documents. Fifteen native cases and the four-context radio
 integration pass; Windows workspace 1,371 passed / 611 ignored, Clippy/build/fmt
-pass. Local-model frame accuracy, stable logical frame evaluation keys,
-target-less child entry and whole-workflow/held-out evidence remain unfinished.
+pass. The later structural continuation above adds scoped evaluation-key and
+embedded-model evidence. Broad frame accuracy, target-less child entry and
+whole-workflow/held-out evidence remain unfinished.
 The earlier unconfirmed shutdown remains an R01 finding; later clean runs do not
 explain its cause.
 

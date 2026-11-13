@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "reviewed_on": "2026-11-13",
-  "reviewed_source": "c36129dc8ebcb7611dc5f10388925b7a6bd6d728",
+  "reviewed_source": "741bf8b8fe071ae6c864a458b8e72204d25a8c0a",
   "goal": "Continue the existing active Smart Jobseeker product-development goal",
   "plan": "docs/COMPLETION_PLAN_2026-11-11.md",
   "assessment": "docs/REPO_STATE_REVIEW_2026-11-11.md",
@@ -103,7 +103,8 @@
         "docs/g1/SCOPED_MAPPING_AND_DEEP_DISCOVERY_2026-11-13.md",
         "docs/g1/CHOICE_CONTEXT_AND_RADIO_CAPTURE_2026-11-13.md",
         "docs/g1/NATIVE_FRAME_IDENTITY_2026-11-13.md",
-        "docs/g1/INLINE_FRAME_COMPLETENESS_2026-11-13.md"
+        "docs/g1/INLINE_FRAME_COMPLETENESS_2026-11-13.md",
+        "docs/g1/STRUCTURAL_CONTROL_EVALUATION_2026-11-13.md"
       ],
       "execution_batch": "B",
       "steps": [
@@ -112,7 +113,7 @@
         "Freeze employer/layout-family held-out partition before tuning.",
         "Report field, workflow, abstention, error, elapsed and resource denominators; repeat model-sensitive promotion candidates."
       ],
-      "next_action": "Prioritize versioned stable logical inline-frame control identities, separate from native backend/loader/lease bindings. Freeze frame ownership and expected values before compiled local12B mapping/visual evaluation; same-ID sibling controls must not collapse and answer keys must stay outside inference. Current report identities retain temporary inline backend IDs and cannot become a brittle held-out oracle. Then continue varied/whole-workflow truth and French6/7 diagnosis. The prior English2/2 twice remains source32d development evidence only.",
+      "next_action": "Continue independent varied and whole-workflow truth, including repeated controls across frames/sections, before model-scored held-out acceptance. Schema3 now supports fixed-source structural frame identities; retain native leases as sole action authority and all original reports. The embedded development case is2/2 twice with unknown0/6, not majority-site accuracy or promotion. French6/7 and actual final-review/workflow proof remain open. Qualify tall/partly offscreen frame behavior natively before treating unavailable frame images as model failures.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "completed_scopes": [
         "Bounded corpus identity/partition/input protocol and explicit field gate; two development cases, no held-out coverage.",
@@ -126,7 +127,8 @@
         "Bounded opt-in native completion/response diagnostics identify missing manual_review and a 512-token invented-selector repair. Offered-ID/key schemas improve frozen fictional contact case 0/3 to3/3; French6/7 and saved-employer4/6 plus1unverified rÃƒÆ’Ã‚Â©sumÃƒÆ’Ã‚Â© remain unchanged. No unknown entered, held-out or workflow credit.",
         "2026-11-13: fresh frozen French baseline and choice-context run each verify6/7 facts, unknown0/2; no measured radio mapping gain. A new independently authored eight-control English development variation proposes2facts but verifies1/2 before a clipped radio image; unknown0/6, all native requiredness checked. Original truth/results immutable; the prepared retest controller marks subsequent development use and requires unchanged truth before inference; its first admission attempt was held; later runs are recorded below. No wrong/unexpected/unverified performed entries in these3runs; no whole-workflow/held-out credit.",
         "2026-11-13: source32d2bec exact binary, post-crop English development truth unchanged except explicit used_for_tuning/revision2 provenance. Two same-input local12B runs each2/2 verified, unknown0/6, no wrong/unexpected/unverified performed entries or critical uncertainties. Whole-workflow not_qualified; French remains6/7. Immutable results and actual repeat radio image retained.",
-        "2026-11-13: final native frame matrix15cases,8entrycases/10exact readbacks,7explicit review outcomes, allclosed; paired observations/source bindings/stale callback refusals retained. This is native capability evidence only, no new model/workflow/held-out score. Stable independent logical frame oracle identity is the next evaluation requirement."
+        "2026-11-13: final native frame matrix15cases,8entrycases/10exact readbacks,7explicit review outcomes, allclosed; paired observations/source bindings/stale callback refusals retained. This is native capability evidence only, no new model/workflow/held-out score. Stable independent logical frame oracle identity is the next evaluation requirement.",
+        "2026-11-13: schema3 structural control/owner identity preserves legacy native actions and schema1/2 reports. Six native scenarios/twelve observations/sixteen controls remain stable across reload/ID changes and distinguish same-URL siblings; allclosed. Twenty-nine corpus tests pass. One compiled embedded development variation is2/2 supported facts with unknown0/6 in two same-input local12B runs; zero incorrect/ambiguous/unexpected/unverified/unbound entries. No whole-workflow/held-out credit; exact binary and frozen source/control/value truth retained."
       ],
       "start_requirements": [
         "Existing versioned input-binding/evaluation protocol is implemented; reviewed in tools/form_corpus.py and docs/FORM_EVALUATION.md."
@@ -607,7 +609,7 @@
     "binding": "Existing active Smart Jobseeker goal; reverified active on 2026-11-13; objective unchanged.",
     "entry_point": "AGENTS.md",
     "queue": "docs/ACTIVE_DEVELOPMENT_PLAN.json",
-    "selection": "Continue R03 faithful saved forms after observed Document representation repair. Fresh development archive now has10 supported controls/30 resources but dialog/custom/obscured walls and missing assets; entry remains blocked. Qualify generic contained dialog/panel progression and independent visible requiredness. Then R02 eligible varied independent answer/workflow truth and actual held-out local-model evaluation. Keep Pinpoint/Teamtailor as development and all original exclusions; no forced header policy, live employer actuation or challenge bypass.",
+    "selection": "Continue R02 representative independent frame/section and workflow truth after schema3 structural identity and compiled embedded local12B2/2 twice. Keep all old failures, held-out partition boundaries and six unknowns explicit. R03 faithful saved rendering, target-less/tall frame qualification and R01 lifecycle/lazy admission remain open; no live employer actuation, challenge bypass or weakened guards.",
     "completion": "A package completion does not complete the product goal. Keep the overall goal active until all required product work is achieved.",
     "scheduling": "No new agents, automation, service or background scheduler created by this plan."
   },
@@ -630,58 +632,48 @@
     "build_state": "Last focused test compile failed; three stale start callers remain in current source. No current full-workspace pass claimed."
   },
   "working_tree_checkpoint": {
-    "baseline_head": "c36129dc8ebcb7611dc5f10388925b7a6bd6d728",
-    "validated_changes": "Separate native inline inspection certificate, genuine/inherited document source evidence and stale-scope entry refusal; observed-origin proof preserves protocol placeholders. Native owner shutdown failure details retained without changing outcomes.",
+    "baseline_head": "741bf8b8fe071ae6c864a458b8e72204d25a8c0a",
+    "validated_changes": "Additive read-only structural control metadata, versioned schema3 value/image evaluation and same-URL sibling/volatile native-ID qualification. Native action resolution and all guards preserved.",
     "validated_source_sha256": {
-      "crates/waypoint_browser/src/frame_identity.rs": "40cd3686fb701b2a9ffbb84062c7fa7722db85efd2a3526f52eef24749d11954",
-      "crates/waypoint_browser/src/lib.rs": "f05ec4ae518a9c670f7ed7752f8d572c1789dce343012c5300bb208632320894",
-      "crates/waypoint_browser/src/inline_frame_qualification.rs": "c4336d64c09681ce50204013c651e34703781e31cce491f8b7524a19dc301d84",
-      "crates/waypoint_browser/src/recorded_dialog_qualification.rs": "68db5753e614cfcf0b91bd6206ee373121b713cca28af86a52329e09ed926cda",
-      "crates/waypoint_browser/src/rehearsal.rs": "014ec3370d3a09c64256a2c30680b5a54d6c8d804202e601648fa9028e9e1990"
+      "crates/waypoint_browser/src/captured_frame.rs": "391ff2a96c1777dd207ec6e593c007871d25b30a2a802829f2ad690917f7a41d",
+      "crates/waypoint_browser/src/lib.rs": "2c39a7503bc5fab2f6bcdb0b1c5a709a056f2a4e919237996f8a4ff3089c02d1",
+      "crates/waypoint_browser/src/logical_control_qualification.rs": "b17a317ef58ad234f4f62a2aac4dff887a3c5461cbfa57f119189c7dacdda915",
+      "tools/form_corpus.py": "97a22f176591b1bc2eb381500bf2196cd2989631ca36ecf3a3bda4c1e45f6fe6",
+      "tools/tests/test_form_corpus.py": "4705981b82f0b913a412e245da6a0ea78d386d3f8659601ecda455cc1d49f34f"
     },
-    "app_sha256": "3f38d2952a4e923ee24ffb2fc763282bbbfb0f92c27a4a3cbf552bba73c3af16",
-    "build_state": "Windows1371passed/611ignored across43groups, Clippy/build/fmt pass. Final native15cases:8entrycases/10readbacks,7no-entryreview outcomes,15closed. Four-contextradio:3nativechoices/1target-lessreview,4closed. No new model/workflow/held-out qualification.",
+    "app_sha256": "e18ece28339a530a2ea68364e64065d76f8b49d1add94d63a150d50b1d1df8e7",
+    "build_state": "Workspace1371passed/612ignored across43groups; Clippy/build/fmt pass. Final native identity6cases/twelve observations/sixteen control observations/allclosed. Entry/stale-scope regression15cases:8entrycases/10exact readbacks,7review-only outcomes,15closed. Initial Clippy test-only collapsible-if failure retained; detector rerun passes after equivalent condition rewrite.",
     "model_qualification": {
-      "new_runs": 5,
+      "new_runs": 2,
       "model": "gemma4:12b-it-q4_K_M",
-      "scope": "French6/7 before and after choice context; English1/2 before radio crop then2/2 in two post-crop development repeats on source32d2bec, unknown0/6 each. No whole-workflow/held-out or new-frame-model qualification.",
+      "scope": "One fixed-source embedded development variation,2/2 verified facts and unknown0/6 twice; zero critical/unbound entries. No workflow/held-out score.",
       "results": [
-        "target/choice-baseline-rc8x9mbw/result.private.json",
-        "target/choice-context-d_d7gypb/result.private.json",
-        "target/choice-adversarial-a4pl6lvd/result.private.json",
-        "target/radio-context-model-lawzl712/result.private.json",
-        "target/radio-context-model-673g6azo/result.private.json"
+        "target/logical-frame-model-el0gkz4d/result.private.json",
+        "target/logical-frame-repeat-ejm0a6i5/result.private.json"
       ],
-      "minimum_available_host_ram_bytes": 13323198464,
+      "minimum_available_host_ram_bytes": 22474211328,
       "all_completed_trees_drained": true,
-      "all_shared_unchanged": true,
-      "measured_post_crop_model_source": "32d2bec78a8ed6358cb10cfa14b3e4ef00fc99c6",
-      "scope_note": "Model branch unchanged by subsequent frame-identity work; these model results bind the exact32d2bec binary. They are not model qualification of embedded-frame completeness.",
-      "post_crop_development_repeat_complete": true
+      "all_shared_unchanged": true
     },
-    "evidence": "docs/g1/INLINE_FRAME_COMPLETENESS_2026-11-13.md",
-    "private_evidence": "target/inline-frame-completeness-dzv5zs30",
-    "host_checkpoint": {
-      "private_evidence": "target/development-host-4151ec9f0ded4b1196d332f41e28d586.private.json",
-      "available_ram_bytes": 28081995776,
-      "matching_processes": 0,
-      "resident_models": 0,
-      "persistent_registrations": 0,
-      "scope": "Final scoped audit, no errors, after all native/build processes ended; no model loaded this turn. Earlier model inventory unavailable preserved. Not sustained leak proof or exhaustive host inventory."
-    },
+    "evidence": "docs/g1/STRUCTURAL_CONTROL_EVALUATION_2026-11-13.md",
+    "private_evidence": "target/logical-control-smil5o4_",
     "native_frame_qualification": {
-      "private_evidence": "target/inline-native-2abznbra",
-      "radio_private_evidence": "target/inline-native-w5dl5jev",
+      "private_evidence": "target/entry-native-vtei9c17",
+      "logical_private_evidence": "target/logical-native-22hyl6r6",
       "cases": 15,
       "entry_cases": 8,
       "exact_field_readbacks": 10,
       "review_cases_no_entry": 7,
       "all_browsers_closed": true,
-      "scope": "Fictional contained native capability; no new local-model/workflow/held-out score. Earlier shutdown unconfirmed remains unexplained."
+      "scope": "Fictional native regression on current resolver; broader workflow and held-out evidence remain open."
     },
-    "build_contract": {
-      "scope": "Unknown arguments now fail before dependency setup; full existing routing/environment contract passes in discovered PowerShell7.6.9 followed by real Clippy. Windows PowerShell5.1 contract suite could not autoload Get-FileHash in inherited development environment; qualification remains open.",
-      "private_evidence": "target/residence-review-fm9o0g4o/frame-build-guard-pwsh-checks.private.json"
+    "host_checkpoint": {
+      "private_evidence": "target/development-host-6569801fccaf40b0a140e03cbcd80cb1.private.json",
+      "available_ram_bytes": 34060013568,
+      "matching_processes": 0,
+      "resident_models": 0,
+      "persistent_registrations": 0,
+      "scope": "Final scoped audit after native/model/controller exit; no errors. Not sustained leak proof or exhaustive host inventory."
     }
   },
   "dependency_semantics": "depends_on are completion prerequisites; start_requirements admit bounded implementation before the whole prerequisite package completes. Containment, UI consistency and resource ownership apply continuously.",
@@ -741,20 +733,20 @@
     }
   },
   "current_hosted_checks": {
-    "head": "22c682c90cb68296716c5afe5af985d5ea9670d4",
+    "head": "741bf8b8fe071ae6c864a458b8e72204d25a8c0a",
     "all_completed_successfully": true,
     "run_ids": {
-      "ci": 43441505816,
-      "coverage": 43441506106,
-      "codeql": 43441504873
+      "Push on main": 43484485650,
+      "coverage": 43484486193,
+      "ci": 43484486074
     },
-    "private_receipts": "target/residence-review-fm9o0g4o/hosted-baseline.private.json",
-    "scope": "Live rechecked 2026-11-13; published22c baseline only. New local changes have no hosted checks."
+    "private_receipts": "target/inline-frame-completeness-dzv5zs30/hosted-runs-check4.private.json",
+    "scope": "Verified published741bf8b checkpoint. New local structural evaluation changes have no hosted checks; no claim that Push on main independently proves every detector finding."
   },
   "immediate_slices": [
     {
-      "task": "R03",
-      "deliverable": "Generic bounded dialog/panel handling only in verified zero-capability saved copies; inspect visual requiredness and resource/section fidelity with independent truth and adversarial fixtures. Retain covering-dialog/custom barriers until their actual conditions are resolved; no real legal consent, employer clicks, header overrides or weakened request matching."
+      "task": "R02",
+      "deliverable": "Continue independent varied and whole-workflow truth, including repeated controls across frames/sections, before model-scored held-out acceptance. Schema3 now supports fixed-source structural frame identities; retain native leases as sole action authority and all original reports. The embedded development case is2/2 twice with unknown0/6, not majority-site accuracy or promotion. French6/7 and actual final-review/workflow proof remain open. Qualify tall/partly offscreen frame behavior natively before treating unavailable frame images as model failures."
     },
     {
       "task": "R02",
