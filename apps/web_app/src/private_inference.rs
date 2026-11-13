@@ -9,6 +9,35 @@ pub(crate) struct Selection {
     pub cache_root: PathBuf,
 }
 
+#[cfg(any(windows, test))]
+fn decode_worker_response(
+    code: Option<i32>,
+    stdout: &[u8],
+    stderr: &str,
+) -> Result<serde_json::Value, String> {
+    let parsed = serde_json::from_slice::<serde_json::Value>(stdout);
+    if let Ok(value) = parsed {
+        // The worker deliberately exits 1 after emitting a structured refusal.
+        // Preserve that refusal's existing actionable error path, never an ok
+        // payload or a payload followed by an unexpected native exit status.
+        if code == Some(0) || (code == Some(1) && value["ok"] == false) {
+            return Ok(value);
+        }
+    }
+    let status = code.map_or_else(
+        || "unknown".into(),
+        |code| format!("{code} / 0x{:08x}", code as u32),
+    );
+    // Native exit codes distinguish startup/termination failures from malformed
+    // JSON. Hashes retain identity without putting worker output or paths into
+    // the form's review message. Never trust an ok payload after a failed exit.
+    Err(format!(
+        "Local model ownership worker response was not verified (exit {status}; stdout {} bytes; stderr {} bytes; stdout sha256 {}; stderr sha256 {})",
+        stdout.len(), stderr.len(), waypoint_domain::sha256_hex(stdout),
+        waypoint_domain::sha256_hex(stderr.as_bytes())
+    ))
+}
+
 fn record_task(attempt: &std::path::Path) -> Option<&str> {
     let name = attempt.file_name()?.to_str()?;
     match name.split_once('-') {
@@ -179,8 +208,7 @@ mod windows {
             if output.timed_out() || output.truncated() {
                 return Err("Local model worker exceeded its bounds".to_owned());
             }
-            serde_json::from_slice::<Value>(output.stdout())
-                .map_err(|_| "Invalid local model worker response".to_owned())
+            decode_worker_response(output.code(), output.stdout(), output.stderr())
         })?;
         if value["ok"] != true {
             return Err(value["error"]
@@ -669,6 +697,49 @@ pub(crate) use windows::Session;
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn worker_decode_refuses_failed_exits_and_retains_only_bounded_diagnostics() {
+        let valid = br#"{"ok":true,"result":{"pid":42}}"#;
+        assert_eq!(
+            decode_worker_response(Some(0), valid, "").unwrap()["result"]["pid"],
+            42
+        );
+        assert_eq!(
+            decode_worker_response(
+                Some(1),
+                br#"{"ok":false,"error":"Model source changed"}"#,
+                ""
+            )
+            .unwrap()["ok"],
+            false
+        );
+        for (code, stdout, stderr) in [
+            (Some(1), valid.as_slice(), "private-folder/example.invalid"),
+            (
+                Some(-1073741502),
+                b"".as_slice(),
+                "private-folder/example.invalid",
+            ),
+            (
+                Some(0),
+                b"private-candidate-value".as_slice(),
+                "private-folder/example.invalid",
+            ),
+            (None, b"".as_slice(), ""),
+        ] {
+            let error = decode_worker_response(code, stdout, stderr).unwrap_err();
+            assert!(error.len() < 350);
+            assert!(error.contains(&waypoint_domain::sha256_hex(stdout)));
+            assert!(error.contains(&waypoint_domain::sha256_hex(stderr.as_bytes())));
+            assert!(
+                !error.contains("private-folder") && !error.contains("private-candidate-value")
+            );
+            if code == Some(-1073741502) {
+                assert!(error.contains("0xc0000142"));
+            }
+        }
+    }
+
     #[test]
     fn namespace_cleanup_preserves_other_files_and_refuses_changed_ownership() {
         let folder = tempfile::Builder::new()

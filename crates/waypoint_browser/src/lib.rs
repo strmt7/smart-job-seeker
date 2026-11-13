@@ -6428,6 +6428,16 @@ struct LoadingStability {
     unchanged: usize,
 }
 
+// Admit enough observations for slower native inspections without weakening
+// the two-unchanged-snapshot requirement or resetting a sliding timeout.
+// This caps observation admission, not the duration of an in-flight CDP call.
+fn loading_observation_window(inspection: Duration) -> Duration {
+    inspection
+        .saturating_mul(3)
+        .saturating_add(Duration::from_secs(2))
+        .clamp(Duration::from_secs(3), Duration::from_secs(30))
+}
+
 impl LoadingStability {
     fn observe(&mut self, previous: &LiveForm, next: &LiveForm) {
         self.snapshots += 1;
@@ -6566,14 +6576,17 @@ impl BrowserDriver for CdpDriver {
                 break;
             }
         }
+        let inspection_started = Instant::now();
         let mut result = self.inspect_with_retry()?;
+        let mut slowest_inspection = inspection_started.elapsed();
         // Client-rendered forms may start with fields and add more immediately
         // after load. Recheck even a nonempty first snapshot, then allow a
         // changing schema to settle within the same bounded loading window.
-        let dynamic_deadline = Instant::now() + Duration::from_secs(3);
+        let dynamic_started = Instant::now();
         let initial_nonempty = !result.schema.fields.is_empty();
         let mut loading = LoadingStability::default();
         for observation in 0..3 {
+            let dynamic_deadline = dynamic_started + loading_observation_window(slowest_inspection);
             if Instant::now() >= dynamic_deadline {
                 break;
             }
@@ -6586,7 +6599,12 @@ impl BrowserDriver for CdpDriver {
                 Duration::from_millis(delay)
                     .min(dynamic_deadline.saturating_duration_since(Instant::now())),
             );
+            if Instant::now() >= dynamic_deadline {
+                break;
+            }
+            let inspection_started = Instant::now();
             let mut next = self.inspect_with_retry()?;
+            slowest_inspection = slowest_inspection.max(inspection_started.elapsed());
             loading.observe(&result, &next);
             retain_loading_observations(result, &mut next);
             result = next;
@@ -6601,6 +6619,11 @@ impl BrowserDriver for CdpDriver {
             "loading check: {} snapshots, {} consecutive unchanged",
             loading.snapshots + 1,
             loading.unchanged
+        ));
+        self.trace.push(format!(
+            "loading timing: {} ms slowest inspection, {} ms observation admission window",
+            slowest_inspection.as_millis(),
+            loading_observation_window(slowest_inspection).as_millis()
         ));
         // A same-document route has no new loader or HTTP response. For an
         // ordinary HTTP navigation, bind the status to the main frame and
@@ -8074,6 +8097,26 @@ mod traversal_tests {
             },
             walls: vec![],
         }
+    }
+
+    #[test]
+    fn loading_window_scales_with_native_work_and_stays_capped() {
+        assert_eq!(
+            loading_observation_window(Duration::ZERO),
+            Duration::from_secs(3)
+        );
+        let measured = Duration::from_millis(2900);
+        let budget = loading_observation_window(measured);
+        assert_eq!(budget, Duration::from_millis(10700));
+        assert!(budget >= measured * 3 + Duration::from_millis(1850));
+        assert_eq!(
+            loading_observation_window(Duration::from_secs(10)),
+            Duration::from_secs(30)
+        );
+        assert_eq!(
+            loading_observation_window(Duration::MAX),
+            Duration::from_secs(30)
+        );
     }
 
     #[test]

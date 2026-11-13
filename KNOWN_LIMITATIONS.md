@@ -10,6 +10,18 @@ frame/shadow traversal, candidate-file import, structured history and semantic
 fit assessment also exist. Their broad qualification and recovery limits remain
 open; the earlier statements that those mechanisms are absent are superseded.
 
+Current semantic-contact continuation, 2026-11-13: the fictional local12B case
+proposes six contacts and verifies two of seven answerable controls. Blind vision
+omits a visible email target, stopping entry; an answerable residence radio is
+withheld. Both unknown answers remain untouched. Field/workflow gates do not pass.
+Earlier loading, startup admission and worker failures remain retained; native
+loading is repaired, and a larger RAM-admitted test job reaches entry. The 8 GiB
+test ceiling was below measured 8.52 GiB aggregate peak commit. Runtime API VRAM
+and whole-adapter usage do not establish per-process allocation or GPU fit.
+Lazy model/cache admission, efficient verified test-cache reuse, arbitrary facts,
+repeated histories, held-out cases and full-workflow qualification remain open.
+[Evidence](docs/g1/SEMANTIC_PROFILE_REHEARSAL_2026-11-13.md).
+
 Current saved-upload continuation, 2026-11-13: file selection reaches a
 server-dependent widget whose uploader setup is unavailable in the saved copy.
 Native trusted input/change events are emitted; selection bytes are retained,

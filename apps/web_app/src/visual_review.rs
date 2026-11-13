@@ -1155,10 +1155,33 @@ pub(crate) fn propose_recorded_attachments(
     schema: &waypoint_applications::form_mapping::FormSchema,
     documents: &[crate::attachment_mapping::DocumentOption<'_>],
 ) -> Result<crate::attachment_mapping::Plan, String> {
+    with_recorded_inference(model, addr, |inference| {
+        crate::attachment_mapping::propose(inference, schema, documents)
+    })
+}
+
+#[cfg(windows)]
+pub(crate) fn propose_recorded_facts(
+    model: &mut VisionIdentityGuard,
+    addr: std::net::SocketAddr,
+    form: &waypoint_applications::driver::LiveForm,
+    profile: &Value,
+) -> Result<crate::form_preview::FormPreview, String> {
+    with_recorded_inference(model, addr, |inference| {
+        crate::form_preview::suggest_for_recorded_form(form.clone(), inference, profile)
+    })
+}
+
+#[cfg(windows)]
+fn with_recorded_inference<T>(
+    model: &mut VisionIdentityGuard,
+    addr: std::net::SocketAddr,
+    operation: impl FnOnce(&mut dyn waypoint_inference::Inference) -> Result<T, String>,
+) -> Result<T, String> {
     use waypoint_inference::Inference;
     let name = model.model.clone();
     let mut inference = waypoint_inference::OllamaInference::new(&format!("http://{addr}"), name)
-        .map_err(|_| "The local document model is unavailable")?
+        .map_err(|_| "The local mapping model is unavailable")?
         .with_resident_context();
     inference.set_request_guard(
         model
@@ -1168,7 +1191,7 @@ pub(crate) fn propose_recorded_attachments(
     );
     model.checked_with(
         || crate::resident_model_identity_at(addr),
-        || crate::attachment_mapping::propose(&mut inference, schema, documents),
+        || operation(&mut inference),
     )
 }
 

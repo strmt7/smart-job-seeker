@@ -1,3 +1,15 @@
+## Semantic contact proposals and native loading - 2026-11-13
+
+Contained rehearsals reuse semantic contact mapping, native options/constraints
+and strict manual exclusions, with profile/schema binding. A measured loading
+budget defect is repaired. The fictional local12B case proposes six contacts and
+verifies 2/7 answerable controls before a visual email omission stops entry;
+2 unknown answers stay untouched. Field/workflow gates remain failed/not qualified.
+Workspace 1,331 passed/597 ignored, Clippy/build, scoped native and actual rendered
+record checks pass. Earlier admission/worker failures remain visible; aggregate
+peak test commit was 8.52 GiB, above the earlier 8 GiB ceiling. No held-out or release
+claim. [Evidence and next work](docs/g1/SEMANTIC_PROFILE_REHEARSAL_2026-11-13.md).
+
 ## Visible upload feedback and interval diagnostics - 2026-11-13
 
 Post-entry file images now retain lower progress/error feedback within the

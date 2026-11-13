@@ -1035,7 +1035,37 @@ pub fn suggest_for_live_form(
     inference: &mut dyn Inference,
     profile: &Value,
 ) -> Result<FormPreview, String> {
-    build_preview(live, Some(inference), profile, "")
+    build_preview(
+        live,
+        Some(inference),
+        profile,
+        "",
+        MappingFailurePolicy::RetainExact,
+    )
+}
+
+/// Proposals for the contained rehearsal. A failed model call must not silently
+/// become an exact-label execution plan. Native/visual checks still authorize
+/// no live action, and the caller keeps the original form for identity checks.
+#[cfg(any(windows, test))]
+pub(crate) fn suggest_for_recorded_form(
+    live: waypoint_applications::driver::LiveForm,
+    inference: &mut dyn Inference,
+    profile: &Value,
+) -> Result<FormPreview, String> {
+    build_preview(
+        live,
+        Some(inference),
+        profile,
+        "",
+        MappingFailurePolicy::ReturnError,
+    )
+}
+
+enum MappingFailurePolicy {
+    RetainExact,
+    #[cfg(any(windows, test))]
+    ReturnError,
 }
 
 pub fn suggest_without_model(
@@ -1043,7 +1073,13 @@ pub fn suggest_without_model(
     profile: &Value,
     reason: &str,
 ) -> Result<FormPreview, String> {
-    build_preview(live, None, profile, reason)
+    build_preview(
+        live,
+        None,
+        profile,
+        reason,
+        MappingFailurePolicy::RetainExact,
+    )
 }
 
 fn build_preview(
@@ -1051,6 +1087,7 @@ fn build_preview(
     inference: Option<&mut dyn Inference>,
     profile: &Value,
     no_model_reason: &str,
+    failure_policy: MappingFailurePolicy,
 ) -> Result<FormPreview, String> {
     let has_captcha = live.walls.iter().any(|wall| wall == "captcha present");
     let has_ambiguity = live
@@ -1115,6 +1152,9 @@ fn build_preview(
                 items
             }
             Err(error) => {
+                if !matches!(failure_policy, MappingFailurePolicy::RetainExact) {
+                    return Err(error);
+                }
                 manual_review.push(format!(
                     "{error}; only exact labels or standard autocomplete hints are suggested"
                 ));
@@ -1343,6 +1383,118 @@ mod tests {
     use waypoint_applications::driver::{DriverError, LiveForm, SiteAck};
     use waypoint_applications::form_mapping::BrowserCommand;
     use waypoint_inference::{CapabilityReport, InferenceError, UsageReport};
+
+    #[test]
+    fn recorded_profile_matching_keeps_failure_review_and_constraints_authoritative() {
+        struct ContactModel {
+            fail: bool,
+            manual: bool,
+        }
+        impl Inference for ContactModel {
+            fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+                unreachable!()
+            }
+            fn generate_structured(
+                &mut self,
+                _: &str,
+                _: &str,
+                _: u32,
+            ) -> Result<(Value, UsageReport), InferenceError> {
+                if self.fail {
+                    return Err(InferenceError::Cancelled);
+                }
+                Ok((
+                    json!({"mappings":[{"selector":"#candidate","profile_key":"first_name"}],
+                    "manual_review":if self.manual {vec!["#candidate"]} else {vec![]}}),
+                    UsageReport {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        wall_time_ms: 0,
+                    },
+                ))
+            }
+        }
+        let live = LiveForm {
+            origin: "https://fixture.invalid".into(),
+            independent_fields: None,
+            walls: vec![],
+            schema: FormSchema {
+                origin: "https://fixture.invalid".into(),
+                multi_step: false,
+                steps: 1,
+                fields: vec![waypoint_applications::form_mapping::FormField {
+                    selector: "#candidate".into(),
+                    label: "First name".into(),
+                    field_type: FormFieldType::Text,
+                    required: true,
+                    sensitive: false,
+                    editing_mode: None,
+                    max_length_utf16: None,
+                    min_length_utf16: None,
+                    pattern: None,
+                    autocomplete: Some("given-name".into()),
+                    context: Default::default(),
+                }],
+            },
+        };
+        let profile = json!({"first_name":"Avery"});
+        for (fail, manual, expected) in [(false, false, 1), (false, true, 0), (true, false, 0)] {
+            let plan = suggest_for_recorded_form(
+                live.clone(),
+                &mut ContactModel { fail, manual },
+                &profile,
+            )
+            .unwrap();
+            assert_eq!(
+                plan.schema, live.schema,
+                "The execution identity must not be masked for review"
+            );
+            assert_eq!(plan.suggestions.len(), expected);
+            if fail || manual {
+                assert!(plan.model_review_selectors.contains("#candidate"));
+                assert!(!plan.manual_review.is_empty());
+            }
+        }
+        let mut constrained = live.clone();
+        constrained.schema.fields[0].max_length_utf16 = Some(4);
+        let plan = suggest_for_recorded_form(
+            constrained.clone(),
+            &mut ContactModel {
+                fail: false,
+                manual: false,
+            },
+            &profile,
+        )
+        .unwrap();
+        assert!(plan.suggestions.is_empty());
+        assert_eq!(plan.schema, constrained.schema);
+        assert!(plan
+            .manual_review
+            .iter()
+            .any(|w| w.contains("exceeds field limit")));
+        let mut duplicate = live.clone();
+        duplicate.schema.fields.push(live.schema.fields[0].clone());
+        assert!(suggest_for_recorded_form(
+            duplicate.clone(),
+            &mut ContactModel {
+                fail: false,
+                manual: false
+            },
+            &profile
+        )
+        .is_err());
+        // The existing informational preview keeps its explicit exact fallback;
+        // it is not silently promoted into the contained execution path.
+        assert!(suggest_for_live_form(
+            duplicate,
+            &mut ContactModel {
+                fail: false,
+                manual: false
+            },
+            &profile
+        )
+        .is_ok());
+    }
 
     #[test]
     fn incomplete_email_stays_in_review_until_corrected() {

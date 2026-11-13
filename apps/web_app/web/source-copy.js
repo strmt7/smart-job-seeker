@@ -174,6 +174,17 @@
       }
       if (rehearsal) {
         const viewNumber = Number(select.value) + 1;
+        const factPlan = Array.isArray(rehearsal.fact_plans) ? rehearsal.fact_plans.slice(0, 7).find(plan => plan?.view === viewNumber) : null;
+        if (factPlan?.status === 'needs_review') {
+          details.append(el('p', 'Contact matching needs review; no contact fields were chosen automatically.', 'review-label'));
+          if (typeof factPlan.reason === 'string') details.append(el('p', factPlan.reason.slice(0, 500), 'footnote'));
+        } else if (factPlan?.status === 'proposed') {
+          const proposed = count(factPlan.proposed_fields);
+          if (proposed !== null) details.append(el('p', `${proposed} contact suggestion${proposed === 1 ? '' : 's'} prepared. Each entry still needs verification.`, 'footnote'));
+          const warnings = Array.isArray(factPlan.warnings) ? factPlan.warnings.filter(item => typeof item === 'string').slice(0, 12) : [];
+          for (const warning of warnings.slice(0, 3)) details.append(el('p', warning.slice(0, 500), 'footnote'));
+          if (warnings.length > 3 || count(factPlan.omitted_warnings) > 0) details.append(el('p', 'More matching notes are saved in this record.', 'footnote'));
+        }
         const documentPlan = Array.isArray(rehearsal.attachment_plans) ? rehearsal.attachment_plans.slice(0, 7).find(plan => plan?.view === viewNumber) : null;
         if (documentPlan?.status === 'needs_review') {
           details.append(el('p', 'Document matching needs review; no attachment was chosen automatically.', 'review-label'));

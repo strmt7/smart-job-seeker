@@ -260,6 +260,15 @@ used by development tools and tests. Do not add WSL or Docker as product require
 
 ## Real pitfalls already hit (don't rediscover these)
 
+- Qualification job limits cover the model, browser and ownership helpers
+  together. The fictional semantic-profile run exceeded 8 GiB committed memory;
+  an 8 GiB test run stopped on an empty helper response, while the 10 GiB job
+  reached planning and native/visual entry checks. Record native peak job commit
+  and whole-host headroom; do not diagnose model intelligence from a worker or
+  containment failure. Keep structured refusals and native exit/output diagnostics.
+  Runtime API VRAM figures and whole-adapter WDDM usage are different scopes;
+  neither alone proves model residency or safe host-memory use.
+
 - Keep different document roles distinguishable in fixtures: a résumé and cover
   letter sharing PDF bytes cannot expose a swapped-document error. Freeze each
   role's actual expected digest before inference and version changed annotations.

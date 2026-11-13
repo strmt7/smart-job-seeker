@@ -470,6 +470,16 @@ struct RehearsalVision {
 
 #[cfg(windows)]
 impl RehearsalVision {
+    fn plan_profile(
+        &mut self,
+        form: &waypoint_applications::driver::LiveForm,
+        profile: &Value,
+    ) -> Result<crate::form_preview::FormPreview, String> {
+        crate::check_inference_memory()?;
+        let model = self.model.as_mut().ok_or("The local model needs review")?;
+        crate::visual_review::propose_recorded_facts(model, self.addr, form, profile)
+    }
+
     fn plan_attachments(
         &mut self,
         schema: &waypoint_applications::form_mapping::FormSchema,
@@ -634,6 +644,7 @@ struct Rehearsal {
     advances: usize,
     profile: Result<Value, String>,
     attachment_plans: Vec<Value>,
+    fact_plans: Vec<Value>,
 }
 
 #[cfg(windows)]
@@ -656,6 +667,7 @@ impl Rehearsal {
             advances: 0,
             profile,
             attachment_plans: Vec::new(),
+            fact_plans: Vec::new(),
         }
     }
 
@@ -677,8 +689,34 @@ impl Rehearsal {
         let Ok(profile) = self.profile.as_ref() else {
             return;
         };
-        let Ok(mappings) = crate::suggestions::suggest_exact(&form.schema, profile) else {
-            return;
+        let profile_sha =
+            waypoint_domain::sha256_hex(include_bytes!("../data/rehearsal-profile.json"));
+        let schema_sha = waypoint_domain::sha256_hex(form.schema.schema_hash_input().as_bytes());
+        let (mappings, review_selectors) = match self.vision.plan_profile(form, profile) {
+            Ok(plan) if plan.schema == form.schema => {
+                let warnings: Vec<_> = plan
+                    .manual_review
+                    .iter()
+                    .take(12)
+                    .map(|warning| bounded_text(warning))
+                    .collect();
+                self.fact_plans.push(json!({"view":view,"status":"proposed","source":"bundled_fictional_profile",
+                    "profile_sha256":profile_sha,"schema_sha256":schema_sha,"proposed_fields":plan.suggestions.len(),
+                    "manual_fields":plan.model_review_selectors.len(),"warnings":warnings,
+                    "omitted_warnings":plan.manual_review.len().saturating_sub(12)}));
+                (plan.suggestions, plan.model_review_selectors)
+            }
+            result => {
+                let reason = result
+                    .err()
+                    .unwrap_or_else(|| "The form changed during profile matching".into());
+                self.fact_plans.push(json!({"view":view,"status":"needs_review","source":"bundled_fictional_profile",
+                    "profile_sha256":profile_sha,"schema_sha256":schema_sha,"reason":bounded_text(&reason),
+                    "diagnostic":reason.chars().take(512).collect::<String>()}));
+                // Other actors can still propose independent documents. No
+                // exact-label fallback becomes a contact-entry plan here.
+                (Vec::new(), std::collections::HashSet::new())
+            }
         };
         let mut attachments = std::collections::BTreeMap::new();
         if form
@@ -713,6 +751,12 @@ impl Rehearsal {
             if self.fields.len() >= field_limit {
                 break;
             }
+            if field.sensitive
+                || crate::suggestions::credential_autocomplete(field)
+                || review_selectors.contains(&field.selector)
+            {
+                continue;
+            }
             if form
                 .schema
                 .fields
@@ -742,6 +786,10 @@ impl Rehearsal {
             let index = self.fields.len();
             let mut result =
                 json!({"view":view,"label":bounded_text(&field.label),"status":"entry_unverified"});
+            if field.field_type != FormFieldType::File {
+                result["candidate_source"] = json!({"scope":"bundled_fictional_contact_profile",
+                    "profile_sha256":profile_sha,"schema_sha256":schema_sha});
+            }
             let mut target_refused = false;
             let mut witness = None;
             let verified: Vec<_> = captures.iter().map(|(_, capture, _)| capture).collect();
@@ -862,7 +910,7 @@ impl Rehearsal {
     }
 
     fn finish(self) -> Value {
-        json!({"scope":"fictional_saved_form","profile_sha256":waypoint_domain::sha256_hex(include_bytes!("../data/rehearsal-profile.json")),"profile_error":self.profile.as_ref().err(),"field_limit":REHEARSAL_LIMIT,"section_advance_limit":SECTION_ADVANCE_LIMIT,"halted":self.halted,"fields":self.fields,"attachment_plans":self.attachment_plans,"sections":self.sections,"vision_model":self.vision.identity,
+        json!({"scope":"fictional_saved_form","profile_sha256":waypoint_domain::sha256_hex(include_bytes!("../data/rehearsal-profile.json")),"profile_error":self.profile.as_ref().err(),"field_limit":REHEARSAL_LIMIT,"section_advance_limit":SECTION_ADVANCE_LIMIT,"halted":self.halted,"fields":self.fields,"fact_plans":self.fact_plans,"attachment_plans":self.attachment_plans,"sections":self.sections,"vision_model":self.vision.identity,
             "visual_gate":{"required":true,"available":self.vision.model.is_some(),"targets":self.vision.targets}})
     }
 }
@@ -993,6 +1041,89 @@ fn save_image(directory: &Path, sequence: usize, image: &str) -> Result<(String,
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "explicit private offline fixture and headless engine; native inspection only, no field actions or model"]
+    fn recorded_profile_inspection_probe() {
+        use waypoint_applications::driver::BrowserDriver;
+        use waypoint_applications::form_mapping::BrowserCommand;
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Fixture {
+            python: PathBuf,
+            config: waypoint_browser::rehearsal::RehearsalConfig,
+            url: String,
+        }
+        let path = PathBuf::from(
+            std::env::var_os("WAYPOINT_PROFILE_INSPECTION_PROBE").expect("private fixture"),
+        )
+        .canonicalize()
+        .unwrap();
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target")
+            .canonicalize()
+            .unwrap();
+        assert!(path.starts_with(&root));
+        let bytes = read(&path, 128 * 1024).unwrap();
+        assert_eq!(
+            waypoint_domain::sha256_hex(&bytes),
+            std::env::var("WAYPOINT_PROFILE_INSPECTION_PROBE_SHA256").unwrap()
+        );
+        let fixture: Fixture = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(fixture.config.schema, 2);
+        assert!(fixture.config.replay_manifest.is_some() && fixture.config.attachments.is_none());
+        assert!(fixture
+            .config
+            .content_root
+            .canonicalize()
+            .unwrap()
+            .starts_with(root));
+        let folder = path.parent().unwrap();
+        assert!(!folder.join("inspection.private.json").exists());
+        let (mut driver, ready) =
+            waypoint_browser::CdpDriver::launch_rehearsal(&fixture.python, fixture.config).unwrap();
+        assert!(ready.appcontainer && ready.capabilities == 0 && ready.entry_url == fixture.url);
+        let result = (|| -> Result<Value, String> {
+            let started = std::time::Instant::now();
+            let form = driver.open(&fixture.url).map_err(|e| e.to_string())?;
+            let mut observations = vec![
+                json!({"phase":"open","elapsed_ms":started.elapsed().as_millis(),"schema":form.schema,"walls":form.walls,
+                "barriers":form.independent_field_barriers()}),
+            ];
+            for _ in 0..3 {
+                let started = std::time::Instant::now();
+                let current = driver.inspect_current().map_err(|e| e.to_string())?;
+                observations.push(json!({"phase":"inspect","elapsed_ms":started.elapsed().as_millis(),"schema":current.schema,"walls":current.walls,
+                    "barriers":current.independent_field_barriers()}));
+            }
+            let trace: Vec<_> = driver
+                .trace
+                .iter()
+                .filter(|entry| {
+                    entry.starts_with("loading check:") || entry.starts_with("loading timing:")
+                })
+                .cloned()
+                .collect();
+            let report = driver
+                .rehearsal_replay_report()
+                .map_err(|e| e.to_string())?;
+            assert_eq!(report["cached_non_read_replies"], 0);
+            assert_eq!(report["unmanaged_child_sessions"], 0);
+            Ok(
+                json!({"scope":"native open/reinspection only; no field entry or local-model credit","observations":observations,"loading_trace":trace,"replay":report}),
+            )
+        })();
+        let close = driver.execute(&BrowserCommand::Close);
+        fs::write(
+            folder.join("inspection.private.json"),
+            serde_json::to_vec_pretty(&json!({"result":result,"browser_closed":close.is_ok()}))
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(close.is_ok());
+        assert!(result.is_ok(), "native failure retained");
+    }
 
     #[test]
     fn replay_activity_preserves_unknowns_and_does_not_claim_causality() {

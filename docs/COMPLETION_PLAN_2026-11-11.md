@@ -6,15 +6,12 @@ model mechanisms, but broad real-world application coverage and clean-host
 installation are not established. Older measured checkpoints retain their
 original source and fixture scopes.
 
-Latest verified hosted baseline: `fc5a4a436d2a8c89e64261449d7b677d296f0bec`, with
-successful hosted CI, coverage and CodeQL. A subsequent locally validated
-[stylesheet continuation](g1/ABSENT_ORIGIN_STYLESHEETS_2026-11-11.md) restores
-eligible absent-Origin CSS capture/replay. Workspace1,312 passed/594 ignored,
-Clippy/build/format, focused/native and compiled read-only/offline model checks
-passed within their recorded scopes. Phone target review now matches; its entry
-fails native exact-value validation and remains unverified. No section advanced.
-This continuation has no newer hosted result yet. The original audit snapshot
-remains `4acb9a955bcb961ad7a27cb9538e77bb0e03a547`.
+Latest verified hosted checkpoint: `7c7a25cf9bb586751b4a36ff81d790f0ff8b728a`,
+with successful CI, coverage and CodeQL recorded in the preceding continuation.
+Later local checkpoints have no newer hosted result. The current source-bound
+queue and [semantic contact evidence](g1/SEMANTIC_PROFILE_REHEARSAL_2026-11-13.md)
+record the latest work; historical measurements retain their original scopes.
+The original audit snapshot remains `4acb9a955bcb961ad7a27cb9538e77bb0e03a547`.
 Read the [repository assessment](REPO_STATE_REVIEW_2026-11-11.md) alongside this
 plan. The [active queue](ACTIVE_DEVELOPMENT_PLAN.json) identifies work packages,
 dependencies and existing harnesses for continuation of the **same active goal**.
@@ -23,18 +20,22 @@ historical statuses or authorize another goal, delegation, release or submission
 
 ## Latest continuation
 
-[Independent entry evidence](g1/INDEPENDENT_ENTRY_EVIDENCE_2026-11-11.md) implements
-schema2 control/value/image comparisons and native-bound failed-state diagnostics.
-A known source's initial9-control truth was frozen before local-model entry;
-3/6 answerable controls verify,1 entry remains unverified,2 are unreached and3
-answers stay unknown. The Phone diagnostic shows +1 202-555-0123 versus intended
-+12025550123. Keep that mismatch unverified until strict typed native, visual
-and oracle treatment is consistent; no general text normalization is authorized.
+[Semantic contact rehearsal](g1/SEMANTIC_PROFILE_REHEARSAL_2026-11-13.md) connects
+the existing mapper to contained execution, retaining strict failure/unknown,
+native option/constraint and visual checks. A measured loading-budget defect is
+repaired without lowering its stability criterion. Workspace 1,331 passed/597
+ignored, Clippy/build and scoped native/actual-renderer checks pass. The fictional
+local12B case proposes six contacts and verifies 2/7 before a blind email-target
+omission stops entry; two unknowns remain untouched. A measured 8.52 GiB aggregate
+job peak explains why the earlier 8 GiB test ceiling was inadequate for this phase.
+All earlier exclusions remain visible; no field/workflow/held-out gate passes.
 
-Next R04 slice: authoritative research, native type/validity inspection and
-negative fixtures for telephone presentation; actual native values must never be
-replaced by intended values in reporting. R02 remains open for varied held-out
-sources and complete native workflow proof, alongside generic planner work.
+Next R04 slice: improve blind visual coverage on that retained email failure,
+preserving native/image identity and raw observations. Supply no expected label
+or value to the observer and do not weaken gates or expand unrelated crops.
+Qualify changes against relevant prior cases before promotion. R01 lazy model/
+cache admission, R02 held-out/full-workflow truth, server-dependent uploads,
+arbitrary facts/histories, installation and other packages remain open.
 
 ## Immediate execution order
 

@@ -25,6 +25,16 @@ function harness(api, onFinished) {
     {kind:'page',label:'Page',image:'0001.png',sha256:digest,fields:[{label:'Parent name'}]},
     {kind:'frame',label:'Qualifications',image:'0002.png',sha256:digest,fields:[{label:'Child answer',required:true}]},
   ] };
+  for (const [plan,messages] of [
+    [{view:1,status:'needs_review',reason:'Local mapping unavailable'},['Contact matching needs review; no contact fields were chosen automatically.','Local mapping unavailable']],
+    [{view:1,status:'proposed',proposed_fields:1,warnings:['Review this question']},['1 contact suggestion prepared. Each entry still needs verification.','Review this question']],
+    [{view:1,status:'proposed',proposed_fields:2,warnings:['One','Two','Three','Four'],omitted_warnings:1},['2 contact suggestions prepared. Each entry still needs verification.','More matching notes are saved in this record.']],
+  ]) {
+    const panel=harness(async()=>{}).preview({...preview,rehearsal:{scope:'fictional_saved_form',fields:[],fact_plans:[plan]}},{});
+    for(const message of messages)assert(find(panel,node=>node.textContent===message));
+    assert.equal(find(panel,node=>node.textContent==='Four'),undefined,'Long note lists stay bounded');
+    assert.equal(find(panel,node=>node.textContent==='Text and image match'),undefined,'A proposal never looks like entry verification');
+  }
   for (const [activity,message] of [
     [{status:'unavailable'},'Request activity was unavailable for this check.'],
     [{status:'observed',scope:'entry_and_review_interval',delta:{blocked:1}},'During this check, the saved page blocked 1 request. The website response remains unverified.'],
