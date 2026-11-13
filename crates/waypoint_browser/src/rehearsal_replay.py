@@ -467,6 +467,7 @@ class Broker:
         self.counts = {'served': 0, 'blocked': 0, 'cached_non_read_replies': 0, 'unreplayed_transports': 0, 'unmanaged_child_sessions':0}
         self.counts.update(discarded_replies=0, discarded_events=0, closed_aliases=0)
         self.reasons, self.gaps = {}, {}
+        self.refusal_samples, self.omitted_refusal_samples = {}, 0
         self.outline_requested, self.outline = False, None
 
     def report(self):
@@ -475,7 +476,43 @@ class Broker:
                 'retired_sessions':len(self.retired_sessions), 'retired_commands':len(self.retired_replies),
                 'pending_detachments':sum(action[0]=='detach' for action in self.pending.values()),
                 'blocked_reasons': dict(self.reasons), 'unsupported_targets': dict(self.gaps),
+                'refused_request_samples': list(self.refusal_samples.values()),
+                'omitted_refusal_samples': self.omitted_refusal_samples,
                 'server_validation': 'not_performed', 'external_delivery': 'not_performed_by_replay'}
+
+    def observe_refusal(self, request, resource_type, reason):
+        """Bounded context evidence, never raw URLs, headers, bodies or values.
+
+        Samples count observed refusals. Existing blocked/served totals still
+        count only acknowledged browser commands; these are not delivery proof.
+        """
+        try:
+            url_sha256 = hashlib.sha256(request_url(request.get('url')).encode('utf-8')).hexdigest()
+        except (ReplayError, UnicodeError):
+            url_sha256 = None
+        method = request.get('method')
+        if method not in ('GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'CONNECT', 'TRACE'):
+            method = 'Other'
+        if resource_type not in ('Document', 'Stylesheet', 'Image', 'Media', 'Font', 'Script',
+                                 'TextTrack', 'XHR', 'Fetch', 'Prefetch', 'EventSource', 'WebSocket',
+                                 'Manifest', 'SignedExchange', 'Ping', 'CSPViolationReport', 'Preflight'):
+            resource_type = 'Other'
+        headers = request.get('headers', {})
+        if not isinstance(headers, dict) or len(headers) > 128 or any(not isinstance(k, str) for k in headers):
+            origin_state, preflight = 'malformed', None
+        else:
+            origins = [v for k, v in headers.items() if k.lower() == 'origin']
+            origin_state = 'absent' if not origins else 'present' if len(origins) == 1 and isinstance(origins[0], str) else 'malformed'
+            preflight = any(k.lower() in ('access-control-request-headers', 'access-control-request-method') for k in headers)
+        key = (url_sha256, method, resource_type, reason, origin_state, preflight)
+        if key in self.refusal_samples:
+            self.refusal_samples[key]['observations'] += 1
+        elif len(self.refusal_samples) < 32:
+            self.refusal_samples[key] = dict(url_sha256=url_sha256, method=method, resource_type=resource_type,
+                                            reason=reason, origin_state=origin_state,
+                                            preflight_headers_present=preflight, observations=1)
+        else:
+            self.omitted_refusal_samples += 1
 
     def call(self, method, params, session, action):
         if len(self.pending) >= 128 or self.next_id >= 2**31-1:
@@ -812,6 +849,7 @@ class Broker:
                 raise ReplayError('invalid_replay_pause')
             result, reason = self.archive.response(request, params.get('resourceType'))
             if result is None:
+                self.observe_refusal(request, params.get('resourceType'), reason)
                 if self.discovery:
                     frame = params.get('frameId')
                     child_document = self.discovery_session is not None and params.get('resourceType') == 'Document' and (

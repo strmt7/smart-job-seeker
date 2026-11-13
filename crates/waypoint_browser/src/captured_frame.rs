@@ -132,6 +132,8 @@ pub struct RecordedFieldCapture {
     control: RecordedControlIdentity,
     observed_value: String,
     value_comparison: &'static str,
+    file_group_label: Option<String>,
+    file_group_context: Option<waypoint_applications::form_mapping::FormFieldContext>,
 }
 
 /// A fresh, focused target image made by the recorded driver before an action.
@@ -141,6 +143,7 @@ pub struct RecordedTargetCapture {
     label: String,
     kind: &'static str,
     required_marker: bool,
+    file_group_label: Option<String>,
     witness: Option<RecordedFieldWitness>,
 }
 
@@ -209,6 +212,66 @@ fn required_marker_unambiguous(form: &LiveForm, field: &FormField) -> bool {
             == 1
 }
 
+/// A file chooser may be visually named by its explicit enclosing group while
+/// its input has a hidden button label. Never infer an alternative from words.
+#[cfg(any(windows, test))]
+fn unique_file_group_label(form: &LiveForm, field: &FormField) -> Option<String> {
+    use waypoint_applications::form_mapping::FormFieldType;
+    if field.field_type != FormFieldType::File || field.context.sections.is_empty() {
+        return None;
+    }
+    if field
+        .context
+        .sections
+        .iter()
+        .any(|section| section.inferred || section.id.is_empty() || section.label.trim().is_empty())
+    {
+        return None;
+    }
+    let group = field.context.sections.last()?;
+    let label = field
+        .context
+        .sections
+        .iter()
+        .map(|s| s.label.as_str())
+        .collect::<Vec<_>>()
+        .join(" — ");
+    if label.len() > 300 || !field.label.starts_with(&format!("{label} — ")) {
+        return None;
+    }
+    let same_group = form
+        .schema
+        .fields
+        .iter()
+        .filter(|other| {
+            other.field_type == FormFieldType::File
+                && other.context.sections.iter().any(|s| s.id == group.id)
+        })
+        .count();
+    let labels = |field: &FormField| {
+        field
+            .context
+            .sections
+            .iter()
+            .map(|s| {
+                s.label
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .to_lowercase()
+            })
+            .collect::<Vec<_>>()
+    };
+    let path = labels(field);
+    let same_name = form
+        .schema
+        .fields
+        .iter()
+        .filter(|other| other.field_type == FormFieldType::File && labels(other) == path)
+        .count();
+    (same_group == 1 && same_name == 1).then_some(label)
+}
+
 impl RecordedTargetCapture {
     pub fn witness(&self) -> Option<RecordedFieldWitness> {
         self.witness.clone()
@@ -230,6 +293,10 @@ impl RecordedTargetCapture {
     pub fn required_marker(&self) -> bool {
         self.required_marker
     }
+    /// Available only for one native file input in uniquely named, explicit groups.
+    pub fn file_group_label(&self) -> Option<&str> {
+        self.file_group_label.as_deref()
+    }
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -241,6 +308,9 @@ struct RecordedDocument {
 }
 
 impl RecordedFieldCapture {
+    pub fn file_group_label(&self) -> Option<&str> {
+        self.file_group_label.as_deref()
+    }
     /// Actual captured native text, not the commanded candidate fact.
     pub fn observed_value(&self) -> &str {
         &self.observed_value
@@ -429,6 +499,7 @@ impl CdpDriver {
             image,
             label: target.label.clone(),
             required_marker: false,
+            file_group_label: None,
             kind: "button",
         })?;
         if self.recorded_document()? != document || self.inspect_current()? != *before {
@@ -604,6 +675,7 @@ impl CdpDriver {
             image,
             label: field.label.clone(),
             required_marker: required_marker_unambiguous(form, field),
+            file_group_label: unique_file_group_label(form, field),
             kind: match kind {
                 RecordedFieldKind::Text => "text",
                 RecordedFieldKind::Select => "select",
@@ -673,7 +745,10 @@ impl CdpDriver {
         self.verify_recorded_command(&command)?;
         self.observed_non_read_requests()?;
         self.stop_if_non_read_request_observed(network_before)?;
+        let file_group_label = unique_file_group_label(form, field);
         Ok(RecordedFieldCapture {
+            file_group_context: file_group_label.as_ref().map(|_| field.context.clone()),
+            file_group_label,
             observed_value,
             value_comparison,
             control,
@@ -792,6 +867,26 @@ impl CdpDriver {
         }
         if self.recorded_document()? != capture.document {
             return Err(review());
+        }
+        if let Some(context) = &capture.file_group_context {
+            let BrowserCommand::UploadFile { selector, .. } = &capture.command else {
+                return Err(review());
+            };
+            let current = self.inspect_current()?;
+            let fields: Vec<_> = current
+                .schema
+                .fields
+                .iter()
+                .filter(|f| &f.selector == selector)
+                .collect();
+            let [field] = fields.as_slice() else {
+                return Err(review());
+            };
+            if &field.context != context
+                || unique_file_group_label(&current, field) != capture.file_group_label
+            {
+                return Err(review());
+            }
         }
         self.stop_if_non_read_request_observed(capture.network_before)
     }
@@ -1491,6 +1586,60 @@ fn recorded_field_crop(
 mod tests {
     use super::*;
     use waypoint_applications::form_mapping::FormSchema;
+
+    #[test]
+    fn file_group_labels_require_explicit_unique_native_file_context() {
+        let field: FormField = serde_json::from_value(json!({
+            "selector":"#document","label":"Supporting material — Choose file","field_type":"file",
+            "required":false,"sensitive":false,"context":{"sections":[{"id":"native-group","label":"Supporting material","inferred":false}]}
+        })).unwrap();
+        let original = LiveForm::from_inspection(
+            FormSchema {
+                origin: "https://example.org".into(),
+                fields: vec![field],
+                multi_step: false,
+                steps: 1,
+            },
+            vec![],
+            vec![],
+        );
+        let label = |form: &LiveForm| unique_file_group_label(form, &form.schema.fields[0]);
+        assert_eq!(label(&original).as_deref(), Some("Supporting material"));
+        let mut changed = original.clone();
+        changed.schema.fields[0].context.sections[0].inferred = true;
+        assert_eq!(label(&changed), None);
+        changed = original.clone();
+        changed.schema.fields[0].context.sections[0].id.clear();
+        assert_eq!(label(&changed), None);
+        changed = original.clone();
+        changed.schema.fields[0].label = "Other — Choose file".into();
+        assert_eq!(label(&changed), None);
+        changed = original.clone();
+        changed.schema.fields[0].field_type =
+            waypoint_applications::form_mapping::FormFieldType::Text;
+        assert_eq!(label(&changed), None);
+        changed = original.clone();
+        changed.schema.fields[0].context.sections.clear();
+        assert_eq!(label(&changed), None);
+        let mut second = original.schema.fields[0].clone();
+        second.selector = "#second".into();
+        changed = original.clone();
+        changed.schema.fields.push(second.clone());
+        assert_eq!(label(&changed), None, "two files in the same group");
+        second.context.sections[0].id = "another-native-group".into();
+        changed = original.clone();
+        changed.schema.fields.push(second.clone());
+        assert_eq!(
+            label(&changed),
+            None,
+            "same visible group names remain ambiguous"
+        );
+        second.context.sections[0].label = "Other documents".into();
+        second.label = "Other documents — Choose file".into();
+        changed = original.clone();
+        changed.schema.fields.push(second);
+        assert_eq!(label(&changed).as_deref(), Some("Supporting material"));
+    }
 
     #[test]
     fn required_marker_evidence_needs_unique_inspected_required_field() {

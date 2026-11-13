@@ -26,6 +26,10 @@ use crate::{CapabilityReport, Inference, InferenceError, UsageReport};
 /// Passing any other name falls back to generic JSON mode.
 pub const KNOWN_SCHEMAS: &[(&str, &str)] = &[
     (
+        "attachment_mapping",
+        r#"{"type":"object","properties":{"decisions":{"type":"array","maxItems":16,"items":{"type":"object","properties":{"field":{"type":"string","pattern":"^upload-[0-9]{1,2}$"},"document":{"type":"string","minLength":1,"maxLength":48,"pattern":"^[a-z][a-z0-9_-]*$"}},"required":["field","document"],"additionalProperties":false}}},"required":["decisions"],"additionalProperties":false}"#,
+    ),
+    (
         "template_edit_plan",
         include_str!("template_edit_plan.schema.json"),
     ),

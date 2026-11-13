@@ -94,6 +94,15 @@ function harness(api, onFinished) {
   assert(find(tested,node => node.textContent==='Child answer · Text verified in form · visual review unavailable'));
   assert(find(tested,node => node.textContent==='Unclear field · Text verified in form · image review failed'));
   assert(find(tested,node => node.textContent==='Clear field · Text and image match'));
+  for (const [plan, message] of [
+    [{view:1,status:'needs_review'}, 'Document matching needs review; no attachment was chosen automatically.'],
+    [{view:1,status:'proposed',decisions:[{document_id:null}]}, '1 upload control needs a document choice.'],
+    [{view:1,status:'proposed',decisions:[{document_id:null},{document_id:null}]}, '2 upload controls need a document choice.'],
+  ]) {
+    const unchosen = harness(async () => {}).preview({...rehearsal,rehearsal:{...rehearsal.rehearsal,attachment_plans:[plan]}},{});
+    assert(find(unchosen,node=>node.textContent===message));
+    assert.equal(find(unchosen,node=>node.textContent==='Attachment and image match'),undefined);
+  }
   await button(tested,'View field image').listeners.click();
   assert(find(tested,node => node.tag==='img'));
   const choice = harness(async () => {}).preview({
@@ -101,6 +110,7 @@ function harness(api, onFinished) {
       {view:2,kind:'select',label:'Country',status:'visually_matched'},
       {view:2,kind:'radio',label:'City',status:'visual_unavailable'},
       {view:2,kind:'file',label:'Resume',status:'visual_unavailable',attachment:{name:'sample-resume.pdf'}},
+      {view:2,kind:'file',label:'Cover letter',status:'visual_unobserved'},
     ]},
   }, {jobId:'job',attemptId:'test',api:async () => {}});
   const choiceSelect = find(choice,node => node.tag==='select');
@@ -108,6 +118,7 @@ function harness(api, onFinished) {
   assert(find(choice,node => node.textContent==='Country · Selection and image match'));
   assert(find(choice,node => node.textContent==='City · Selection verified in form · visual review unavailable'));
   assert(find(choice,node => node.textContent==='Resume · Attachment verified in form · visual review unavailable'));
+  assert(find(choice,node => node.textContent==='Cover letter · Selected file needs visual review'));
   assert(find(choice,node => node.textContent==='sample-resume.pdf'));
   const stages = harness(async () => {}).preview({
     views: [...preview.views, {kind:'frame', label:'Qualifications', scope_view:2, section:2,

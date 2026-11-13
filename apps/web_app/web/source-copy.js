@@ -174,6 +174,13 @@
       }
       if (rehearsal) {
         const viewNumber = Number(select.value) + 1;
+        const documentPlan = Array.isArray(rehearsal.attachment_plans) ? rehearsal.attachment_plans.slice(0, 7).find(plan => plan?.view === viewNumber) : null;
+        if (documentPlan?.status === 'needs_review') {
+          details.append(el('p', 'Document matching needs review; no attachment was chosen automatically.', 'review-label'));
+        } else if (documentPlan?.status === 'proposed' && Array.isArray(documentPlan.decisions)) {
+          const unresolved = documentPlan.decisions.slice(0, 16).filter(decision => decision?.document_id === null).length;
+          if (unresolved) details.append(el('p', `${unresolved} upload control${unresolved === 1 ? ' needs' : 's need'} a document choice.`, 'review-label'));
+        }
         const checks = Array.isArray(rehearsal.fields) ? rehearsal.fields.slice(0, 8).filter(field => field?.view === viewNumber) : [];
         if (!checks.length) details.append(el('p', 'No fields were tested in this view.', 'footnote'));
         for (const check of checks) {
@@ -181,7 +188,7 @@
           const states = {
             visually_matched: `${stateLabel} and image match`,
             visual_difference: 'Image transcription differs',
-            visual_unobserved: 'Model could not read the image',
+            visual_unobserved: check.kind === 'file' ? 'Selected file needs visual review' : 'Model could not read the image',
             visual_review_failed: `${stateLabel} verified in form · image review failed`,
             visual_unavailable: `${stateLabel} verified in form · visual review unavailable`,
             changed_after_entry: 'Field could not be reverified after entry',

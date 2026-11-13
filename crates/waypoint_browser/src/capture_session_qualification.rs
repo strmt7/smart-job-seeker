@@ -567,6 +567,7 @@ fn run_coordinator(discovery: bool, privacy: bool, custom_controls: bool, failed
         // otherwise the extra schema alone would make the barrier test vacuous.
         driver.cdp.call("Runtime.evaluate", serde_json::json!({"expression":format!("history.replaceState(null,'',{});document.querySelector('#masked').removeAttribute('aria-label')", serde_json::to_string(&ready.entry_url).unwrap())})).unwrap();
         qualify_telephone_presentation(&mut driver, &folder);
+        qualify_file_group_target(&mut driver, &folder);
     }
     let replay = driver.rehearsal_replay_report().unwrap();
     assert_eq!(
@@ -668,4 +669,56 @@ fn qualify_telephone_presentation(driver: &mut CdpDriver, folder: &Path) {
         .verify_text_value("#negative-contact", "+12025550123")
         .is_err());
     std::fs::write(folder.join("telephone-presentation.private.json"),serde_json::to_vec_pretty(&serde_json::json!({"capture":report,"negative_cases":denied+1,"stale_image_refused":true})).unwrap()).unwrap();
+}
+
+fn qualify_file_group_target(driver: &mut CdpDriver, folder: &Path) {
+    driver.cdp.call("Runtime.evaluate",serde_json::json!({"expression":r#"(()=>{
+        document.querySelector('#international-contact')?.remove();
+        document.querySelector('#negative-contact')?.remove();
+        const group=document.createElement('div');group.id='file-review-group';group.role='group';group.setAttribute('aria-labelledby','file-review-heading');
+        const heading=document.createElement('h3');heading.id='file-review-heading';heading.textContent='Materials';group.append(heading);
+        const label=document.createElement('label');label.htmlFor='group-file';label.textContent='Select a document';group.append(label);
+        const input=document.createElement('input');input.id='group-file';input.type='file';group.append(input);document.body.append(group);
+    })()"#})).unwrap();
+    let form = driver.inspect_current().unwrap();
+    let field = form
+        .schema
+        .fields
+        .iter()
+        .find(|f| f.selector == "#group-file")
+        .unwrap();
+    let mut reviewed = false;
+    let refused = driver.rehearse_recorded_field_reviewed(
+        &form,
+        &field.selector,
+        "unused.pdf",
+        &[],
+        |target| {
+            reviewed = true;
+            assert_eq!(target.kind(), "file");
+            assert_eq!(target.file_group_label(), Some("Materials"));
+            std::fs::write(folder.join("file-group-screenshot.base64"), target.image()).unwrap();
+            Err(waypoint_applications::driver::DriverError(
+                "Intentional review refusal".into(),
+            ))
+        },
+    );
+    assert!(reviewed && refused.is_err());
+    let mut refusals = 0;
+    for change in [
+        "const other=document.createElement('input');other.id='other-group-file';other.type='file';document.querySelector('#file-review-group').append(other)",
+        "document.querySelector('#other-group-file').remove();document.querySelector('#file-review-group').removeAttribute('aria-labelledby');document.querySelector('#file-review-group').removeAttribute('role')",
+    ] {
+        driver.cdp.call("Runtime.evaluate",serde_json::json!({"expression":change})).unwrap();
+        let form=driver.inspect_current().unwrap();
+        let mut asked=false;
+        let refused=driver.rehearse_recorded_field_reviewed(&form,"#group-file","unused.pdf",&[],|target|{
+            asked=true;assert_eq!(target.file_group_label(),None);
+            Err(waypoint_applications::driver::DriverError("Intentional review refusal".into()))
+        });
+        assert!(asked && refused.is_err());refusals+=1;
+    }
+    let files=driver.cdp.call("Runtime.evaluate",serde_json::json!({"expression":"document.querySelector('#group-file').files.length","returnByValue":true})).unwrap();
+    assert_eq!(files["result"]["value"], 0);
+    std::fs::write(folder.join("file-group-identity.private.json"),serde_json::to_vec_pretty(&serde_json::json!({"explicit_group_verified":true,"negative_cases":refusals,"review_refusals":3,"files_attached":0})).unwrap()).unwrap();
 }

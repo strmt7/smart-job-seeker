@@ -151,8 +151,8 @@ fn context_left_edge(
     viewport_left: f64,
     page_width: f64,
 ) -> f64 {
-    (field_left - 240.0)
-        .max(field_right - 720.0)
+    let remaining = (720.0 - (field_right - field_left)).max(0.0);
+    (field_left - remaining)
         .max(viewport_left)
         .max(0.0)
         .min(page_width)
@@ -7836,9 +7836,13 @@ mod traversal_tests {
 
     #[test]
     fn context_capture_keeps_target_and_uses_available_left_space() {
-        assert_eq!(context_left_edge(400.0, 850.0, 0.0, 1400.0), 160.0);
+        assert_eq!(context_left_edge(400.0, 850.0, 0.0, 1400.0), 130.0);
         assert_eq!(context_left_edge(400.0, 1050.0, 0.0, 1400.0), 330.0);
         assert_eq!(context_left_edge(150.0, 400.0, 100.0, 1400.0), 100.0);
+        // Tiny rendered inputs still need their complete nearby labels. Spend
+        // the existing image budget on context instead of imposing a 240px cap.
+        assert_eq!(context_left_edge(400.0, 401.0, 0.0, 1400.0), 0.0);
+        assert_eq!(context_left_edge(1000.0, 1001.0, 0.0, 1400.0), 281.0);
     }
 
     #[test]

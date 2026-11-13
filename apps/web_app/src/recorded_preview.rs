@@ -249,7 +249,11 @@ fn render_at(
         Ok(
             json!({"source_attempt":source.attempt_id,"manifest_sha256":manifest_sha256,
             "views":views,"uninspected_frames":uninspected,"truncated":truncated,"notices":notices,
-            "replay":{"served":report["served"],"blocked":report["blocked"],"unsupported_targets":report["unsupported_targets"]}}),
+            "replay":{"served":report["served"],"blocked":report["blocked"],"blocked_reasons":report["blocked_reasons"],
+                "refused_request_samples":report["refused_request_samples"],"omitted_refusal_samples":report["omitted_refusal_samples"],
+                "cached_non_read_replies":report["cached_non_read_replies"],"unreplayed_transports":report["unreplayed_transports"],
+                "unmanaged_child_sessions":report["unmanaged_child_sessions"],"unsupported_targets":report["unsupported_targets"],
+                "server_validation":report["server_validation"],"external_delivery":report["external_delivery"]}}),
         )
     })();
     let close = driver
@@ -414,9 +418,20 @@ fn record_scope(
 #[cfg(windows)]
 const SAMPLE_PDF: &[u8] = include_bytes!("rehearsal-sample.pdf");
 #[cfg(windows)]
+const SAMPLE_COVER_PDF: &[u8] = include_bytes!("rehearsal-cover-letter.pdf");
+#[cfg(windows)]
 const SAMPLE_RESUME: &str = "sample-resume.pdf";
 #[cfg(windows)]
 const SAMPLE_COVER: &str = "sample-cover-letter.pdf";
+
+#[cfg(windows)]
+fn sample_attachment_bytes(name: &str) -> Option<&'static [u8]> {
+    match name {
+        SAMPLE_RESUME => Some(SAMPLE_PDF),
+        SAMPLE_COVER => Some(SAMPLE_COVER_PDF),
+        _ => None,
+    }
+}
 
 #[cfg(windows)]
 fn stage_sample_attachments(
@@ -428,41 +443,21 @@ fn stage_sample_attachments(
     directory(attempt)?;
     let root = attempt.join("rehearsal-attachments");
     fs::create_dir(&root).map_err(|_| "Cannot create sample attachment folder")?;
-    let digest = waypoint_domain::sha256_hex(SAMPLE_PDF);
     let mut files = std::collections::BTreeMap::new();
-    for name in [SAMPLE_RESUME, SAMPLE_COVER] {
+    for (name, bytes) in [
+        (SAMPLE_RESUME, SAMPLE_PDF),
+        (SAMPLE_COVER, SAMPLE_COVER_PDF),
+    ] {
         use std::io::Write;
         fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(root.join(name))
-            .and_then(|mut file| file.write_all(SAMPLE_PDF))
+            .and_then(|mut file| file.write_all(bytes))
             .map_err(|_| "Cannot preserve sample attachment")?;
-        files.insert(name.to_owned(), digest.clone());
+        files.insert(name.to_owned(), waypoint_domain::sha256_hex(bytes));
     }
     Ok(waypoint_browser::rehearsal::RehearsalAttachments { root, files })
-}
-
-#[cfg(windows)]
-fn sample_attachment(
-    field: &waypoint_applications::form_mapping::FormField,
-) -> Option<&'static str> {
-    use waypoint_applications::form_mapping::FormFieldType;
-    if field.sensitive || field.field_type != FormFieldType::File {
-        return None;
-    }
-    match field
-        .label
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_lowercase()
-        .as_str()
-    {
-        "resume" | "résumé" | "cv" | "curriculum vitae" => Some(SAMPLE_RESUME),
-        "cover letter" => Some(SAMPLE_COVER),
-        _ => None,
-    }
 }
 
 #[cfg(windows)]
@@ -475,6 +470,30 @@ struct RehearsalVision {
 
 #[cfg(windows)]
 impl RehearsalVision {
+    fn plan_attachments(
+        &mut self,
+        schema: &waypoint_applications::form_mapping::FormSchema,
+    ) -> Result<crate::attachment_mapping::Plan, String> {
+        use crate::attachment_mapping::DocumentOption;
+        crate::check_inference_memory()?;
+        let model = self.model.as_mut().ok_or("The local model needs review")?;
+        crate::visual_review::propose_recorded_attachments(
+            model,
+            self.addr,
+            schema,
+            &[
+                DocumentOption {
+                    id: "resume",
+                    description: "The fictional candidate's resume/CV PDF",
+                },
+                DocumentOption {
+                    id: "cover_letter",
+                    description: "The fictional candidate's cover letter PDF",
+                },
+            ],
+        )
+    }
+
     fn new(
         addr: std::net::SocketAddr,
         choice: Option<&crate::model_preferences::Choice>,
@@ -515,6 +534,9 @@ impl RehearsalVision {
             return Err(refused());
         }
         let mut record = json!({"view":view,"phase":phase,"label":bounded_text(target.label()),"kind":target.kind(),"status":"visual_unavailable"});
+        if let Some(group) = target.file_group_label() {
+            record["native_file_group_label"] = json!(group);
+        }
         let saved = save_image(directory, 20 + self.targets.len(), target.image());
         if let Ok((image, digest)) = &saved {
             record["image"] = json!(image);
@@ -577,6 +599,7 @@ struct Rehearsal {
     sections: Vec<Value>,
     advances: usize,
     profile: Result<Value, String>,
+    attachment_plans: Vec<Value>,
 }
 
 #[cfg(windows)]
@@ -598,6 +621,7 @@ impl Rehearsal {
             sections: Vec::new(),
             advances: 0,
             profile,
+            attachment_plans: Vec::new(),
         }
     }
 
@@ -622,6 +646,33 @@ impl Rehearsal {
         let Ok(mappings) = crate::suggestions::suggest_exact(&form.schema, profile) else {
             return;
         };
+        let mut attachments = std::collections::BTreeMap::new();
+        if form
+            .schema
+            .fields
+            .iter()
+            .any(|field| field.field_type == FormFieldType::File)
+        {
+            match self.vision.plan_attachments(&form.schema) {
+                Ok(plan) => {
+                    self.attachment_plans
+                        .push(json!({"view":view,"status":"proposed","decisions":plan.decisions}));
+                    for decision in plan.decisions {
+                        let name = match decision.document_id.as_deref() {
+                            Some("resume") => Some(SAMPLE_RESUME),
+                            Some("cover_letter") => Some(SAMPLE_COVER),
+                            _ => None,
+                        };
+                        if let Some(name) = name {
+                            attachments.insert(decision.selector, name);
+                        }
+                    }
+                }
+                Err(reason) => self.attachment_plans.push(
+                    json!({"view":view,"status":"needs_review","reason":bounded_text(&reason)}),
+                ),
+            }
+        }
         let mut captures = Vec::new();
         let field_limit = REHEARSAL_LIMIT;
         for field in &form.schema.fields {
@@ -639,20 +690,10 @@ impl Rehearsal {
                 continue;
             }
             let value = if field.field_type == FormFieldType::File {
-                let Some(name) = sample_attachment(field) else {
+                let Some(name) = attachments.get(&field.selector) else {
                     continue;
                 };
-                if form
-                    .schema
-                    .fields
-                    .iter()
-                    .filter(|other| sample_attachment(other) == Some(name))
-                    .count()
-                    != 1
-                {
-                    continue;
-                }
-                name
+                *name
             } else {
                 let Some(value) = mappings.iter().find_map(|mapping| match &mapping.value {
                     PacketValue::Text(value) if mapping.field_selector == field.selector => {
@@ -762,8 +803,14 @@ impl Rehearsal {
                     self.fields[index]["intended_value"] = json!(capture.value());
                     self.fields[index]["value_comparison"] = json!(capture.value_comparison());
                     if matches!(capture.kind(), waypoint_browser::RecordedFieldKind::File) {
+                        let Some(bytes) = sample_attachment_bytes(capture.value()) else {
+                            self.fields[index]["status"] = json!("changed_after_entry");
+                            self.fields[index]["native_verified"] = json!(false);
+                            self.halted = true;
+                            continue;
+                        };
                         self.fields[index]["attachment"] = json!({
-                            "name":capture.value(), "sha256":waypoint_domain::sha256_hex(SAMPLE_PDF),
+                            "name":capture.value(), "sha256":waypoint_domain::sha256_hex(bytes),
                         });
                     }
                     self.captures.push((index, capture, image_saved));
@@ -777,7 +824,7 @@ impl Rehearsal {
     }
 
     fn finish(self) -> Value {
-        json!({"scope":"fictional_saved_form","profile_sha256":waypoint_domain::sha256_hex(include_bytes!("../data/rehearsal-profile.json")),"profile_error":self.profile.as_ref().err(),"field_limit":REHEARSAL_LIMIT,"section_advance_limit":SECTION_ADVANCE_LIMIT,"halted":self.halted,"fields":self.fields,"sections":self.sections,"vision_model":self.vision.identity,
+        json!({"scope":"fictional_saved_form","profile_sha256":waypoint_domain::sha256_hex(include_bytes!("../data/rehearsal-profile.json")),"profile_error":self.profile.as_ref().err(),"field_limit":REHEARSAL_LIMIT,"section_advance_limit":SECTION_ADVANCE_LIMIT,"halted":self.halted,"fields":self.fields,"attachment_plans":self.attachment_plans,"sections":self.sections,"vision_model":self.vision.identity,
             "visual_gate":{"required":true,"available":self.vision.model.is_some(),"targets":self.vision.targets}})
     }
 }
@@ -908,6 +955,117 @@ fn save_image(directory: &Path, sequence: usize, image: &str) -> Result<(String,
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "native actuator probe of an explicitly bound private offline archive; no model-quality claim"]
+    fn recorded_upload_widget_probe() {
+        use waypoint_applications::driver::BrowserDriver;
+        use waypoint_applications::form_mapping::BrowserCommand;
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Fixture {
+            python: PathBuf,
+            config: waypoint_browser::rehearsal::RehearsalConfig,
+            url: String,
+            selector: String,
+            file_name: String,
+        }
+        let path =
+            PathBuf::from(std::env::var_os("WAYPOINT_UPLOAD_PROBE").expect("private fixture"));
+        let path = path.canonicalize().unwrap();
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target")
+            .canonicalize()
+            .unwrap();
+        assert!(path.starts_with(&root));
+        let bytes = read(&path, 128 * 1024).unwrap();
+        assert_eq!(
+            waypoint_domain::sha256_hex(&bytes),
+            std::env::var("WAYPOINT_UPLOAD_PROBE_SHA256").unwrap()
+        );
+        let fixture: Fixture = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(fixture.config.schema, 2);
+        assert!(fixture.config.replay_manifest.is_some() && fixture.config.attachments.is_some());
+        let folder = path.parent().unwrap();
+        assert!(fixture
+            .config
+            .content_root
+            .canonicalize()
+            .unwrap()
+            .starts_with(&root));
+        assert!(fixture
+            .config
+            .attachments
+            .as_ref()
+            .unwrap()
+            .root
+            .canonicalize()
+            .unwrap()
+            .starts_with(folder));
+        for name in [
+            "widget-probe.private.json",
+            "widget-0.png",
+            "widget-1.png",
+            "widget-2.png",
+        ] {
+            assert!(
+                !folder.join(name).exists(),
+                "preserve earlier probe observations"
+            );
+        }
+        let (mut driver, ready) =
+            waypoint_browser::CdpDriver::launch_rehearsal(&fixture.python, fixture.config).unwrap();
+        assert!(ready.replay.is_some());
+        assert!(ready.appcontainer);
+        assert_eq!(ready.capabilities, 0);
+        assert_eq!(ready.entry_url, fixture.url);
+        let result = (|| -> Result<Value, String> {
+            let form = driver.open(&fixture.url).map_err(|e| e.to_string())?;
+            let initial = driver
+                .rehearsal_replay_report()
+                .map_err(|e| e.to_string())?;
+            let capture = driver
+                .rehearse_recorded_field(&form, &fixture.selector, &fixture.file_name)
+                .map_err(|e| e.to_string())?;
+            let mut observations = Vec::new();
+            let started = std::time::Instant::now();
+            for (index, delay) in [0, 300, 1700].iter().enumerate() {
+                std::thread::sleep(std::time::Duration::from_millis(*delay));
+                let verified = driver
+                    .verify_recorded_field(&capture)
+                    .map_err(|e| e.to_string());
+                let image = driver
+                    .screenshot_field_context(&fixture.selector)
+                    .map_err(|e| e.to_string())?;
+                let name = format!("widget-{index}.png");
+                let png =
+                    base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &image)
+                        .map_err(|_| "Invalid screenshot")?;
+                fs::write(folder.join(&name), &png).map_err(|e| e.to_string())?;
+                let replay = driver
+                    .rehearsal_replay_report()
+                    .map_err(|e| e.to_string())?;
+                observations.push(json!({"elapsed_ms":started.elapsed().as_millis(),"requested_delay_ms":delay,"native_verified":verified.is_ok(),"error":verified.err(),"image":name,"sha256":waypoint_domain::sha256_hex(&png),"replay":replay}));
+            }
+            Ok(
+                json!({"scope":"native file-widget diagnostics only; no local-model or whole-workflow credit","appcontainer":ready.appcontainer,"capabilities":ready.capabilities,"initial_replay":initial,"observations":observations}),
+            )
+        })();
+        let close = driver.execute(&BrowserCommand::Close);
+        let report = json!({"result":result,"browser_closed":close.is_ok()});
+        fs::write(
+            folder.join("widget-probe.private.json"),
+            serde_json::to_vec_pretty(&report).unwrap(),
+        )
+        .unwrap();
+        assert!(close.is_ok());
+        assert!(result.is_ok(), "private probe output retained");
+        for observation in report["result"]["Ok"]["observations"].as_array().unwrap() {
+            assert_eq!(observation["replay"]["cached_non_read_replies"], 0);
+            assert_eq!(observation["replay"]["unmanaged_child_sessions"], 0);
+        }
+    }
 
     #[cfg(windows)]
     #[test]
@@ -1141,9 +1299,15 @@ mod tests {
             assert_eq!(field["view"], expected_view);
             assert_eq!(field["status"], "visually_matched", "{}", field["label"]);
             if field["kind"] == "file" {
+                let (name, bytes) = match field["label"].as_str() {
+                    Some("Resume") => (SAMPLE_RESUME, SAMPLE_PDF),
+                    Some("Cover letter") => (SAMPLE_COVER, SAMPLE_COVER_PDF),
+                    _ => panic!("Unexpected fixture upload control"),
+                };
+                assert_eq!(field["attachment"]["name"], name);
                 assert_eq!(
                     field["attachment"]["sha256"],
-                    waypoint_domain::sha256_hex(SAMPLE_PDF)
+                    waypoint_domain::sha256_hex(bytes)
                 );
             }
         }
@@ -1154,6 +1318,33 @@ mod tests {
             assert_eq!(transitions[1]["to"], 4);
             assert_eq!(transitions[2]["reason"], "no_forward_control");
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn staged_document_roles_have_distinct_bytes_and_never_overwrite() {
+        let folder = tempfile::tempdir().unwrap();
+        let screenshots = folder.path().join("screenshots");
+        fs::create_dir(&screenshots).unwrap();
+        let documents = stage_sample_attachments(&screenshots).unwrap();
+        assert_ne!(
+            documents.files[SAMPLE_RESUME],
+            documents.files[SAMPLE_COVER]
+        );
+        assert_eq!(
+            fs::read(documents.root.join(SAMPLE_RESUME)).unwrap(),
+            SAMPLE_PDF
+        );
+        assert_eq!(
+            fs::read(documents.root.join(SAMPLE_COVER)).unwrap(),
+            SAMPLE_COVER_PDF
+        );
+        assert!(sample_attachment_bytes("unknown.pdf").is_none());
+        assert!(stage_sample_attachments(&screenshots).is_err());
+        assert_eq!(
+            fs::read(documents.root.join(SAMPLE_COVER)).unwrap(),
+            SAMPLE_COVER_PDF
+        );
     }
 
     #[cfg(windows)]

@@ -1,3 +1,15 @@
+## Document matching and broader source intake - 2026-11-13
+
+Generic local-model document proposals now use a bounded caller-owned catalog,
+with distinct résumé/cover-letter PDF truth and current native/visual checks.
+The known-source local12B run verifies four of six answerable controls; the
+résumé is natively selected but visually unverified, and the cover letter is
+unreached. No workflow passes. Two new source families were frozen before
+model use: one held-out initial inventory, one excluded incomplete copy; zero
+held-out cases have been scored. Workspace1,325 passed/596 ignored, tools90,
+Clippy/build and headless review/quick layout checks passed within documented
+source scopes. [Evidence and next work](docs/g1/HELD_OUT_INTAKE_AND_DOCUMENT_MATCHING_2026-11-13.md).
+
 ## Telephone presentation and retained visual evidence - 2026-11-13
 
 Native-proven international telephone formatting now preserves the intended

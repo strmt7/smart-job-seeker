@@ -68,6 +68,11 @@ def main():
             (folder/'telephone-presentation.png').write_bytes(base64.b64decode((folder/'telephone-presentation-screenshot.base64').read_bytes(),validate=True))
             report['telephone_sha256']=sha(folder/'telephone-presentation.private.json')
             report['telephone_image_sha256']=sha(folder/'telephone-presentation.png')
+            group=json.loads((folder/'file-group-identity.private.json').read_bytes())
+            if group!={'explicit_group_verified':True,'negative_cases':2,'review_refusals':3,'files_attached':0}:raise RuntimeError('File-group native qualification was incomplete')
+            (folder/'file-group.png').write_bytes(base64.b64decode((folder/'file-group-screenshot.base64').read_bytes(),validate=True))
+            report['file_group_sha256']=sha(folder/'file-group-identity.private.json')
+            report['file_group_image_sha256']=sha(folder/'file-group.png')
         if hashes()!=report['source_sha256'] or inventory(args.engine)!=files:raise RuntimeError('Source or engine changed during capture qualification')
         report['complete']=True
     finally:

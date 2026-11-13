@@ -4,6 +4,8 @@ mod answer_task;
 mod application_check;
 pub mod application_email;
 mod ats_check;
+#[cfg(any(windows, test))]
+mod attachment_mapping;
 mod attempt_record;
 mod attempt_review;
 mod candidate_history;

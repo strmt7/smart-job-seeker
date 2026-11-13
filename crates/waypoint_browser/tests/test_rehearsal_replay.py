@@ -273,6 +273,40 @@ class BrokerTests(unittest.TestCase):
             self.ack('Request was canceled')
         self.assertEqual(self.broker.report()['served'],0)
 
+    def test_refusal_context_is_bounded_redacted_and_not_acknowledged_delivery(self):
+        self.bind()
+        url='https://fixture.invalid/absent?email=fictional@example.invalid'
+        request={'url':url,'method':'POST','headers':{'Origin':'https://private.invalid',
+                 'Authorization':'Bearer fictional-secret','Access-Control-Request-Method':'POST'},
+                 'postData':'candidate-secret'}
+        event={'method':'Fetch.requestPaused','sessionId':'page','params':{
+            'requestId':'refused','resourceType':'XHR','request':request}}
+        self.broker.browser(event)
+        sample=self.broker.report()['refused_request_samples'][0]
+        self.assertEqual(sample,dict(url_sha256=digest(url.encode()),method='POST',resource_type='XHR',
+            reason='response_not_recorded',origin_state='present',preflight_headers_present=True,observations=1))
+        self.assertEqual(self.broker.report()['blocked'],0)
+        self.assertEqual(self.sent[-1]['method'],'Fetch.failRequest');self.ack()
+        self.broker.browser(event);self.ack()
+        self.assertEqual(self.broker.report()['refused_request_samples'][0]['observations'],2)
+        self.assertEqual(self.broker.report()['blocked'],2)
+        for index in range(35):
+            event['params']['request']={**request,'url':url+'&case='+str(index)}
+            self.broker.browser(event);self.ack()
+        report=self.broker.report()
+        self.assertEqual(len(report['refused_request_samples']),32)
+        self.assertEqual(report['omitted_refusal_samples'],4)
+        self.assertEqual(report['blocked'],37)
+        for secret in ['fictional@example.invalid','private.invalid','fictional-secret','candidate-secret',url]:
+            self.assertNotIn(secret,json.dumps(report))
+        self.broker.observe_refusal({'url':'bad','method':['private-method'],'headers':[]},['private-kind'],'unsupported_url')
+        self.assertEqual(self.broker.report()['omitted_refusal_samples'],5)
+        other=replay.Broker(self.fixture.archive(),self.sent.append,self.emitted.append)
+        other.observe_refusal({'url':'bad','method':{},'headers':{'Origin':7,'origin':'secret'}},{},'unsupported_url')
+        self.assertEqual(other.report()['refused_request_samples'],[dict(url_sha256=None,method='Other',
+            resource_type='Other',reason='unsupported_url',origin_state='malformed',
+            preflight_headers_present=False,observations=1)])
+
     def test_child_page_waits_for_interception_before_resuming(self):
         self.bind();event={'method':'Target.attachedToTarget','params':{'sessionId':'child','waitingForDebugger':True,'targetInfo':{'type':'iframe','targetId':'frame-target'}}}
         self.assertFalse(self.broker.browser(event));self.ack();self.ack();self.assertEqual(self.sent[-1]['method'],'Runtime.runIfWaitingForDebugger');self.assertNotIn(event,self.emitted);self.ack();self.assertIn(event,self.emitted)

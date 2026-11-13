@@ -144,3 +144,11 @@ Before promotion, add independently annotated held-out employer/layout families
 and document exact eligibility, unavailable cases, complete-form truth, model/
 prompt/runtime identities, repetitions and resource denominators. Preserve prior
 failures and corpus versions. See the [active execution plan](COMPLETION_PLAN_2026-11-11.md).
+
+
+Attachment fixtures must use distinct purpose-specific bytes and freeze the
+expected digest before any model decision. A changed fixture requires a new
+annotation revision and exact input binding; never rescore an old immutable
+report as if it used the replacement. Native FileList/hash proof alone does not
+establish visible widget acceptance, server validation or delivery. Requested
+delays and actual monotonic observation times must remain separate.

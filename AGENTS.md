@@ -258,6 +258,14 @@ used by development tools and tests. Do not add WSL or Docker as product require
 
 ## Real pitfalls already hit (don't rediscover these)
 
+- Keep different document roles distinguishable in fixtures: a résumé and cover
+  letter sharing PDF bytes cannot expose a swapped-document error. Freeze each
+  role's actual expected digest before inference and version changed annotations.
+  Inspect failed target images before blaming the model: short control bounds
+  can crop distant labels even when the control itself is complete. Fix the
+  bounded visual input and preserve raw observations; never invent the missing
+  label or rewrite the model's answer to make a gate pass.
+
 - Preserve commanded values, actual native values and raw visual transcriptions
   separately. A telephone control may reformat an explicit international number;
   separator equality is allowed only through the native telephone proof and an
@@ -304,6 +312,10 @@ used by development tools and tests. Do not add WSL or Docker as product require
   Candidate history must not be rewritten to match the hiring employer or role.
   Retain original visual-review observations and unknowns; optional model advice
   is not evidence for new candidate facts. See `docs/TEMPLATE_TAILORING.md`.
+- Native file selection and matching bytes do not prove that the page's widget
+  accepted the attachment. Preserve visible filename failures and broker walls;
+  do not normalize them into success. Keep requested waits separate from actual
+  monotonic observation times, retaining earlier diagnostic reports unchanged.
 - After interrupted browser or fixture tests, check for orphaned Waypoint-owned
   browser profiles and fixture servers before concluding that host memory is
   unavailable. Verify each process's identity and that its test parent is gone
