@@ -6,11 +6,13 @@ model mechanisms, but broad real-world application coverage and clean-host
 installation are not established. Older measured checkpoints retain their
 original source and fixture scopes.
 
-Latest verified hosted checkpoint: `7c7a25cf9bb586751b4a36ff81d790f0ff8b728a`,
-with successful CI, coverage and CodeQL recorded in the preceding continuation.
-Later local checkpoints have no newer hosted result. The current source-bound
-queue and [semantic contact evidence](g1/SEMANTIC_PROFILE_REHEARSAL_2026-11-13.md)
-record the latest work; historical measurements retain their original scopes.
+Latest verified hosted checkpoint: `ed5f9e9bded1c04f987a1e4fd15ea6c95dc65873`,
+with successful CI (43387268830), coverage (43387268763) and CodeQL (43387267976)
+verified in the 13 November continuation. The newer
+[contained dialog checkpoint](g1/CONTAINED_DIALOG_PROGRESSION_2026-11-13.md) has
+local native/model/client/workspace evidence, with replay and contact-review
+failures still open. The current source-bound queue records next work; historical
+measurements retain their original scopes.
 The original audit snapshot remains `4acb9a955bcb961ad7a27cb9538e77bb0e03a547`.
 Read the [repository assessment](REPO_STATE_REVIEW_2026-11-11.md) alongside this
 plan. The [active queue](ACTIVE_DEVELOPMENT_PLAN.json) identifies work packages,

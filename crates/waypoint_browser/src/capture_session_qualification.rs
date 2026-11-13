@@ -13,6 +13,80 @@ struct RecordedHttp {
     requests: Arc<Mutex<Vec<String>>>,
     dropped: Arc<AtomicBool>,
 }
+
+#[test]
+#[ignore = "explicit zero-capability engine; fictional dialog transitions and adversarial changes"]
+fn recorded_dialog_transitions_preserve_values_and_refuse_uncertainty() {
+    use crate::RecordedDialogOutcome;
+    let (template, folder, python) = qualification_config();
+    let (mut successful, mut refused, mut guarded, mut stale) = (0, 0, 0, 0);
+    for (index, behavior, embedded) in [
+        (0,"document.getElementById('notice').remove()",false),
+        (1,"document.getElementById('notice').remove()",true),
+        (2,"document.getElementById('email').value='changed';document.getElementById('notice').remove()",false),
+        (3,"document.getElementById('application').requestSubmit()",false),
+        (4,"document.getElementById('notice').innerHTML='<p>Another dialog</p><button type=button>Review</button>'",false),
+        (5,"document.getElementById('notice').remove()",false),
+        (6,"document.getElementById('notice').remove()",false),
+    ] {
+        let entry="https://fixture.invalid/dialog";
+        let frame="https://frame.invalid/dialog";
+        let body=format!("<!doctype html><meta charset=utf-8><link rel=icon href=data:,><style>body{{font:18px Arial;margin:20px}}#notice{{position:fixed;inset:80px 25px auto;background:white;border:2px solid #124;padding:20px;z-index:10}}button{{font:18px Arial;padding:12px;margin:8px}}</style><form id=application method=post action=/send><label>Email<input id=email name=email value=original></label></form><div role=dialog aria-label='Privacy choices' id=notice><p>Optional tracking is your choice.</p><button id=decline onclick=\"{behavior}\">Keep optional tracking off</button><button type=button>Allow optional tracking</button><button type=submit form=application>Send application</button></div>");
+        let body=if index==5 {body.replace("id=decline onclick=", "id=decline onmouseenter=\"this.textContent='Changed target'\" onclick=")} else {body};
+        let mut builder=SnapshotBuilder::start(&folder.join(format!("dialog-{index}")),entry).unwrap();
+        let response=|html:&str| {
+            let wire=format!("HTTP/1.1 200 Fictional\r\nContent-Type: text/html\r\nContent-Length: {}\r\n\r\n{html}",html.len());
+            waypoint_net::read_asset_response(&mut Cursor::new(wire.into_bytes()),"GET",1024*1024).unwrap()
+        };
+        if embedded {
+            builder.add(entry,response(&format!("<!doctype html><link rel=icon href=data:,><iframe title='Fictional preferences' width=1000 height=650 src={frame}></iframe>"))).unwrap();
+            builder.add(frame,response(&body)).unwrap();
+        } else {builder.add(entry,response(&body)).unwrap();}
+        let snapshot=builder.finish().unwrap();let mut config=template.clone();
+        config.schema=2;config.content_root=snapshot.root;config.content_files=snapshot.files;config.entry=snapshot.entry;config.replay_manifest=Some(snapshot.manifest);
+        let (mut browser,ready)=CdpDriver::launch_rehearsal(&python,config).unwrap();assert!(ready.appcontainer && ready.capabilities==0);
+        let mut form=browser.open(entry).unwrap();
+        if embedded {let frames=browser.captured_frames().unwrap();assert_eq!(frames.frames.len(),1);form=browser.enter_captured_frame(&frames.frames[0]).unwrap();}
+        let dialog=browser.recorded_dialog(&form).unwrap().unwrap();let description=dialog.description();
+        assert_eq!(description.controls.len(),3);assert!(description.controls[0].available);assert!(!description.controls[2].available);
+        assert!(browser.dismiss_recorded_dialog_reviewed(&dialog,"control-2",|_|panic!("unsafe target reached vision")).is_err());
+        assert!(browser.dismiss_recorded_dialog_reviewed(&dialog,"control-99",|_|panic!("unknown target reached vision")).is_err());
+        assert!(browser.dismiss_recorded_dialog_reviewed(&dialog,"control-0",|_|Err(waypoint_applications::driver::DriverError("fictional visual refusal".into()))).is_err());
+        assert!(browser.trace.iter().all(|event|!event.starts_with("clicked")));
+        if index==6 {
+            let selector=browser.captured_selector("#email");
+            browser.execute(&BrowserCommand::Fill {selector,value:PacketValue::Text("changed-before-action".into())}).unwrap();
+        }
+        let clicks_before=browser.trace.iter().filter(|event|event.starts_with("clicked")).count();
+        let outcome=browser.dismiss_recorded_dialog_reviewed(&dialog,"control-0",|target| {
+            assert_eq!(target.label(),"Keep optional tracking off");assert_eq!(target.kind(),"button");
+            if index<2 {std::fs::write(folder.join(format!("dialog-{index}-before.base64")),target.image()).unwrap();}
+            Ok(())
+        }).unwrap();
+        match (index,outcome) {
+            (0|1,RecordedDialogOutcome::NativeClosed {capture})=>{
+                assert!(browser.recorded_dialog(capture.form()).unwrap().is_none());
+                browser.verify_recorded_dialog_closed(&capture).unwrap();successful+=1;
+                std::fs::write(folder.join(format!("dialog-{index}-after.base64")),capture.image()).unwrap();
+                let selector=browser.captured_selector("#email");
+                browser.execute(&BrowserCommand::Fill {selector,value:PacketValue::Text("changed-after-evidence".into())}).unwrap();
+                assert!(browser.verify_recorded_dialog_closed(&capture).is_err());stale+=1;
+            }
+            (2,RecordedDialogOutcome::Stopped {reason:"field_changed",..}) |
+            (3,RecordedDialogOutcome::Stopped {reason:"replay_gap",..}) |
+            (4,RecordedDialogOutcome::Stopped {reason:"dialog_remains",..})=>refused+=1,
+            (5,RecordedDialogOutcome::Stopped {reason:"interaction_unverified",..}) |
+            (6,RecordedDialogOutcome::Stopped {reason:"dialog_changed",..})=>{
+                assert_eq!(browser.trace.iter().filter(|event|event.starts_with("clicked")).count(),clicks_before);guarded+=1;
+            }
+            _=>panic!("Unexpected dialog outcome for fixture {index}"),
+        }
+        if embedded {browser.leave_captured_frame().unwrap();}
+        browser.execute(&BrowserCommand::Close).unwrap();
+    }
+    assert_eq!((successful, refused, guarded, stale), (2, 3, 2, 2));
+    std::fs::write(folder.join("dialog-qualification.private.json"),serde_json::to_vec_pretty(&serde_json::json!({"native_closed":successful,"post_action_refusals":refused,"pre_action_refusals":21,"guarded_refusals":guarded,"freshness_refusals":stale,"external_delivery":"not_performed"})).unwrap()).unwrap();
+}
 impl Transport for RecordedHttp {
     fn get(
         &mut self,

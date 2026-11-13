@@ -1,4 +1,10 @@
 //! Explicit, source-bound entry into one recorded cross-origin frame.
+#[cfg(windows)]
+#[path = "recorded_dialog.rs"]
+mod dialog;
+#[cfg(windows)]
+pub use dialog::{DialogChoice, DialogDescription, RecordedDialog, RecordedDialogOutcome};
+
 use super::*;
 use std::{
     borrow::Cow,

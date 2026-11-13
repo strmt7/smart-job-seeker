@@ -1,3 +1,13 @@
+## Contained dialog progression — 2026-11-13
+
+Isolated saved copies now support bounded local-model optional-dialog proposals,
+native/visual closure checks, stale/value/replay refusals and linked updated views.
+The fictional optional and legal intent cases pass their final dialog gates;
+contact mapping remains 0/3 and a saved employer case stops at a delayed replay
+gap. Workspace 1,344 passed/600 ignored; native, Clippy/build/fmt and actual record
+checks at four widths pass. No held-out/workflow pass, live employer interaction,
+application submission or release. [Evidence](docs/g1/CONTAINED_DIALOG_PROGRESSION_2026-11-13.md).
+
 ## Observed document representations - 2026-11-13
 
 Public document captures now use the rendering engine's observed anonymous

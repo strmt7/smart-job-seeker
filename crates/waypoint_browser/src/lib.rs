@@ -26,6 +26,8 @@ pub use captured_frame::{
     RecordedFieldKind, RecordedFieldObservation, RecordedFieldWitness, RecordedTargetCapture,
 };
 #[cfg(windows)]
+pub use captured_frame::{DialogChoice, DialogDescription, RecordedDialog, RecordedDialogOutcome};
+#[cfg(windows)]
 pub use captured_frame::{RecordedSectionOutcome, RecordedSectionStop};
 pub mod capture_discovery;
 pub mod capture_privacy;
@@ -357,6 +359,13 @@ enum ClickGuard<'a> {
     #[cfg(windows)]
     RecordedSection {
         label: &'a str,
+        non_read_before: u64,
+    },
+    #[cfg(windows)]
+    RecordedDialog {
+        label: &'a str,
+        dialog_selector: &'a str,
+        dialog_text: &'a str,
         non_read_before: u64,
     },
     ClosedCombobox,
@@ -6344,6 +6353,15 @@ impl CdpDriver {
             ClickGuard::RecordedSection { label, .. } => {
                 json!({"kind":"recorded-section","label":label})
             }
+            #[cfg(windows)]
+            ClickGuard::RecordedDialog {
+                label,
+                dialog_selector,
+                dialog_text,
+                ..
+            } => {
+                json!({"kind":"recorded-dialog","label":label,"dialog_selector":dialog_selector,"dialog_text":dialog_text})
+            }
             ClickGuard::ClosedCombobox => json!({"kind":"combobox"}),
             ClickGuard::RadioOption {
                 label,
@@ -6361,8 +6379,34 @@ impl CdpDriver {
         guard_value["recorded_frame"] = json!(captured_point.is_some());
         let checked = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":r#"function(guard) {
             if (!this.isConnected || this.matches(':disabled') || this.closest('[aria-disabled="true" i]')) return false;
+            let dialog = null;
+            const norm = text => (text || '').trim().replace(/\s+/g,' ');
+            if (guard.kind === 'recorded-dialog') {
+                const matches = this.ownerDocument.querySelectorAll(guard.dialog_selector);
+                if (matches.length !== 1 || !matches[0].contains(this) || norm(matches[0].innerText) !== guard.dialog_text) return 'unsafe';
+                dialog = matches[0];
+                const type = (this.getAttribute('type') || '').toLowerCase();
+                const native = this.tagName === 'BUTTON' && (type === 'button' || !this.hasAttribute('type') && !this.form);
+                const input = this.tagName === 'INPUT' && type === 'button';
+                const role = !['BUTTON','INPUT','A'].includes(this.tagName) && (this.getAttribute('role') || '').toLowerCase() === 'button';
+                if (!(native || input || role) || this.hasAttribute('formaction') || this.hasAttribute('formmethod') || this.hasAttribute('formtarget') || this.closest('a[href],[inert],[aria-readonly="true" i]')) return 'unsafe';
+                const ids = this.getAttribute('aria-labelledby');
+                let label = this.getAttribute('aria-label') || (this.tagName === 'INPUT' ? this.value : this.innerText);
+                if (ids) {
+                    const refs = ids.trim().split(/\s+/); if (!refs.length || refs.length > 8) return 'unsafe';
+                    const parts = [];
+                    for (const id of refs) {
+                        const nodes = this.ownerDocument.querySelectorAll('#' + CSS.escape(id));
+                        if (nodes.length !== 1 || !nodes[0].getClientRects().length || getComputedStyle(nodes[0]).visibility !== 'visible') return 'unsafe';
+                        parts.push(norm(nodes[0].innerText));
+                    }
+                    label = parts.join(' ');
+                }
+                if (norm(label) !== guard.label || this.closest('dialog[open],[role="dialog" i],[role="alertdialog" i],[aria-modal="true" i]') !== dialog) return 'unsafe';
+            }
             const unsafeTarget = node => {
-                if (node.closest('button:not([type="button"]), input[type="submit" i], input[type="image" i], a[href]')) return true;
+                const target = node.closest('button:not([type="button"]), input[type="submit" i], input[type="image" i], a[href]');
+                if (target && !(guard.kind === 'recorded-dialog' && target === this && this.tagName === 'BUTTON' && !this.hasAttribute('type') && !this.form)) return true;
                 const control = node.closest('label')?.control;
                 return !!control && control.matches('button:not([type="button"]), input[type="submit" i], input[type="image" i]');
             };
@@ -6470,6 +6514,9 @@ impl CdpDriver {
         }
         #[cfg(windows)]
         if let ClickGuard::RecordedSection {
+            non_read_before, ..
+        }
+        | ClickGuard::RecordedDialog {
             non_read_before, ..
         } = guard
         {

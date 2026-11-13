@@ -19,6 +19,8 @@ mod convert_task;
 mod custom_choice_action;
 #[cfg(test)]
 mod db_compat_qualification;
+#[cfg(windows)]
+mod dialog_planning;
 mod discovery_task;
 mod doc_suggest;
 mod document_convert;

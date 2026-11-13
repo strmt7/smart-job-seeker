@@ -23,11 +23,13 @@ def main():
     parser.add_argument('--custom-controls',action='store_true',help='Verify independent entry while custom widgets still block advancement')
     parser.add_argument('--failed-entry',action='store_true',help='Qualify failed input readback/image evidence without accepting the entry')
     parser.add_argument('--embedded-context',action='store_true',help='Capture fictional embedded file feedback and unchanged contact context without selecting files')
+    parser.add_argument('--dialogs',action='store_true',help='Verify native isolated dialog transitions and refusals')
     args=parser.parse_args()
     if args.failed_entry and (args.discover or args.privacy or args.custom_controls):parser.error('--failed-entry selects a separate native scenario')
     if args.embedded_context and (args.failed_entry or args.discover or args.privacy or args.custom_controls):parser.error('--embedded-context selects a separate native scenario')
+    if args.dialogs and (args.failed_entry or args.embedded_context or args.discover or args.privacy or args.custom_controls):parser.error('--dialogs selects a separate native scenario')
     args.discover=args.discover or args.privacy or args.custom_controls
-    args.coordinator=args.coordinator or args.discover or args.failed_entry or args.embedded_context
+    args.coordinator=args.coordinator or args.discover or args.failed_entry or args.embedded_context or args.dialogs
     if os.name!='nt' or not args.engine.is_absolute() or not args.python.is_absolute() or not args.python.is_file():parser.error('Windows and explicit absolute engine/interpreter paths required')
     cargo=shutil.which('cargo')
     if not cargo:parser.error('Cargo is required for this development qualification')
@@ -40,6 +42,7 @@ def main():
     path=folder/'configuration.private.json';path.write_text(json.dumps(config),encoding='utf-8')
     sources=['Cargo.lock','crates/waypoint_applications/src/driver.rs','crates/waypoint_browser/src/captured_frame.rs','crates/waypoint_net/Cargo.toml','crates/waypoint_net/src/lib.rs','crates/waypoint_net/src/http.rs','crates/waypoint_browser/Cargo.toml','crates/waypoint_browser/src/rehearsal_capture.rs','crates/waypoint_browser/src/lib.rs','crates/waypoint_browser/src/rehearsal.rs','crates/waypoint_browser/src/rehearsal_worker.py','crates/waypoint_browser/src/rehearsal_replay.py','crates/waypoint_browser/tests/capture_replay_live.rs','tools/owned_process.py','tools/qualify_rehearsal.py','tools/qualify_history_ui.py','tools/qualify_capture_replay.py']
     if args.coordinator:sources.extend(['crates/waypoint_browser/src/capture_privacy.rs','crates/waypoint_browser/src/capture_session.rs','crates/waypoint_browser/src/capture_discovery.rs','crates/waypoint_browser/src/capture_session_qualification.rs','crates/waypoint_policy/src/lib.rs','crates/waypoint_policy/data/source_permissions.json'])
+    sources.extend(['crates/waypoint_browser/src/recorded_dialog.rs','crates/waypoint_browser/src/recorded_dialog.js'])
     hashes=lambda:{name:sha(REPO/name) for name in sources}
     report={'complete':False,'scope':'fictional response bytes to offline snapshot and contained browser; no public source or employer-form capture','source_sha256':hashes(),'configuration_sha256':sha(path)}
     report['coordinator']=args.coordinator
@@ -53,11 +56,12 @@ def main():
         if args.custom_controls:case='independent_fields_preserve_custom_review_and_hard_barriers'
         if args.failed_entry:case='failed_entry_retains_bound_readback_without_approving_it'
         if args.embedded_context:case='discovery_archives_observed_public_ats_frame'
+        if args.dialogs:case='recorded_dialog_transitions_preserve_values_and_refuse_uncertainty'
         selection=['--lib','capture_session::qualification::'+case] if args.coordinator else ['--test','capture_replay_live']
         log=folder/'native.private.log';report['run']=run([cargo,'test','-p','waypoint_browser',*selection,'--','--ignored','--nocapture','--test-threads=1'],env,log,180)
         if report['run']['exit_code']:raise RuntimeError('Capture bridge failed; inspect '+str(log))
         report['tests']=test_denominator(log.read_text(encoding='utf-8'),'rust',1)
-        if not args.embedded_context:
+        if not args.embedded_context and not args.dialogs:
             native=folder/'http-captured.private.json'
             if json.loads(native.read_text())['complete'] is not True:raise RuntimeError('Missing native completion')
             report['native_sha256']=sha(native)
@@ -77,6 +81,18 @@ def main():
                 if not 0<width<=1440 or not 0<height<=800:raise RuntimeError('Embedded image exceeded the existing raster budget')
                 (folder/(stem+'.png')).write_bytes(png)
                 report['embedded_context']['images'][kind]={'sha256':sha(folder/(stem+'.png')),'width':width,'height':height,'raster_scale':2,'css_width_limit':720,'css_height_limit':400}
+        if args.dialogs:
+            observation=json.loads((folder/'dialog-qualification.private.json').read_bytes())
+            if observation!={'native_closed':2,'post_action_refusals':3,'pre_action_refusals':21,'guarded_refusals':2,'freshness_refusals':2,'external_delivery':'not_performed'}:raise RuntimeError('Dialog qualification incomplete')
+            report['dialog_observation']=observation
+            report['dialog_images']={}
+            for case in (0,1):
+                for phase in ('before','after'):
+                    stem=f'dialog-{case}-{phase}'
+                    data=base64.b64decode((folder/(stem+'.base64')).read_bytes(),validate=True)
+                    if not data.startswith(b'\x89PNG\r\n\x1a\n') or len(data)>6*1024**2:raise RuntimeError('Invalid dialog image')
+                    (folder/(stem+'.png')).write_bytes(data)
+                    report['dialog_images'][stem]=sha(folder/(stem+'.png'))
         if args.failed_entry:
             failure=json.loads((folder/'failed-entry.private.json').read_bytes())
             if failure.get('status')!='entry_unverified' or failure.get('entry_verified') is not False:raise RuntimeError('Failed entry was mislabeled')

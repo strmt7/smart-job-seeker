@@ -26,6 +26,10 @@ use crate::{CapabilityReport, Inference, InferenceError, UsageReport};
 /// Passing any other name falls back to generic JSON mode.
 pub const KNOWN_SCHEMAS: &[(&str, &str)] = &[
     (
+        "dialog_action",
+        r#"{"type":"object","properties":{"decision":{"type":"string","enum":["dismiss_optional","review"]},"control":{"type":["string","null"],"pattern":"^control-[0-9]{1,2}$"},"reason":{"type":"string","minLength":1,"maxLength":200}},"required":["decision","control","reason"],"additionalProperties":false}"#,
+    ),
+    (
         "attachment_mapping",
         r#"{"type":"object","properties":{"decisions":{"type":"array","maxItems":16,"items":{"type":"object","properties":{"field":{"type":"string","pattern":"^upload-[0-9]{1,2}$"},"document":{"type":"string","minLength":1,"maxLength":48,"pattern":"^[a-z][a-z0-9_-]*$"}},"required":["field","document"],"additionalProperties":false}}},"required":["decisions"],"additionalProperties":false}"#,
     ),

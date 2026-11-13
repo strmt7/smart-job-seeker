@@ -25,6 +25,23 @@ function harness(api, onFinished) {
     {kind:'page',label:'Page',image:'0001.png',sha256:digest,fields:[{label:'Parent name'}]},
     {kind:'frame',label:'Qualifications',image:'0002.png',sha256:digest,fields:[{label:'Child answer',required:true}]},
   ] };
+  for (const [changes,closed] of [[{},true],[{native_closed:false},false],[{closure_reverified:false},false],[{scope:'live'},false],[{post_visual:{inspection:'uncertain',blocking_dialogs:[]}},false]]) {
+    const action={view:1,status:'closed_in_saved_copy',scope:'fictional_saved_copy_only',native_closed:true,closure_reverified:true,post_visual:{inspection:'complete',blocking_dialogs:[]},followup_capture:'saved',to:2,...changes};
+    const panel=harness(async()=>{}).preview({...preview,views:[preview.views[0],{...preview.views[1],after_dialog:true}],rehearsal:{scope:'fictional_saved_form',dialogs:[action],fields:[]}},{});
+    assert(find(panel,node=>node.tag==='option'&&node.textContent==='Frame 1 · Qualifications · Updated'));
+    assert(find(panel,node=>node.tag==='select'&&node.attributes['aria-label']==='Saved page view'));
+    assert(find(panel,node=>node.textContent===(closed?'Dialog closed in saved copy.':'Dialog needs review.')));
+    assert.equal(Boolean(button(panel,'View updated form')),closed);
+    if(closed){button(panel,'View updated form').listeners.click();assert(find(panel,node=>node.textContent==='Child answer · Required'));}
+  }
+  const failedDialog=harness(async()=>{}).preview({...preview,rehearsal:{scope:'fictional_saved_form',dialogs:[{view:1,status:'needs_review',reason:'field_changed',followup_capture:'unavailable'}],fields:[]}},{});
+  assert(find(failedDialog,node=>node.textContent==='Page values changed during the dialog check.'));
+  assert(find(failedDialog,node=>node.textContent==='The updated form could not be saved. Further entry stopped.'));
+  assert.equal(button(failedDialog,'View updated form'),undefined);
+  const changedForm=harness(async()=>{}).preview({...preview,rehearsal:{scope:'fictional_saved_form',dialogs:[{view:1,status:'needs_review',reason:'form_changed',proposal:{reason:'Decline optional features'}}],fields:[]}},{});
+  assert(find(changedForm,node=>node.textContent==='The form changed during dialog review.'));
+  assert(find(changedForm,node=>node.textContent==='Suggested action: Decline optional features'));
+  assert(!find(changedForm,node=>node.textContent==='Dialog closed in saved copy.'));
   for (const flag of [true, false, undefined, 'true']) {
     const panel = harness(async()=>{}).preview({views:[{kind:'page',label:'Page',image:'0001.png',sha256:digest,fields:[{label:'Long question',label_truncated:flag,required:true}]}]},{});
     assert(find(panel,node=>node.textContent===`Long question${flag === true ? '…' : ''} · Required`));

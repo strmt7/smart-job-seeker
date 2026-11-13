@@ -279,13 +279,16 @@ impl PublicDocumentAccept {
                 && s.bytes()
                     .all(|c| c.is_ascii_alphanumeric() || b"!#$%&'*+.^_`|~-".contains(&c))
         };
-        let ranges: Vec<_> = raw.split(',').collect();
         if raw.is_empty()
+            || raw.len() > 1024
             || !raw.is_ascii()
             || raw.bytes().any(|c| c < 32 || c == 127)
-            || raw.len() > 1024
             || raw.trim() != raw
-            || ranges.len() > 32
+        {
+            return Err(NetError::InvalidResponse("invalid public document Accept"));
+        }
+        let ranges: Vec<_> = raw.split(',').collect();
+        if ranges.len() > 32
             || !ranges.iter().all(|range| {
                 let mut parts = range.trim().split(';');
                 let media: Vec<_> = parts.next().unwrap_or("").trim().split('/').collect();

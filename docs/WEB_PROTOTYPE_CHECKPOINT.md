@@ -1,3 +1,12 @@
+## Contained dialog records — 2026-11-13
+
+The saved-copy interface now shows optional-dialog advice separately from
+native/visual closure and links to an explicitly named updated view. Actual
+optional, legal and saved-employer refusal records pass headless 320/480/900/1360
+px checks. The native/local12B scope and unresolved replay/contact failures are
+recorded in [the measured checkpoint](g1/CONTAINED_DIALOG_PROGRESSION_2026-11-13.md).
+No live employer interaction or application submission occurred.
+
 ## Independent value and failed-entry evidence - 2026-11-11
 
 Versioned expected-answer/control/image comparisons now distinguish successful

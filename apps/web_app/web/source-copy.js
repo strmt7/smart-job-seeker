@@ -105,13 +105,15 @@
       return section;
     }
     const label = el('label', 'View', 'source-copy-view'), select = el('select');
+    select.setAttribute('aria-label', 'Saved page view');
     const frames = new Map();
     for (const [index, view] of captures.entries()) {
       const scope = count(view.scope_view) || index + 1;
       if (view.kind === 'frame' && !frames.has(scope)) frames.set(scope, frames.size + 1);
       const heading = view.kind === 'page' ? 'Page' : `Frame ${frames.get(scope)} · ${view.label || view.origin || 'Embedded page'}`;
       const stage = count(view.section);
-      const option = el('option', stage > 1 ? `${heading} · Section ${stage}` : heading);
+      const caption = stage > 1 ? `${heading} · Section ${stage}` : heading;
+      const option = el('option', view.after_dialog === true ? `${caption} · Updated` : caption);
       option.value = String(index);
       select.append(option);
     }
@@ -188,6 +190,21 @@
       }
       if (rehearsal) {
         const viewNumber = Number(select.value) + 1;
+        const dialogs = Array.isArray(rehearsal.dialogs) ? rehearsal.dialogs.slice(0,2).filter(action=>action?.view===viewNumber) : [];
+        const dialogReasons = {form_changed:'The form changed during dialog review.',interaction_unverified:'The dialog interaction could not be verified.',dialog_changed:'The dialog changed during review.',replay_gap:'The saved page requested an unrecorded response.',document_changed:'The page changed during review.',dialog_remains:'A dialog still needs review.',field_changed:'Page values changed during the dialog check.'};
+        for(const action of dialogs){
+          const closed = action.scope==='fictional_saved_copy_only' && action.status==='closed_in_saved_copy' && action.native_closed===true && action.closure_reverified===true
+            && action.post_visual?.inspection==='complete' && Array.isArray(action.post_visual.blocking_dialogs) && action.post_visual.blocking_dialogs.length===0;
+          details.append(el('p',closed?'Dialog closed in saved copy.':'Dialog needs review.',closed?'footnote':'review-label'));
+          if(typeof action.proposal?.reason==='string')details.append(el('p',`Suggested action: ${action.proposal.reason.slice(0,500)}`,'footnote'));
+          if(typeof action.reason==='string')details.append(el('p',dialogReasons[action.reason]||action.reason.slice(0,500),'footnote'));
+          if(action.followup_capture==='unavailable')details.append(el('p','The updated form could not be saved. Further entry stopped.','review-label'));
+          if(action.image){const button=el('button','View dialog image','secondary');button.type='button';button.addEventListener('click',()=>showImage(action,button));details.append(button);}
+          const next=count(action.to);
+          if(closed && action.followup_capture==='saved' && next!==null && next>viewNumber && next<=captures.length){
+            const button=el('button','View updated form','secondary');button.type='button';button.addEventListener('click',()=>{select.value=String(next-1);describeSelection();});details.append(button);
+          }
+        }
         const factPlan = Array.isArray(rehearsal.fact_plans) ? rehearsal.fact_plans.slice(0, 7).find(plan => plan?.view === viewNumber) : null;
         if (factPlan?.status === 'needs_review') {
           details.append(el('p', 'Contact matching needs review; no contact fields were chosen automatically.', 'review-label'));

@@ -13,6 +13,13 @@ applications by the shipped local model. Search, documents, installation,
 recovery and whole-interface acceptance also remain open. A completion
 percentage or zero-defect claim would not be evidence-based.
 
+The [13 November dialog continuation](g1/CONTAINED_DIALOG_PROGRESSION_2026-11-13.md)
+adds native/local-vision optional closure only in isolated saved copies. Fictional
+intent checks pass; contact sensitivity remains 0/3 and the saved employer source
+stops at a delayed replay gap. Workspace 1,344 passed/600 opt-in ignored; no new
+held-out or whole-workflow completion evidence. R03 remains the prioritized task,
+with R02 raw mapping diagnostics and independent workflow truth still required.
+
 Use the [detailed plan](COMPLETION_PLAN_2026-11-11.md) and
 [active execution queue](ACTIVE_DEVELOPMENT_PLAN.json). Earlier reviews are
 preserved in the [historical audit snapshot](REPO_STATE_REVIEW_2026-11-11_HISTORY.md);

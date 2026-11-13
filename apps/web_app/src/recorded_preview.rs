@@ -300,6 +300,8 @@ const VIEW_FIELD_LIMIT: usize = 40;
 #[cfg(windows)]
 #[cfg(windows)]
 const SECTION_ADVANCE_LIMIT: usize = 2;
+#[cfg(windows)]
+const DIALOG_ACTION_LIMIT: usize = 2;
 
 #[cfg(windows)]
 fn record_scope(
@@ -315,13 +317,24 @@ fn record_scope(
     let first_view = views.len() + 1;
     let mut prior = Vec::new();
     let mut pending: Option<(usize, String)> = None;
+    let mut pending_dialog: Option<usize> = None;
     loop {
         let view = views.len() + 1;
         let capture = capture_view(driver, directory, view, label, form.clone(), embedded);
         let mut capture = match capture {
             Ok(capture) => capture,
-            Err(error) if pending.is_none() => return Err(error),
+            Err(error) if pending.is_none() && pending_dialog.is_none() => return Err(error),
             Err(_) => {
+                if pending_dialog.take().is_some() {
+                    if let Some(rehearsal) = rehearsal.as_deref_mut() {
+                        if let Some(record) = rehearsal.dialogs.last_mut() {
+                            record["followup_capture"] = json!("unavailable");
+                        }
+                        rehearsal.halted = true;
+                    }
+                    return Ok(());
+                }
+
                 if let (Some(rehearsal), Some((from, _))) = (rehearsal.as_deref_mut(), pending) {
                     rehearsal.sections.push(
                         json!({"view":from,"status":"stopped","reason":"section_capture_failed"}),
@@ -332,6 +345,12 @@ fn record_scope(
             }
         };
         if let Some(rehearsal) = rehearsal.as_deref_mut() {
+            if pending_dialog.take().is_some() {
+                capture["after_dialog"] = json!(true);
+                if let Some(record) = rehearsal.dialogs.last_mut() {
+                    record["followup_capture"] = json!("saved");
+                }
+            }
             capture["scope_view"] = json!(first_view);
             capture["section"] = json!(prior.len() + 1);
             if let Some((from, control)) = pending.take() {
@@ -342,14 +361,20 @@ fn record_scope(
         let Some(rehearsal) = rehearsal.as_deref_mut() else {
             return Ok(());
         };
-        if rehearsal.halted || form.schema.fields.is_empty() {
+        if rehearsal.halted {
             return Ok(());
         }
-        if form.independent_field_entry_blocked() {
+        if form.independent_field_entry_blocked() || form.schema.fields.is_empty() {
+            if let Some(next) = rehearsal.resolve_dialog(driver, directory, view, &form) {
+                pending_dialog = Some(view);
+                form = next;
+                continue;
+            }
+            if form.schema.fields.is_empty() {
+                return Ok(());
+            }
             rehearsal.halted = true;
-            rehearsal
-                .sections
-                .push(json!({"view":view,"status":"stopped","reason":"page_needs_review","barriers":form.independent_field_barriers()}));
+            rehearsal.sections.push(json!({"view":view,"status":"stopped","reason":"page_needs_review","barriers":form.independent_field_barriers()}));
             return Ok(());
         }
         let first_capture = rehearsal.captures.len();
@@ -540,7 +565,7 @@ impl RehearsalVision {
                 "Visual inspection needs review before this action".into(),
             )
         };
-        if self.targets.len() >= REHEARSAL_LIMIT + SECTION_ADVANCE_LIMIT {
+        if self.targets.len() >= REHEARSAL_LIMIT + SECTION_ADVANCE_LIMIT + DIALOG_ACTION_LIMIT {
             return Err(refused());
         }
         let mut record = json!({"view":view,"phase":phase,"label":bounded_text(target.label()),"kind":target.kind(),"status":"visual_unavailable"});
@@ -665,6 +690,7 @@ struct Rehearsal {
     captures: Vec<(usize, waypoint_browser::RecordedFieldCapture, bool)>,
     halted: bool,
     sections: Vec<Value>,
+    dialogs: Vec<Value>,
     advances: usize,
     profile: Result<Value, String>,
     attachment_plans: Vec<Value>,
@@ -688,6 +714,7 @@ impl Rehearsal {
             captures: Vec::new(),
             halted,
             sections: Vec::new(),
+            dialogs: Vec::new(),
             advances: 0,
             profile,
             attachment_plans: Vec::new(),
@@ -949,8 +976,112 @@ impl Rehearsal {
         }
     }
 
+    fn resolve_dialog(
+        &mut self,
+        driver: &mut waypoint_browser::CdpDriver,
+        directory: &Path,
+        view: usize,
+        form: &waypoint_applications::driver::LiveForm,
+    ) -> Option<waypoint_applications::driver::LiveForm> {
+        use waypoint_browser::RecordedDialogOutcome;
+        if !self.fields.is_empty() || self.dialogs.len() >= DIALOG_ACTION_LIMIT {
+            return None;
+        }
+        let dialog = match driver.recorded_dialog(form) {
+            Ok(Some(dialog)) => dialog,
+            Ok(None) => return None,
+            Err(_) => {
+                self.dialogs.push(json!({"view":view,"status":"needs_review","reason":"Dialog context could not be verified"}));
+                self.halted = true;
+                return None;
+            }
+        };
+        let mut record = json!({"view":view,"status":"needs_review","scope":"fictional_saved_copy_only","description":dialog.description()});
+        let outcome = (|| -> Result<Option<waypoint_applications::driver::LiveForm>, String> {
+            crate::check_inference_memory()?;
+            let model = self
+                .vision
+                .model
+                .as_mut()
+                .ok_or("The local model needs review")?;
+            let plan = crate::visual_review::propose_recorded_dialog(
+                model,
+                self.vision.addr,
+                &dialog.description(),
+            )?;
+            record["proposal"] = json!(plan);
+            let Some(choice) = plan.control else {
+                return Ok(None);
+            };
+            let result = driver
+                .dismiss_recorded_dialog_reviewed(&dialog, &choice, |target| {
+                    self.vision
+                        .review_target(directory, view, "before_dialog", target)
+                })
+                .map_err(|error| error.to_string())?;
+            let (capture, image) = match result {
+                RecordedDialogOutcome::NativeClosed { capture } => {
+                    record["native_closed"] = json!(true);
+                    let image = capture.image().to_owned();
+                    (Some(capture), Some(image))
+                }
+                RecordedDialogOutcome::Stopped { reason, image } => {
+                    record["reason"] = json!(reason);
+                    (None, image)
+                }
+            };
+            if let Some(image) = image {
+                let (name, digest) = save_image(directory, 200 + self.dialogs.len(), &image)?;
+                record["image"] = json!(name);
+                record["sha256"] = json!(digest);
+                if let Some(capture) = capture {
+                    crate::check_inference_memory()?;
+                    let model = self
+                        .vision
+                        .model
+                        .as_mut()
+                        .ok_or("The local model needs review")?;
+                    let observed = crate::visual_review::inspect_recorded_dialog_image(
+                        model,
+                        self.vision.addr,
+                        &image,
+                    )?;
+                    let accepted = crate::dialog_planning::visual_closed(&observed);
+                    record["post_visual"] = observed;
+                    let fresh = driver.verify_recorded_dialog_closed(&capture).is_ok();
+                    record["closure_reverified"] = json!(fresh);
+                    if accepted && fresh {
+                        record["status"] = json!("closed_in_saved_copy");
+                        record["to"] = json!(view + 1);
+                        return Ok(Some(capture.form().clone()));
+                    }
+                    record["reason"] =
+                        json!("The image check did not verify that the dialog closed");
+                }
+            }
+            Ok(None)
+        })();
+        match outcome {
+            Ok(Some(form)) => {
+                self.dialogs.push(record);
+                Some(form)
+            }
+            Ok(None) => {
+                self.dialogs.push(record);
+                self.halted = true;
+                None
+            }
+            Err(error) => {
+                record["reason"] = json!(bounded_text(&error));
+                self.dialogs.push(record);
+                self.halted = true;
+                None
+            }
+        }
+    }
+
     fn finish(self) -> Value {
-        json!({"scope":"fictional_saved_form","profile_sha256":waypoint_domain::sha256_hex(include_bytes!("../data/rehearsal-profile.json")),"profile_error":self.profile.as_ref().err(),"field_limit":REHEARSAL_LIMIT,"section_advance_limit":SECTION_ADVANCE_LIMIT,"halted":self.halted,"fields":self.fields,"fact_plans":self.fact_plans,"attachment_plans":self.attachment_plans,"sections":self.sections,"vision_model":self.vision.identity,
+        json!({"scope":"fictional_saved_form","profile_sha256":waypoint_domain::sha256_hex(include_bytes!("../data/rehearsal-profile.json")),"profile_error":self.profile.as_ref().err(),"field_limit":REHEARSAL_LIMIT,"section_advance_limit":SECTION_ADVANCE_LIMIT,"halted":self.halted,"fields":self.fields,"fact_plans":self.fact_plans,"attachment_plans":self.attachment_plans,"sections":self.sections,"dialogs":self.dialogs,"dialog_action_limit":DIALOG_ACTION_LIMIT,"vision_model":self.vision.identity,
             "visual_gate":{"required":true,"available":self.vision.model.is_some(),"targets":self.vision.targets}})
     }
 }

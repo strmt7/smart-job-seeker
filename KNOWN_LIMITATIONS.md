@@ -10,6 +10,15 @@ frame/shadow traversal, candidate-file import, structured history and semantic
 fit assessment also exist. Their broad qualification and recovery limits remain
 open; the earlier statements that those mechanisms are absent are superseded.
 
+Current dialog continuation, 2026-11-13: bounded native/local-vision optional
+closure works on fictional isolated copies; legal/uncertain actions remain manual.
+The saved employer page still stops before the proposed action because of delayed
+replay gaps, including an XHR POST. The fictional contact sensitivity review fails
+and yields 0/3 verified answerable fields. One initial private scoring error was
+corrected without modifying historical responses. No held-out or whole-workflow
+pass, live dialog automation or general 16 GiB deployment claim is established.
+[Evidence](docs/g1/CONTAINED_DIALOG_PROGRESSION_2026-11-13.md).
+
 Current document-representation continuation, 2026-11-13: a previously unsupported
 source now archives30 resources/10 supported controls through engine-observed
 anonymous negotiation and strict replay. The family is development data. A cookie

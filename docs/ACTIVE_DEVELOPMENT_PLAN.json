@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "reviewed_on": "2026-11-13",
-  "reviewed_source": "dad203acbfbd5aa29dfcd8fc57b5f87c21d59dbd",
+  "reviewed_source": "ed5f9e9bded1c04f987a1e4fd15ea6c95dc65873",
   "goal": "Continue the existing active Smart Jobseeker product-development goal",
   "plan": "docs/COMPLETION_PLAN_2026-11-11.md",
   "assessment": "docs/REPO_STATE_REVIEW_2026-11-11.md",
@@ -90,7 +90,8 @@
         "docs/g1/HELD_OUT_INTAKE_AND_DOCUMENT_MATCHING_2026-11-13.md",
         "docs/g1/POST_ENTRY_VALUE_COVERAGE_2026-11-13.md",
         "docs/g1/UNSEEN_FAMILIES_AND_QUESTION_CONTEXT_2026-11-13.md",
-        "docs/g1/OBSERVED_DOCUMENT_REPRESENTATION_2026-11-13.md"
+        "docs/g1/OBSERVED_DOCUMENT_REPRESENTATION_2026-11-13.md",
+        "docs/g1/CONTAINED_DIALOG_PROGRESSION_2026-11-13.md"
       ],
       "execution_batch": "B",
       "steps": [
@@ -99,7 +100,7 @@
         "Freeze employer/layout-family held-out partition before tuning.",
         "Report field, workflow, abstention, error, elapsed and resource denominators; repeat model-sensitive promotion candidates."
       ],
-      "next_action": "Qualify eligible varied saved inputs after R03 dialog/context work, independently annotate visible requiredness and full question/section truth, freeze schema2 before inference, and preserve all historical exclusions and tuned-family development classification.",
+      "next_action": "Retain bounded raw mapping/sensitivity diagnostics before repairing the observed fictional contact-review failure; require raw model decision/control correctness separately from safe abstention. Continue independent varied field/workflow truth, untouched family evaluation and repeat qualification; do not credit skipped entries or completed controllers as workflow passes.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "completed_scopes": [
         "Bounded corpus identity/partition/input protocol and explicit field gate; two development cases, no held-out coverage.",
@@ -108,7 +109,8 @@
         "2026-11-13 known-source continuation verifies4/6 initial answerable controls with explicit telephone equality; two uploads unreached and whole workflow not qualified. Historical3/6 exact-mode failures retained.",
         "2026-11-13: froze two new real-source candidates before model use, collected native read-only archives, preserved original ads/provenance and froze one held-out schema2 initial17-control case (4 answerable/13 unknown). One candidate excluded for empty native inventory; zero held-out model-scored cases and neither candidate actuation-eligible. No accuracy/promotion claim.",
         "2026-11-13: froze four more platform candidates, collected4 compiled read-only attempts/3 native inventories (3 job-alert,16 and10 supported controls; none omitted),0 entry-eligible/0 model-scored. One response representation excluded. Pinpoint reclassified to development before generic context repair; all original manifests/results preserved.",
-        "2026-11-13: request-representation source family is development; immutable selectionv3 retains initial manifests/failures. New10-control saved inventory has0 omissions but no entry eligibility or independent full-workflow/requiredness truth. No model score or promotion."
+        "2026-11-13: request-representation source family is development; immutable selectionv3 retains initial manifests/failures. New10-control saved inventory has0 omissions but no entry eligibility or independent full-workflow/requiredness truth. No model score or promotion.",
+        "Independent four-control fictional dialog truth and raw decision/control oracle retained before inference. Corrected an initial scorer that credited a validated fallback as raw model correctness; original legal response remains failed. Final tuned dialog decisions pass once; contact sensitivity remains 0/3, with no held-out/workflow credit."
       ],
       "start_requirements": [
         "Existing versioned input-binding/evaluation protocol is implemented; reviewed in tools/form_corpus.py and docs/FORM_EVALUATION.md."
@@ -147,7 +149,8 @@
         "docs/g1/HELD_OUT_INTAKE_AND_DOCUMENT_MATCHING_2026-11-13.md",
         "docs/g1/SAVED_UPLOAD_DIAGNOSTICS_2026-11-13.md",
         "docs/g1/UNSEEN_FAMILIES_AND_QUESTION_CONTEXT_2026-11-13.md",
-        "docs/g1/OBSERVED_DOCUMENT_REPRESENTATION_2026-11-13.md"
+        "docs/g1/OBSERVED_DOCUMENT_REPRESENTATION_2026-11-13.md",
+        "docs/g1/CONTAINED_DIALOG_PROGRESSION_2026-11-13.md"
       ],
       "execution_batch": "B",
       "steps": [
@@ -156,7 +159,7 @@
         "Collect a new permitted read-only source copy and inspect actual rendering/native labels without modifying historical manifests.",
         "Only if necessary, repair generic bounded label/control context; qualify earlier and untouched cases, then coherent integration and ownership checks."
       ],
-      "next_action": "Generic bounded dialog/panel handling only in verified zero-capability saved copies; inspect visual requiredness and resource/section fidelity with independent truth and adversarial fixtures. Retain covering-dialog/custom barriers until their actual conditions are resolved; no real legal consent, employer clicks, header overrides or weakened request matching.",
+      "next_action": "Diagnose delayed replay gaps on the retained saved employer source using original request/header identity; collect only independently permitted missing public resources. Preserve all native/visual/value guards and background POST refusals. Bounded fictional dialog closure is implemented; requiredness, complicated panels and varied workflow fidelity remain open.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "completed_scopes": [
         "Observed absent-Origin GET Stylesheet binding and strict capture/replay proof; malformed/conflicting/cross-type cases refused.",
@@ -164,7 +167,8 @@
         "Fresh compiled public capture16 resources/two CSS files; inspected styled offline rendering. Local12B vision now recognizes Phone; entry fails native exact-value validation, three fields verify, zero advances.",
         "2026-11-13: current Lever/Ashby public listing and application reads succeeded via isolated native research receipts; compiled read-only capture produced17 versus0 supported native controls. Lever review walls and Ashby incomplete replay/403 asset-origin robots plus ineligible requests remain visible.",
         "2026-11-13: generic shared-section native radios retain distinct bounded advisory questions; sensitive/manual remains. Fictional positive/hidden/ambiguous/nested checks and11 selected native regressions pass. Compiled saved-development replay distinguishes8 groups with barriers retained; shortened labels explicitly marked in4-width actual record UI.",
-        "2026-11-13: observed native engine Document Accept in a scriptless zero-capability sentinel, bound typed anonymous public GETs and exact replay (including X-Requested-With absence and repeated Vary lines). Native root/frame and legacy refusal fixtures pass. Production recollection now archives30 resources/10 supported controls; dialog/custom/obscured barriers remain,0 eligible/0 model-scored. No header overrides or live employer actions."
+        "2026-11-13: observed native engine Document Accept in a scriptless zero-capability sentinel, bound typed anonymous public GETs and exact replay (including X-Requested-With absence and repeated Vary lines). Native root/frame and legacy refusal fixtures pass. Production recollection now archives30 resources/10 supported controls; dialog/custom/obscured barriers remain,0 eligible/0 model-scored. No header overrides or live employer actions.",
+        "Contained optional-dialog inventory, local semantic proposal, before/after visual review and sealed native closure witness; 7-case native adversarial qualification, two final fictional model intent checks, explicit saved-employer replay refusal and compiled record UI at four widths. No field/workflow or held-out completion credit."
       ],
       "start_requirements": [
         "R02 input-binding protocol exists; full representative/held-out collection is not required to begin this rendering repair.",
