@@ -44,6 +44,26 @@ observations remain review outcomes. There is no third pass or majority vote.
 The record interface provides the saved detail image and distinguishes a second
 check from verified entry.
 
+## Post-entry values
+
+The same coverage resolver now handles a missing post-entry value observation.
+The original value-transcription pass remains unchanged, including its existing
+native text-presence cue for text fields; that cue names the field but withholds
+the expected value. A missing result may receive one supplementary blind value
+read on a separately saved post-entry detail image. This second prompt contains
+no native label, expected answer or first-pass observations.
+
+Only main-page text/select captures currently provide that additional value
+view. The native driver verifies the document, schema, selected/entered value and
+request barriers around capture and rechecks the field after model review. A
+missing or unsaved detail view cannot supply verification. First observations,
+actual second observations and contradictions remain visible in the record.
+There is no retry of a wrong value, ambiguity, failed observation or exhausted
+observation budget. Post-entry exact comparisons and native-proven telephone
+separator handling remain unchanged; a missing dialing prefix is never inferred.
+
+See the [post-entry qualification](g1/POST_ENTRY_VALUE_COVERAGE_2026-11-13.md).
+
 This is a bounded development mechanism, not a general visual-accuracy claim.
 Its first prompt-only experiment still omitted the French email control; that
 failure remains retained. Corpus partitions, unknown answers and independent

@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
   "reviewed_on": "2026-11-13",
-  "reviewed_source": "70b76fe4adb27d732658abe4bdbab1ded2f283bd",
+  "reviewed_source": "ce22050fc736dc6b74fa40a771014b4add568417",
   "goal": "Continue the existing active Smart Jobseeker product-development goal",
   "plan": "docs/COMPLETION_PLAN_2026-11-11.md",
   "assessment": "docs/REPO_STATE_REVIEW_2026-11-11.md",
-  "next_task": "R04",
+  "next_task": "R02",
   "boundaries": [
     "main only",
     "headless development only",
@@ -87,7 +87,8 @@
         "docs/g1/FORM_CORPUS_SCOPE_2026-11-11.md",
         "docs/g1/INDEPENDENT_ENTRY_EVIDENCE_2026-11-11.md",
         "docs/g1/TELEPHONE_PRESENTATION_2026-11-13.md",
-        "docs/g1/HELD_OUT_INTAKE_AND_DOCUMENT_MATCHING_2026-11-13.md"
+        "docs/g1/HELD_OUT_INTAKE_AND_DOCUMENT_MATCHING_2026-11-13.md",
+        "docs/g1/POST_ENTRY_VALUE_COVERAGE_2026-11-13.md"
       ],
       "execution_batch": "B",
       "steps": [
@@ -96,7 +97,7 @@
         "Freeze employer/layout-family held-out partition before tuning.",
         "Report field, workflow, abstention, error, elapsed and resource denominators; repeat model-sensitive promotion candidates."
       ],
-      "next_action": "Preserve the two frozen candidates and all exclusions. Collect additional varied eligible cases with source/permission lineage and independent expected answers, without dropping unavailable cases from intake denominators. Faithful sources, complete-form truth and repeated promotion evidence remain open.",
+      "next_action": "Freeze the current source/model/config, inspect the existing unseen-family intake and bind independent expected answers before its first model run. Score only eligible scopes; keep excluded/unavailable cases in intake denominators. Add varied permitted faithful inputs and explicit full-workflow truth. Do not tune a held-out case and retain its held-out designation.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "completed_scopes": [
         "Bounded corpus identity/partition/input protocol and explicit field gate; two development cases, no held-out coverage.",
@@ -182,7 +183,8 @@
         "docs/g1/HELD_OUT_INTAKE_AND_DOCUMENT_MATCHING_2026-11-13.md",
         "docs/g1/SAVED_UPLOAD_DIAGNOSTICS_2026-11-13.md",
         "docs/g1/SEMANTIC_PROFILE_REHEARSAL_2026-11-13.md",
-        "docs/g1/BLIND_VISUAL_COVERAGE_2026-11-13.md"
+        "docs/g1/BLIND_VISUAL_COVERAGE_2026-11-13.md",
+        "docs/g1/POST_ENTRY_VALUE_COVERAGE_2026-11-13.md"
       ],
       "execution_batch": "C",
       "steps": [
@@ -192,7 +194,7 @@
         "After every action, read back native state and perform local-model visual review; detect stale state and no progress.",
         "Measure the local model on the frozen corpus; provide actionable review records rather than invented answers."
       ],
-      "next_action": "Apply the shared evidence-preserving coverage mechanism to missing post-entry value observations, beginning with native-correct Canada whose image transcription lists only the preceding city. Preserve first transcription, distinct detail image binding, current native/value checks and exact/explicit telephone comparison rules. Do not put expected answers into prompts, rescue mismatches, discard contradictions or claim broad/held-out success. Retain radio over-abstention and all other unfinished work.",
+      "next_action": "After broader frozen qualification, investigate radio over-abstention and reviewed fact descriptors without label-specific rules; continue arbitrary fact/history, conditional/multistep/frame planning with independent current native/visual/value proof. Preserve the passing shared coverage mechanism and all unfinished workflow criteria.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "start_requirements": [
         "The frozen schema2 known-source initial-control case and native mutation fixture admit investigation of the observed actuator failure. This does not admit broad planner promotion; that still requires the varied held-out tranche and full workflow truth.",
@@ -206,7 +208,8 @@
         "Bounded generic document catalog proposals and distinct PDF truth; three known-source local12B runs choose both roles. Explicit current native file-group proof supports separate label comparison. Four of six controls verified; résumé visual gap remains, cover unreached, workflow not qualified.",
         "Phase-specific file-feedback context preserves pre-entry/contact images; per-entry replay deltas retain degraded states. Final local12B4/6 verified with native résumé selection still visually unverified; field/workflow gates remain failed/not_qualified. Native embedded/contact feedback and rendered record/inspector/zoom checks pass within documented scopes.",
         "Contained semantic contact proposals reuse native options/constraints, captured aliases and section context, with strict failure/manual exclusions and bound records. Repaired native preflight passes. Fictional local12B case proposes6, verifies2/7, leaves2 unknown; email vision omission stops entry and residence radio remains manual. No field/workflow/held-out promotion.",
-        "Conditional blind coverage distinguishes absence from ambiguous/different/limited evidence, retains raw first and second observations, and vetoes conflicts/failures. Native text/select detail views preserve original inputs. Frozen French case4/7 and prior family4/6; neither field/workflow gate passes. Scoped native/unit/actual UI checks pass."
+        "Conditional blind coverage distinguishes absence from ambiguous/different/limited evidence, retains raw first and second observations, and vetoes conflicts/failures. Native text/select detail views preserve original inputs. Frozen French case4/7 and prior family4/6; neither field/workflow gate passes. Scoped native/unit/actual UI checks pass.",
+        "Shared pre/post coverage resolver retains exact/native-telephone and conflict/ambiguity/failure gates. Post-entry native detail recovers Country; French6/7 with0 wrong/unverified performed entries,2 unknown untouched and radio withheld. Prior family4/6, no full-workflow or held-out success. Native regressions and actual UI pass."
       ]
     },
     {
@@ -538,7 +541,7 @@
     "binding": "Existing active Smart Jobseeker goal; reverified active on 2026-11-13; objective unchanged.",
     "entry_point": "AGENTS.md",
     "queue": "docs/ACTIVE_DEVELOPMENT_PLAN.json",
-    "selection": "Continue R04 evidence-preserving coverage of missing post-entry value observations on the retained native-correct Country selection. Reuse the bounded blind coverage mechanism; retain initial observations, independent current native/image/value proof, exact/telephone rules and all manual/unknown gates. No expected answer in prompts or retry-away of mismatches. R02 held-out/full workflows and R01 lifecycle/admission remain open.",
+    "selection": "Broaden R02 qualification after the scoped before/after coverage mechanism is verified: freeze current source/model/config and independent truth for the existing unseen-family intake and additional eligible cases before inference. Keep unavailable cases and initial-only/full-workflow distinctions explicit. Do not tune on a case while retaining a held-out claim. R04 radio over-abstention, generic facts/histories and other product gates remain open.",
     "completion": "A package completion does not complete the product goal. Keep the overall goal active until all required product work is achieved.",
     "scheduling": "No new agents, automation, service or background scheduler created by this plan."
   },
@@ -561,40 +564,36 @@
     "build_state": "Last focused test compile failed; three stale start callers remain in current source. No current full-workspace pass claimed."
   },
   "working_tree_checkpoint": {
-    "baseline_head": "70b76fe4adb27d732658abe4bdbab1ded2f283bd",
-    "validated_changes": "Conditional two-pass blind pre-entry coverage with ambiguity/limit/conflict/failure vetoes; original images/prompts preserved; optional native-bound text/select detail views with separate evidence/digests and record-image controls; frozen model/UI/regression qualification.",
+    "baseline_head": "ce22050fc736dc6b74fa40a771014b4add568417",
+    "validated_changes": "Shared evidence-preserving coverage resolver for pre-entry controls and missing post-entry values; separately saved native-bound text/select post-entry detail images, exact/native-telephone checks and centralized record renderer. First observations/mismatches/ambiguity/conflicts remain authoritative.",
     "validated_source_sha256": {
-      "apps/web_app/src/recorded_preview.rs": "f2db4caad7c09d8716155642721a6f50422ff836a773fe60990f78d04568dfc7",
-      "apps/web_app/src/visual_review.rs": "1e081d262bf9c0b6d06096fab30632afd3e215c6d9589a920541135af3455b39",
-      "apps/web_app/tests/source-copy-ui.test.js": "f13bc0511aeb6cab500809587b999ea3b032be4f71cab5872484830e95825059",
-      "apps/web_app/web/source-copy.js": "e91538fa7322dfa6b1fb57f5aa3ac82d2300b78947345404066113aaabd1b222",
-      "crates/waypoint_browser/src/captured_frame.rs": "5ad4595447d8bc9820ac64cac3427af42a61801ef832b22f8e93890854ab124f",
-      "crates/waypoint_browser/src/lib.rs": "861638440b6be9c6b3912c1fa829ee6ec479d42e7f6fbb3c8336fee354e1dc49",
-      "crates/waypoint_browser/tests/cdp_live.rs": "a15aaf1488cf3616c66baa6ffa512ca69cf1deb201a05e9545ef24cd51894ed4",
-      "crates/waypoint_browser/tests/fixtures/form_visual_detail.html": "8382449effeed27fff5882a2d2ff34c3b2c0b8e00cd21b3fad0a7f9429b47d4e"
+      "apps/web_app/src/recorded_preview.rs": "3f2c44acefe1d88e0cbb51b0ac5654bf246fdaf28e1dfa71ece7a71e424701d7",
+      "apps/web_app/src/visual_review.rs": "5089b143f98ab3f7935d243d990650b28530914dd3085ccfa22ebc9cbf1b3b65",
+      "apps/web_app/tests/source-copy-ui.test.js": "e5a2876bbf5b51593bd272e719d62f65b1b753d07c1e12f6f679e55367658304",
+      "apps/web_app/web/source-copy.js": "72a7cfed08158fb655fb565ed400485ffdfae98f229edba1f85a0c23a425c9c6",
+      "crates/waypoint_browser/src/captured_frame.rs": "14247314be239b5c470ca917dfc0b58ef28454956321cd40ad115db89873e8f8"
     },
-    "app_sha256": "79503bff5f5b35b8ede5ef165fdb1963d27b8c4f39f704aa549c40ed790beeaa",
+    "app_sha256": "d16cb8bf94ae1c7326a92fb89c2756bcc70bb7f387509294a0e410902f226e0e",
     "model_qualification": {
       "private_evidence": [
-        "target/semantic-profile-model-39uzlyy_/",
-        "target/semantic-docs-model-67d6ju36/"
+        "target/semantic-profile-model-nvhxrmna/",
+        "target/semantic-docs-model-xkz3s0cy/"
       ],
-      "retained_prompt_only_failure": "target/semantic-profile-model-r0drwmxf/",
-      "scope": "French development case improves2/7 to4/7 verified, with1 native-correct but visually unobserved Country selection, Phone unreached and residence radio withheld;2 unknown untouched. Earlier saved family retains4/6,1 unverified resume,1 unreached cover and3 unknown. Field/workflow gates fail/not_qualified; no held-out or general claim.",
+      "scope": "French frozen development case improves4/7 to6/7, no incorrect/unexpected/unverified performed entries,2 unknown untouched; residence radio withheld. Earlier family retains4/6,1 unverified resume,1 unreached cover,3 unknown. Both field gates fail/workflows not_qualified; no held-out/general claim.",
       "model_digest": "6114515d63c17436a7c0417d82820ac65ad643e2806c5a3c89cb62846436ed0b",
       "context": 4096,
       "cache_reused": true,
-      "minimum_sampled_available_host_bytes": 26214047744
+      "minimum_sampled_available_host_bytes": 20339499008
     },
-    "build_state": "Workspace1336 passed/598 ignored; warning-denied Clippy, canonical build/fmt, source-copy UI pass. Native detail bounds and1 headless fixture pass. Compiled actual records4 widths and image inspector2 widths/mouse pan pass, screenshots inspected. No newer hosted validation.",
-    "evidence": "docs/g1/BLIND_VISUAL_COVERAGE_2026-11-13.md",
+    "build_state": "Workspace1338 passed/598 ignored; warning-denied Clippy/build/fmt,6 focused coverage regressions and source-copy UI pass. Packaged native failed-entry1/embedded1 pass. Actual record4 widths/inspector2 widths/mouse pan pass, narrow image inspected. Hosted status separately binds exact published commit.",
+    "evidence": "docs/g1/POST_ENTRY_VALUE_COVERAGE_2026-11-13.md",
     "host_checkpoint": {
-      "private_evidence": "target/development-host-fd28c63b618345b7ba991f8cb7842b1b.private.json",
-      "available_ram_bytes": 35536879616,
+      "private_evidence": "target/development-host-f5dc27302c3e4593b03a3f2fc4eb2db0.private.json",
+      "available_ram_bytes": 31112863744,
       "matching_processes": 0,
       "resident_models": 0,
       "persistent_registrations": 0,
-      "scope": "Post-model/UI audit and owned tree/listener exit receipts; not sustained leak proof."
+      "scope": "Post-model/UI audit and actual owned-tree/listener exit receipts; not sustained leak proof."
     }
   },
   "dependency_semantics": "depends_on are completion prerequisites; start_requirements admit bounded implementation before the whole prerequisite package completes. Containment, UI consistency and resource ownership apply continuously.",
@@ -650,16 +649,16 @@
   },
   "immediate_slices": [
     {
+      "task": "R02",
+      "deliverable": "Frozen unseen-family qualification and additional eligible varied inputs with independent truth; explicit initial-only/full-workflow scope, exclusions and no tuning on held-out cases."
+    },
+    {
       "task": "R04",
-      "deliverable": "Bounded blind post-entry value coverage on the retained Country omission, preserving initial evidence/native identities and all mismatch/unknown gates; regress prior cases."
+      "deliverable": "Reviewed fact descriptors/radio over-abstention and broader histories/conditional planning after representative qualification; retain exact native/visual/unknown gates."
     },
     {
       "task": "R01",
-      "deliverable": "Defer private model/cache preparation until native eligibility is established, retaining bounded owned lifecycle and headroom checks."
-    },
-    {
-      "task": "R02",
-      "deliverable": "Additional frozen eligible held-out families and complete-form truth; zero held-out model scores remain explicit."
+      "deliverable": "Native-before-model/cache admission and remaining lifecycle/cancellation/idle-expiry evidence, reusing verified caches without weakening RAM policy."
     },
     {
       "task": "R03",

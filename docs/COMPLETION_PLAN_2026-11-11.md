@@ -20,21 +20,20 @@ historical statuses or authorize another goal, delegation, release or submission
 
 ## Latest continuation
 
-[Blind visual coverage](g1/BLIND_VISUAL_COVERAGE_2026-11-13.md) preserves the
-original fast path and adds one conditional blind detail observation for absent
-pre-entry targets. It retains first observations and refuses ambiguity, conflict,
-limits and failures. The frozen French local12B case improves from 2/7 to 4/7;
-Country remains visually unverified, Phone unreached and residence radio withheld.
-The prior saved family retains 4/6, including its unresolved upload. Unknowns
-stay untouched. Workspace 1,336 passed/598 ignored, Clippy/build and scoped native/
-actual UI checks pass. No field/workflow/held-out or general completion gate passes.
+[Post-entry coverage](g1/POST_ENTRY_VALUE_COVERAGE_2026-11-13.md) reuses the shared
+absence/ambiguity/conflict resolver with separate native value detail images.
+Original observations and exact/native-telephone rules remain intact. The frozen
+French local12B case improves from 4/7 to 6/7 with no wrong/unverified performed
+entries and two unknowns untouched; residence radio remains withheld. The prior
+family stays 4/6 with its upload unresolved. Workspace 1,338 passed/598 ignored,
+Clippy/build and scoped native/actual UI checks pass. Neither field/workflow gate
+passes; no held-out or general completion claim is made.
 
-Next R04 slice: extend the same evidence-preserving coverage mechanism to
-missing post-entry values on that retained Country image. Keep expected answers
-out of prompts, exact/native telephone comparison rules and current-state checks;
-never retry away a mismatch. Preserve all raw observations and image bindings.
-R01 lifecycle/lazy admission, R02 held-out/full-workflow truth, server-dependent
-uploads, arbitrary facts/histories, installation and other packages remain open.
+Next R02 slice: freeze current source/model/config and independent truth for the
+existing unseen-family intake before first inference, preserving every exclusion
+and initial-only/full-workflow distinction. Broaden eligible cases without tuning
+held-out inputs. R04 radio abstention/reviewed facts/histories, R01 lifecycle/lazy
+admission, server-dependent uploads, installation and remaining gates stay open.
 
 ## Immediate execution order
 

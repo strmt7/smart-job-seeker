@@ -265,8 +265,11 @@ used by development tools and tests. Do not add WSL or Docker as product require
   label/value hints, and retain all native/image bindings. Compare singleton
   observations before retrying: repeated labels must not become a successful
   second guess. Conflicting overlapping observations veto entry. Keep the original
-  image/fast path; store any native detail view separately. Country selection's
-  retained post-entry omission remains unverified even when a developer can read it.
+  image/fast path; store any native detail view separately. Preserve the original
+  Country omission when a supplementary native-bound value read succeeds. A
+  developer's reading alone never supplies a local-model observation. Apply exact
+  value checks; only native telephone proof admits separator equivalence, never
+  an inferred country prefix or normalization of another field.
 - A focused control's caret can change screenshot pixels without a form change.
   Native geometry/state regressions must not assume byte-identical timed captures.
   Preserve actual image digests for each observation. Debug test relinks can also

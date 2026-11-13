@@ -837,7 +837,7 @@ impl Rehearsal {
                     result["control"] = json!(capture.control());
                     result["kind"] = json!(capture.kind());
                     result["status"] = json!("visual_unavailable");
-                    let image_saved = if let Ok((name, digest)) =
+                    let mut image_saved = if let Ok((name, digest)) =
                         save_image(directory, 10 + index, capture.image())
                     {
                         result["image"] = json!(name);
@@ -846,6 +846,22 @@ impl Rehearsal {
                     } else {
                         false
                     };
+                    if let Some(error) = capture.detail_error() {
+                        result["detail_capture_error"] = json!(bounded_text(error));
+                    }
+                    if let Some(image) = capture.detail_image() {
+                        match save_image(directory, 80 + index, image) {
+                            Ok((name, digest)) => {
+                                result["detail_image"] = json!(name);
+                                result["detail_sha256"] = json!(digest);
+                            }
+                            Err(_) => {
+                                image_saved = false;
+                                result["detail_capture_error"] =
+                                    json!("The entered field detail image could not be saved");
+                            }
+                        }
+                    }
                     if image_saved {
                         let (status, transcription) = self.vision.review_field(&capture);
                         result["status"] = json!(status);

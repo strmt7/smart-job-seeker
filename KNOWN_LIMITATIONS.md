@@ -10,6 +10,15 @@ frame/shadow traversal, candidate-file import, structured history and semantic
 fit assessment also exist. Their broad qualification and recovery limits remain
 open; the earlier statements that those mechanisms are absent are superseded.
 
+Current post-entry continuation, 2026-11-13: native-bound blind value coverage
+recovers country and reaches phone. The frozen French case is now 6/7 with no
+wrong/unverified performed entries and two unknown answers untouched. Its original
+country omission remains recorded; the residence radio is withheld. The prior
+family is still 4/6 with an unverified server-dependent upload. Field/workflow
+gates do not pass. Zero held-out model scores, arbitrary facts/histories, broader
+source fidelity, full workflows and remaining lifecycle/installation gates remain
+open. [Latest evidence](docs/g1/POST_ENTRY_VALUE_COVERAGE_2026-11-13.md).
+
 Current blind-coverage continuation, 2026-11-13: a native detail view recovers the
 French email target, improving that frozen development case to 4/7. Country is
 natively correct but its post-entry visual transcription omits it; it stays

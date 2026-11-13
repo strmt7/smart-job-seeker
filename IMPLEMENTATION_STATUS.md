@@ -1,3 +1,14 @@
+## Post-entry value coverage - 2026-11-13
+
+The shared coverage resolver now uses separate native detail images for missing
+post-entry values, preserving first observations and exact/conflict/ambiguity
+checks. The frozen French local12B case improves from 4/7 to 6/7 verified, with
+no incorrect or unverified performed entries and both unknown answers untouched.
+The residence radio remains withheld; the prior source family remains 4/6.
+Workspace 1,338 passed/598 ignored, Clippy/build, native regressions and actual
+record/inspector checks pass. No workflow or held-out claim. Qualification now
+broadens under R02. [Evidence](docs/g1/POST_ENTRY_VALUE_COVERAGE_2026-11-13.md).
+
 ## Blind visual coverage and native detail views - 2026-11-13
 
 A bounded blind recheck now uses a separately saved native detail view for missing

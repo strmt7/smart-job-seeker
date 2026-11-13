@@ -46,6 +46,19 @@ function harness(api, onFinished) {
     if(message)assert(find(panel,node=>node.textContent===message));
     else assert.equal(find(panel,node=>node.textContent==='A second image check was used.'),undefined);
   }
+  for(const [state,conflict,note] of [
+    ['visually_matched',false,'A second image check was used.'],
+    ['visual_unobserved',true,'The image checks need review.'],
+  ]) {
+    const calls=[];
+    const panel=harness(async()=>{}).preview({...preview,rehearsal:{scope:'fictional_saved_form',fields:[{view:1,label:'Country',kind:'select',status:state,detail_image:'0084.png',detail_sha256:digest,transcription:{coverage_recheck:{scope:'same_native_field_detail',attempts:2,status:'complete',overlap_conflict:conflict}}}]}},
+      {jobId:'job',attemptId:'attempt',api:async(route,body)=>{calls.push([route,body]);return {name:'0084.png',sha256:digest,image_base64:'iVBORw0KGgo='};}});
+    assert(find(panel,node=>node.textContent===note));
+    await button(panel,'View detail image').listeners.click();
+    assert.equal(calls[0][0],'/api/attempts/screenshot');
+    assert.equal(calls[0][1].name,'0084.png');
+    assert(find(panel,node=>node.tag==='img'));
+  }
   for (const [activity,message] of [
     [{status:'unavailable'},'Request activity was unavailable for this check.'],
     [{status:'observed',scope:'entry_and_review_interval',delta:{blocked:1}},'During this check, the saved page blocked 1 request. The website response remains unverified.'],

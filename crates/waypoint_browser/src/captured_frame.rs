@@ -123,6 +123,8 @@ fn section_fields(form: &LiveForm) -> std::collections::BTreeSet<Vec<String>> {
 /// Only the recorded driver can construct this evidence.
 pub struct RecordedFieldCapture {
     image: String,
+    detail_image: Option<String>,
+    detail_error: Option<String>,
     label: String,
     kind: RecordedFieldKind,
     required_marker: bool,
@@ -316,6 +318,12 @@ struct RecordedDocument {
 }
 
 impl RecordedFieldCapture {
+    pub fn detail_image(&self) -> Option<&str> {
+        self.detail_image.as_deref()
+    }
+    pub fn detail_error(&self) -> Option<&str> {
+        self.detail_error.as_deref()
+    }
     pub fn file_group_label(&self) -> Option<&str> {
         self.file_group_label.as_deref()
     }
@@ -672,17 +680,7 @@ impl CdpDriver {
             self.scroll_field_into_view(selector)?;
             self.screenshot_field_context(selector)?
         };
-        let (detail_image, detail_error) =
-            if matches!(kind, RecordedFieldKind::Text | RecordedFieldKind::Select)
-                && self.captured_scope.is_none()
-            {
-                match self.screenshot_field_detail(selector) {
-                    Ok(image) => (Some(image), None),
-                    Err(error) => (None, Some(error.to_string())),
-                }
-            } else {
-                (None, None)
-            };
+        let (detail_image, detail_error) = self.recorded_detail_context(selector, kind);
         let control = self.recorded_control_identity(form, selector)?;
         review_target(&RecordedTargetCapture {
             detail_image,
@@ -759,6 +757,7 @@ impl CdpDriver {
         } else {
             self.screenshot_field_feedback(selector)?
         };
+        let (detail_image, detail_error) = self.recorded_detail_context(selector, kind);
         if matches!(kind, RecordedFieldKind::Text)
             && self.text_value_snapshot(selector)?.value != observed_value
         {
@@ -770,6 +769,8 @@ impl CdpDriver {
         self.stop_if_non_read_request_observed(network_before)?;
         let file_group_label = unique_file_group_label(form, field);
         Ok(RecordedFieldCapture {
+            detail_image,
+            detail_error,
             file_group_context: file_group_label.as_ref().map(|_| field.context.clone()),
             file_group_label,
             observed_value,
@@ -783,6 +784,25 @@ impl CdpDriver {
             network_before,
             document,
         })
+    }
+
+    // Both phases use the same bounded native rectangle without focus changes.
+    // Existing before/after document, schema and value checks enclose capture.
+    fn recorded_detail_context(
+        &mut self,
+        selector: &str,
+        kind: RecordedFieldKind,
+    ) -> (Option<String>, Option<String>) {
+        if matches!(kind, RecordedFieldKind::Text | RecordedFieldKind::Select)
+            && self.captured_scope.is_none()
+        {
+            match self.screenshot_field_detail(selector) {
+                Ok(image) => (Some(image), None),
+                Err(error) => (None, Some(error.to_string())),
+            }
+        } else {
+            (None, None)
+        }
     }
 
     /// A read-only logical identity. It conveys no field-entry authority.
