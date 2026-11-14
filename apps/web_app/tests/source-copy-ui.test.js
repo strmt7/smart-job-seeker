@@ -20,6 +20,14 @@ function harness(api, onFinished) {
   return { actions: (id, attempt, documents=[]) => window.WaypointSourceCopies.previewAction(id, attempt, {api, documents:()=>documents, element:(tag,text,style)=>new Node(tag,text,style),onFinished}), preview: (preview, options) => window.WaypointSourceCopies.previewView(preview, (tag, text, style) => new Node(tag, text, style), options), create: id => window.WaypointSourceCopies.create({ id }, { api, element: (tag, text, style) => new Node(tag, text, style), onFinished }), tick: async () => { assert(timers.length, 'Expected a scheduled status poll'); timers.shift()(); await settle(); } };
 }
 (async () => {
+  for(const [enabled,action] of [[false,'Rehearse autofill'],[true,'Rehearse autofill'],[true,'Create recorded preview']]){
+    let request;const instance=harness(async(route,body)=>{if(route.endsWith('/pending'))return {active:false};if(route.endsWith('/preview-start')){request=body;return {task_id:'history-task'};}if(route.endsWith('/status'))return {status:'complete',task_id:'history-task',job_id:'history-job'};throw Error('Unexpected history route');});
+    const controls=instance.actions('history-job','source');const label=find(controls,node=>node.tag==='label'&&node.children.some(child=>child.textContent==='Use checked career history'));const checkbox=label.children[0];assert.equal(Boolean(checkbox.checked),false);checkbox.checked=enabled;await button(controls,action).listeners.click();assert.equal(request.use_saved_history===true,enabled&&action==='Rehearse autofill');assert.equal(request.career_history,undefined);assert.equal(request.use_saved_contacts,undefined);
+  }
+  const historyOnly=harness(async()=>{}).preview({views:[],rehearsal:{scope:'saved_candidate_materials',candidate_source:{contacts_selected:false,history_selected:true,documents:[]}}},{});
+  assert(find(historyOnly,node=>node.textContent==='This saved copy uses your checked career history. Answers, later steps and server validation still need review.'));
+  const staleHistory=harness(async()=>{}).preview({views:[],candidate_profile_current:false,rehearsal:{scope:'saved_candidate_materials',candidate_source:{history_selected:true,documents:[]}}},{});
+  assert(find(staleHistory,node=>node.textContent==='Saved candidate information has changed since this rehearsal. Review the saved answers before using them.'));
   const pdfs=[{id:'one',name:'Candidate CV.pdf',size:1024},{id:'two',name:'Letter.pdf',size:2048},{id:'three',name:'Registration.pdf',size:512},{id:'four',name:'Template.docx',size:4096}];
   let selectedRequest;
   const selectionHarness=harness(async(route,body)=>{

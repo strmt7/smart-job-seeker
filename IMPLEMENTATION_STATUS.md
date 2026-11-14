@@ -1,3 +1,24 @@
+## Checked career history in offline forms - 2026-11-14
+
+Explicitly selected checked employment/education records now reach the offline
+actor through immutable source/revision-bound snapshots. The shared history
+planner resolves saved values, then separately checks meaning; native and local-
+model image verification follow entry. Plans and actual answers retain separate
+archives. Profile corrections cancel running bound work and mark older views
+stale without rewriting evidence.
+
+Local12B: **2/2 development field cases, 9/9 answerable fields verified, 0/7
+unknown answers entered**, with no wrong/unverified/unbound/unexpected entries
+or source mismatches. Earlier 0/2 and 1/2 runs remain retained. Empty-contact
+profiles now use sensitivity-only review without bypassing review flags.
+[Method and limits](docs/g1/CHECKED_HISTORY_REHEARSAL_2026-11-14.md).
+
+Windows workspace: 1,431 passed / 617 opt-in tests ignored; Clippy, canonical debug
+build, formatting, 172 JavaScript scripts and 49 rendered cases pass. Owned model
+and browser trees drained. General fact/qualification answers, broader controls,
+complete journeys, final document/workflow acceptance and held-out/release gates
+remain open. No real application interaction, delivery or release occurred.
+
 ## Native upload detail views - 2026-11-14
 
 Native file-only label/control images recover the retained PDF-only visual

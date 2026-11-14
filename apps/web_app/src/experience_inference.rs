@@ -591,8 +591,12 @@ pub(crate) mod tests {
         }
         let mut capture = BatchCapture(Vec::new());
         let mut model = ExperienceInference::new(&mut capture, &memories);
-        crate::suggestions::suggest_with_review(&mut model, &schema, &serde_json::json!({}))
-            .unwrap();
+        crate::suggestions::suggest_with_review(
+            &mut model,
+            &schema,
+            &serde_json::json!({"first_name":"Avery"}),
+        )
+        .unwrap();
         assert_eq!(capture.0.len(), 2);
         assert!(
             capture.0[0].contains("text-only note") && !capture.0[0].contains("choice-only note")

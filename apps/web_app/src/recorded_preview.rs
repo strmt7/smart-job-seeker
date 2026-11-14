@@ -551,6 +551,15 @@ impl RehearsalVision {
         let model = self.model.as_mut().ok_or("The local model needs review")?;
         crate::visual_review::research_recorded_issue(model, self.addr, directory, profile, context)
     }
+    fn plan_history(
+        &mut self,
+        fields: &[waypoint_applications::form_mapping::FormField],
+        records: &[crate::candidate_history::SelectedRecord],
+    ) -> Result<Value, String> {
+        crate::check_inference_memory()?;
+        let model = self.model.as_mut().ok_or("The local model needs review")?;
+        crate::visual_review::propose_recorded_history(model, self.addr, fields, records)
+    }
     fn plan_profile(
         &mut self,
         form: &waypoint_applications::driver::LiveForm,
@@ -728,6 +737,43 @@ fn observed_replay_activity(before: Option<&Value>, after: Option<&Value>) -> Va
 }
 
 #[cfg(windows)]
+fn archive_history(
+    screenshots: &Path,
+    index: usize,
+    kind: &str,
+    value: &Value,
+) -> Result<Value, String> {
+    use std::io::Write;
+    if !matches!(kind, "plan" | "entries") || !(1..=64).contains(&index) {
+        return Err("Invalid history archive identity".into());
+    }
+    let parent = screenshots
+        .parent()
+        .ok_or("History record directory is unavailable")?;
+    directory(parent)?;
+    let folder = parent.join("answers");
+    if !folder.exists() {
+        fs::create_dir(&folder).map_err(|_| "Cannot create history answers folder")?;
+    }
+    directory(&folder)?;
+    let bytes =
+        serde_json::to_vec_pretty(value).map_err(|_| "Cannot encode history answer evidence")?;
+    if bytes.len() > 512 * 1024 {
+        return Err("History answer evidence exceeds its limit".into());
+    }
+    let name = format!("history-{kind}-{index:03}.json");
+    let mut file = fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(folder.join(&name))
+        .map_err(|_| "Cannot create immutable history answer evidence")?;
+    file.write_all(&bytes)
+        .and_then(|_| file.sync_all())
+        .map_err(|_| "Cannot retain history answer evidence")?;
+    Ok(json!({"file":format!("answers/{name}"),"sha256":waypoint_domain::sha256_hex(&bytes)}))
+}
+
+#[cfg(windows)]
 struct Rehearsal {
     vision: RehearsalVision,
     fields: Vec<Value>,
@@ -739,6 +785,9 @@ struct Rehearsal {
     conditionals: usize,
     profile: Result<Value, String>,
     candidate_metadata: Value,
+    history: Result<Vec<crate::candidate_history::SelectedRecord>, String>,
+    history_plans: Vec<Value>,
+    privacy_profile: Value,
     candidate_documents: Vec<crate::rehearsal_candidate::SnapshotDocument>,
     candidate_selected: bool,
     attachment_plans: Vec<Value>,
@@ -763,11 +812,23 @@ impl Rehearsal {
             .as_ref()
             .map(|(snapshot, _)| snapshot.documents.clone())
             .unwrap_or_default();
+        let history_raw = candidate
+            .as_ref()
+            .and_then(|(snapshot, _)| snapshot.history.clone());
+        let history = history_raw
+            .as_deref()
+            .map(crate::candidate_history::reviewed)
+            .transpose()
+            .map(Option::unwrap_or_default);
         let profile = match candidate {
             Some((snapshot, _)) => Ok(snapshot.contacts),
             None => serde_json::from_str(include_str!("../data/rehearsal-profile.json"))
                 .map_err(|_| "The bundled fictional rehearsal profile is invalid".to_owned()),
         };
+        let mut privacy_profile = profile.as_ref().cloned().unwrap_or_else(|_| json!({}));
+        if let Some(raw) = history_raw {
+            privacy_profile["career_history"] = json!(raw);
+        }
         let halted = vision.model.is_none() || profile.is_err();
         Self {
             vision,
@@ -780,6 +841,9 @@ impl Rehearsal {
             conditionals: 0,
             profile,
             candidate_metadata,
+            history,
+            history_plans: Vec::new(),
+            privacy_profile,
             candidate_documents,
             candidate_selected,
             attachment_plans: Vec::new(),
@@ -822,7 +886,7 @@ impl Rehearsal {
             Ok(result) => (result.plan, Some(result.diagnostics)),
             Err(error) => (Err(error), None),
         };
-        let (mappings, review_selectors) = match plan {
+        let (mut mappings, review_selectors) = match plan {
             Ok(plan) if plan.schema == form.schema => {
                 let warnings: Vec<_> = plan
                     .manual_review
@@ -848,6 +912,85 @@ impl Rehearsal {
                 (Vec::new(), std::collections::HashSet::new())
             }
         };
+        let history_start = self.fields.len();
+        let mut history_sources = std::collections::BTreeMap::new();
+        if let Ok(records) = &self.history {
+            if !records.is_empty() {
+                let eligible: Vec<_> = form
+                    .schema
+                    .fields
+                    .iter()
+                    .filter(|field| {
+                        crate::history_advice::eligible(field)
+                            && !review_selectors.contains(&field.selector)
+                            && !mappings
+                                .iter()
+                                .any(|mapping| mapping.field_selector == field.selector)
+                            && !self.captures[carry_from..]
+                                .iter()
+                                .any(|(_, capture, _)| capture.matches_field(field))
+                    })
+                    .cloned()
+                    .collect();
+                let offered: Vec<_> = eligible
+                    .iter()
+                    .take(REHEARSAL_LIMIT.saturating_sub(self.fields.len()))
+                    .cloned()
+                    .collect();
+                if !offered.is_empty() {
+                    let index = self.history_plans.len() + 1;
+                    let mut report = json!({"view":view,"source":self.candidate_metadata,"eligible_fields":eligible.len(),"offered_fields":offered.len(),"omitted_eligible_fields":eligible.len()-offered.len(),"status":"needs_review"});
+                    match self
+                        .vision
+                        .plan_history(&offered, records)
+                        .and_then(|plan| {
+                            crate::history_batch::resolve_checked_proposals(
+                                &offered, records, &plan,
+                            )
+                            .map(|resolved| (plan, resolved))
+                        }) {
+                        Ok((plan, resolved)) => {
+                            report["status"] = json!("proposed");
+                            report["plan"] = plan;
+                            let mut unsupported = Vec::new();
+                            for (mapping, source) in resolved {
+                                let field = offered
+                                    .iter()
+                                    .find(|field| field.selector == mapping.field_selector)
+                                    .expect("resolved field exists");
+                                let supported = matches!(
+                                    field.field_type,
+                                    FormFieldType::Text
+                                        | FormFieldType::TextArea
+                                        | FormFieldType::Select { .. }
+                                        | FormFieldType::Radio { .. }
+                                ) && matches!(&mapping.value,PacketValue::Text(value) if !value.trim().is_empty() && value.len()<=1000);
+                                if supported {
+                                    history_sources.insert(mapping.field_selector.clone(), source);
+                                    mappings.push(mapping);
+                                } else {
+                                    unsupported.push(json!({"selector":mapping.field_selector,"reason":"rehearsal_control_or_value_not_supported"}));
+                                }
+                            }
+                            report["entry_deferred"] = json!(unsupported);
+                        }
+                        Err(error) => report["reason"] = json!(bounded_text(&error)),
+                    }
+                    match archive_history(directory, index, "plan", &report) {
+                        Ok(archive) => report["archive"] = archive,
+                        Err(error) => {
+                            report["status"] = json!("needs_review");
+                            report["archive_error"] = json!(error);
+                            self.halted = true;
+                        }
+                    }
+                    self.history_plans.push(report);
+                    if self.halted {
+                        return None;
+                    }
+                }
+            }
+        }
         let mut attachments = std::collections::BTreeMap::new();
         if form
             .schema
@@ -966,6 +1109,9 @@ impl Rehearsal {
             if field.field_type != FormFieldType::File {
                 result["candidate_source"] = json!({"scope":self.candidate_metadata["scope"],
                     "profile_sha256":profile_sha,"snapshot_sha256":self.candidate_metadata["snapshot_sha256"],"schema_sha256":schema_sha});
+            }
+            if let Some(source) = history_sources.get(&field.selector) {
+                result["candidate_history"] = json!({"snapshot_sha256":self.candidate_metadata["snapshot_sha256"],"history_sha256":self.candidate_metadata["history_sha256"],"source_profile_sha256":self.candidate_metadata["source_profile_sha256"],"schema_sha256":schema_sha,"proposal":source,"note":"Resolved from checked saved career history; experience and delivery are not independently verified."});
             }
             if field.field_type == FormFieldType::File && self.candidate_selected {
                 let document = self
@@ -1098,7 +1244,7 @@ impl Rehearsal {
                             platform,
                             target_refused,
                         );
-                        self.research_notes.push(match self.vision.research_issue(directory,profile,&context) {
+                        self.research_notes.push(match self.vision.research_issue(directory,&self.privacy_profile,&context) {
                             Ok(value)=>value,Err(error)=>json!({"status":"needs_review","reason":bounded_text(&error),"form_actions_authorized":false}),
                         });
                     }
@@ -1147,6 +1293,19 @@ impl Rehearsal {
                     self.fields[index]["native_verified"] = json!(false);
                     self.halted = true;
                 }
+            }
+        }
+        if self.fields[history_start..]
+            .iter()
+            .any(|field| field.get("candidate_history").is_some())
+        {
+            let report = json!({"view":view,"snapshot_sha256":self.candidate_metadata["snapshot_sha256"],"fields":self.fields[history_start..].iter().filter(|field|field.get("candidate_history").is_some()).collect::<Vec<_>>()});
+            if let Err(error) =
+                archive_history(directory, self.history_plans.len(), "entries", &report)
+            {
+                self.history_plans
+                    .push(json!({"view":view,"status":"needs_review","archive_error":error}));
+                self.halted = true;
             }
         }
         if self.halted {
@@ -1261,7 +1420,7 @@ impl Rehearsal {
     }
 
     fn finish(self) -> Value {
-        json!({"scope":if self.candidate_selected{self.candidate_metadata["scope"].as_str().unwrap_or("saved_candidate_materials")}else{"fictional_saved_form"},"candidate_source":self.candidate_metadata,"profile_sha256":self.candidate_metadata["profile_sha256"],"profile_error":self.profile.as_ref().err(),"field_limit":REHEARSAL_LIMIT,"section_advance_limit":SECTION_ADVANCE_LIMIT,"halted":self.halted,"fields":self.fields,"fact_plans":self.fact_plans,"attachment_plans":self.attachment_plans,"sections":self.sections,"dialogs":self.dialogs,"dialog_action_limit":DIALOG_ACTION_LIMIT,"vision_model":self.vision.identity,
+        json!({"scope":if self.candidate_selected{self.candidate_metadata["scope"].as_str().unwrap_or("saved_candidate_materials")}else{"fictional_saved_form"},"candidate_source":self.candidate_metadata,"profile_sha256":self.candidate_metadata["profile_sha256"],"profile_error":self.profile.as_ref().err(),"field_limit":REHEARSAL_LIMIT,"section_advance_limit":SECTION_ADVANCE_LIMIT,"halted":self.halted,"fields":self.fields,"fact_plans":self.fact_plans,"history_plans":self.history_plans,"history_error":self.history.as_ref().err(),"attachment_plans":self.attachment_plans,"sections":self.sections,"dialogs":self.dialogs,"dialog_action_limit":DIALOG_ACTION_LIMIT,"vision_model":self.vision.identity,
             "conditional_replans":self.conditionals,"conditional_replan_limit":CONDITIONAL_REPLAN_LIMIT,
             "public_research_enabled":self.public_research,"public_research":self.research_notes,
             "visual_gate":{"required":true,"available":self.vision.model.is_some(),"targets":self.vision.targets}})
@@ -1404,6 +1563,36 @@ fn save_image(directory: &Path, sequence: usize, image: &str) -> Result<(String,
 
 #[cfg(test)]
 mod tests {
+    #[cfg(windows)]
+    #[test]
+    fn history_answer_archives_are_bounded_distinct_and_never_overwritten() {
+        let folder = tempfile::tempdir().unwrap();
+        let screenshots = folder.path().join("screenshots");
+        fs::create_dir(&screenshots).unwrap();
+        let value = serde_json::json!({"question":"Current employer","answer":"Fictional company"});
+        let first = super::archive_history(&screenshots, 1, "plan", &value).unwrap();
+        let path = folder.path().join(first["file"].as_str().unwrap());
+        let bytes = fs::read(&path).unwrap();
+        assert_eq!(first["sha256"], waypoint_domain::sha256_hex(&bytes));
+        assert!(super::archive_history(
+            &screenshots,
+            1,
+            "plan",
+            &serde_json::json!({"changed":true})
+        )
+        .is_err());
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        assert!(super::archive_history(&screenshots, 1, "entries", &value).is_ok());
+        assert!(super::archive_history(&screenshots, 2, "../outside", &value).is_err());
+        assert!(super::archive_history(
+            &screenshots,
+            2,
+            "plan",
+            &serde_json::json!({"value":"x".repeat(512*1024)})
+        )
+        .is_err());
+    }
+
     use super::*;
     use serde_json::json;
 

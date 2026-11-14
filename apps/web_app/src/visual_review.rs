@@ -1388,6 +1388,28 @@ pub(crate) fn propose_recorded_facts(
 }
 
 #[cfg(windows)]
+pub(crate) fn propose_recorded_history(
+    model: &mut VisionIdentityGuard,
+    addr: std::net::SocketAddr,
+    fields: &[waypoint_applications::form_mapping::FormField],
+    records: &[crate::candidate_history::SelectedRecord],
+) -> Result<Value, String> {
+    let capture = crate::mapping_diagnostics::Capture::default();
+    let observer = capture.clone();
+    let mut result = with_recorded_inference(model, addr, |inference| {
+        inference.set_response_observer(move |schema, native| observer.observe(schema, native));
+        crate::history_batch::propose(
+            inference,
+            fields,
+            records,
+            &crate::local_advice::Control::default(),
+        )
+    })?;
+    result["diagnostics"] = capture.finish();
+    Ok(result)
+}
+
+#[cfg(windows)]
 fn with_recorded_inference<T>(
     model: &mut VisionIdentityGuard,
     addr: std::net::SocketAddr,

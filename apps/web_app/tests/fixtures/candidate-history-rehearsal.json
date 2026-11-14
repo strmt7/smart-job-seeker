@@ -1,0 +1,71 @@
+{
+  "source_kind": "fictional",
+  "schema": 1,
+  "cases": [
+    {
+      "id": "history-1",
+      "profile": {
+        "career_history": "{\"version\":1,\"employment\":[{\"id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"employer\":\"Fictional Northstar Engineering\",\"title\":\"Quality Engineer\",\"start_date\":\"2021\",\"current\":true,\"reviewed\":true},{\"id\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"employer\":\"Fictional Harbor Laboratory\",\"title\":\"Technical Associate\",\"start_date\":\"2018\",\"end_date\":\"2020-06\",\"reviewed\":true},{\"id\":\"dddddddddddddddddddddddddddddddd\",\"employer\":\"Unchecked fictional employer\",\"title\":\"Unreviewed role\",\"reviewed\":false}],\"education\":[{\"id\":\"cccccccccccccccccccccccccccccccc\",\"institution\":\"Fictional Eastlake University\",\"qualification\":\"Bachelor degree\",\"start_date\":\"2013\",\"end_date\":\"2017\",\"reviewed\":true}]}"
+      },
+      "expected": {
+        "#h1": "Fictional Northstar Engineering",
+        "#h2": "Quality Engineer",
+        "#h3": "Fictional Harbor Laboratory",
+        "#h4": "2021",
+        "#h5": "Fictional Eastlake University"
+      },
+      "expected_sources": {
+        "#h1": {
+          "entry_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "component": "employer"
+        },
+        "#h2": {
+          "entry_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "component": "title"
+        },
+        "#h3": {
+          "entry_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "component": "employer"
+        },
+        "#h4": {
+          "entry_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "component": "start_year"
+        },
+        "#h5": {
+          "entry_id": "cccccccccccccccccccccccccccccccc",
+          "component": "institution"
+        }
+      }
+    },
+    {
+      "id": "history-2",
+      "profile": {
+        "career_history": "{\"version\":1,\"employment\":[{\"id\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"employer\":\"Fictional Seabrook Systems\",\"title\":\"Technical Associate\",\"start_date\":\"2018\",\"end_date\":\"2022-11\",\"reviewed\":true},{\"id\":\"dddddddddddddddddddddddddddddddd\",\"employer\":\"Unchecked fictional employer\",\"title\":\"Unreviewed role\",\"reviewed\":false},{\"id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"employer\":\"Fictional Blue Cedar Works\",\"title\":\"Research Analyst\",\"start_date\":\"2023\",\"current\":true,\"reviewed\":true}],\"education\":[{\"id\":\"cccccccccccccccccccccccccccccccc\",\"institution\":\"Fictional Westbridge College\",\"qualification\":\"Bachelor degree\",\"start_date\":\"2013\",\"end_date\":\"2017\",\"reviewed\":true}]}"
+      },
+      "expected": {
+        "#h1": "Fictional Blue Cedar Works",
+        "#h2": "Fictional Seabrook Systems",
+        "#h3": "2023",
+        "#h4": "Fictional Westbridge College"
+      },
+      "expected_sources": {
+        "#h1": {
+          "entry_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "component": "employer"
+        },
+        "#h2": {
+          "entry_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "component": "employer"
+        },
+        "#h3": {
+          "entry_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "component": "start_year"
+        },
+        "#h4": {
+          "entry_id": "cccccccccccccccccccccccccccccccc",
+          "component": "institution"
+        }
+      }
+    }
+  ]
+}

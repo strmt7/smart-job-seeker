@@ -286,6 +286,28 @@ pub(crate) fn technical_question(kind: &str, platform: &str, visual_refused: boo
     format!("Technical question: {question} Control category: {kind}. Public platform family: {platform}. Use authoritative public documentation. No candidate labels, values, images or personal URLs are supplied. Do not research applicant answers, authentication or challenge bypass. Findings are untested advice and cannot authorize or retry any application action.")
 }
 
+fn research_identifiers(profile: &Value) -> Result<Vec<String>, String> {
+    let mut identifiers = crate::search_planner::protected_identifiers(profile);
+    if let Some(history) = profile.get("career_history") {
+        let raw = history
+            .as_str()
+            .ok_or("Private history guard is unavailable")?;
+        if !raw.is_empty() {
+            for record in crate::candidate_history::reviewed(raw)? {
+                for value in record.values.values() {
+                    let value = crate::search_planner::normalized_identifier(value);
+                    if value.chars().count() >= 2 {
+                        identifiers.push(value);
+                    }
+                }
+            }
+        }
+    }
+    identifiers.sort();
+    identifiers.dedup();
+    Ok(identifiers)
+}
+
 /// The caller supplies only a fixed issue class, control kind and public
 /// platform family. Profile identifiers stay exclusively in the local guard.
 pub(crate) fn run(
@@ -299,7 +321,7 @@ pub(crate) fn run(
     std::fs::create_dir(&directory).map_err(|_| "Cannot create a new public research record")?;
     let mut broker = Broker {
         directory: directory.clone(),
-        identifiers: crate::search_planner::protected_identifiers(profile),
+        identifiers: research_identifiers(profile)?,
         guard,
         started: Instant::now(),
         reads: 0,
@@ -375,6 +397,31 @@ mod tests {
         });
         assert!(result.unwrap()["results"].as_array().unwrap().is_empty());
         assert!(events.iter().all(|e| e["status"] == "empty"));
+    }
+    #[test]
+    fn checked_history_values_are_private_guards_not_public_research_context() {
+        let history=json!({"version":1,"employment":[{"id":"a".repeat(32),"employer":"Fictional Private Works","title":"Engineer","reviewed":true}],"education":[{"id":"b".repeat(32),"institution":"IBM","qualification":"Certificate","reviewed":true}]}).to_string();
+        let root = tempfile::tempdir().unwrap();
+        let mut broker = Broker {
+            directory: root.path().into(),
+            identifiers: research_identifiers(&json!({"career_history":history})).unwrap(),
+            guard: None,
+            started: Instant::now(),
+            reads: 0,
+            provider_events: vec![],
+            cached: None,
+            views: 0,
+        };
+        for url in [
+            "https://fixture.invalid/?q=Fictional%20Private%20Works",
+            "https://fixture.invalid/?q=IBM",
+        ] {
+            assert!(!broker.allowed(url));
+            assert!(broker.fetch(url).is_err());
+        }
+        assert_eq!(broker.reads, 0);
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+        assert!(research_identifiers(&json!({"career_history":true})).is_err());
     }
     #[test]
     fn private_query_references_are_refused_before_record_or_transport() {

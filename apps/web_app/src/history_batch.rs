@@ -414,10 +414,121 @@ pub fn propose(
     )
 }
 
+/// Re-resolve every accepted proposal against the immutable checked source.
+/// Model classifications and semantic checks never supply field values.
+pub(crate) fn resolve_checked_proposals(
+    fields: &[FormField],
+    records: &[SelectedRecord],
+    result: &Value,
+) -> Result<Vec<(waypoint_applications::form_mapping::ProposedMapping, Value)>, String> {
+    use waypoint_applications::form_mapping::{PacketValue, ProposedMapping};
+    validate_fields(fields)?;
+    let proposals = result["proposals"]
+        .as_array()
+        .ok_or("History proposals are unavailable")?;
+    if proposals.len() > fields.len() {
+        return Err("Too many history proposals".into());
+    }
+    let mut seen = HashSet::new();
+    let mut resolved = Vec::new();
+    for proposal in proposals {
+        let selector = proposal["selector"]
+            .as_str()
+            .ok_or("History field reference is missing")?;
+        if !seen.insert(selector) {
+            return Err("History field reference is repeated".into());
+        }
+        let field = fields
+            .iter()
+            .find(|field| field.selector == selector)
+            .ok_or("History field is no longer available")?;
+        if proposal["semantic_check"]["status"] != "supported"
+            || proposal["selection"]["scope"] != "question"
+        {
+            return Err("History proposal has no independent semantic check".into());
+        }
+        let component = proposal["component"]
+            .as_str()
+            .ok_or("History component is missing")?;
+        let kind = proposal["selection"]["kind"]
+            .as_str()
+            .ok_or("History record kind is missing")?;
+        let basis = proposal["selection"]["basis"]
+            .as_str()
+            .ok_or("History record basis is missing")?;
+        let record = crate::history_record_choice::resolve_classification(records, kind, basis)?;
+        let expected = crate::history_advice::grounded_proposal(field, record, component)
+            .ok_or("Checked history value is incompatible with this field")?;
+        if proposal["entry_id"] != expected["entry_id"]
+            || proposal["source_sha256"] != expected["source_sha256"]
+            || proposal["value"] != expected["value"]
+        {
+            return Err("History proposal changed from its checked source".into());
+        }
+        let value: PacketValue = serde_json::from_value(expected["value"].clone())
+            .map_err(|_| "Invalid checked history value")?;
+        resolved.push((
+            ProposedMapping {
+                field_selector: selector.into(),
+                value,
+            },
+            proposal.clone(),
+        ));
+    }
+    Ok(resolved)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use waypoint_inference::{CapabilityReport, InferenceError, UsageReport};
+    #[test]
+    fn checked_history_proposals_cannot_change_values_sources_or_record_roles() {
+        use waypoint_applications::form_mapping::PacketValue;
+        let records = records();
+        let mut field = fields(1).remove(0);
+        field.selector = "#employer".into();
+        field.label = "Current employer".into();
+        let record = records.iter().find(|r| r.ongoing_confirmed).unwrap();
+        let mut proposal =
+            crate::history_advice::grounded_proposal(&field, record, "employer").unwrap();
+        proposal["semantic_check"] = json!({"status":"supported","advisory":true});
+        proposal["selection"] = json!({"kind":"employment","basis":"current","scope":"question"});
+        let fields = vec![field.clone()];
+        let good = json!({"proposals":[proposal]});
+        let values = resolve_checked_proposals(&fields, &records, &good).unwrap();
+        assert_eq!(
+            values[0].0.value,
+            PacketValue::Text(record.values["employer"].clone())
+        );
+        for (key, value) in [
+            (
+                "value",
+                serde_json::to_value(PacketValue::Text("Invented employer".into())).unwrap(),
+            ),
+            ("entry_id", json!("b".repeat(32))),
+            ("source_sha256", json!("0".repeat(64))),
+            ("selector", json!("#unknown")),
+            ("semantic_check", json!({"status":"uncertain"})),
+            (
+                "selection",
+                json!({"kind":"employment","basis":"latest_completed","scope":"question"}),
+            ),
+        ] {
+            let mut changed = good.clone();
+            changed["proposals"][0][key] = value;
+            assert!(
+                resolve_checked_proposals(&fields, &records, &changed).is_err(),
+                "{key}"
+            );
+        }
+        let mut sensitive = field.clone();
+        sensitive.sensitive = true;
+        assert!(resolve_checked_proposals(&[sensitive], &records, &good).is_err());
+        let mut third_person = field;
+        third_person.label = "Referee employer".into();
+        assert!(resolve_checked_proposals(&[third_person], &records, &good).is_err());
+    }
     struct Fake {
         answers: Vec<Value>,
         calls: usize,

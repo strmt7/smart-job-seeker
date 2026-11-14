@@ -98,7 +98,7 @@ pub fn poll(id: &str) -> Result<Value, String> {
     }
 }
 
-fn normalized_identifier(value: &str) -> String {
+pub(crate) fn normalized_identifier(value: &str) -> String {
     value
         .chars()
         .filter(|c| c.is_alphanumeric())

@@ -3326,6 +3326,10 @@ fn serve_request(
                     None => false,
                     Some(value) => value.as_bool().ok_or("Invalid saved-contact option")?,
                 };
+                let use_saved_history = match body.get("use_saved_history") {
+                    None => false,
+                    Some(value) => value.as_bool().ok_or("Invalid checked-history option")?,
+                };
                 let attempt = body["attempt_id"]
                     .as_str()
                     .ok_or("Missing saved page identity")?;
@@ -3335,7 +3339,7 @@ fn serve_request(
                         Some(value) => serde_json::from_value(value.clone())
                             .map_err(|_| "Invalid candidate PDF selection")?,
                     };
-                if !documents.is_empty() {
+                if !documents.is_empty() || use_saved_history {
                     job_capture::start_selected_preview(
                         ws,
                         &job,
@@ -3345,6 +3349,7 @@ fn serve_request(
                             rehearse,
                             public_research,
                             use_saved_contacts,
+                            use_saved_history,
                             documents,
                         },
                     )?;
@@ -4483,6 +4488,7 @@ fn serve_request(
             {
                 return Err("Personal details changed in another session. Copy your edits, reload the page, and review the current details before saving.".into());
             }
+            job_capture::invalidate_candidate_profile(ws)?;
             interrupt_session(ws, session, "Profile changed")?;
             json_reply(
                 stream,

@@ -1,5 +1,17 @@
 # Completion plan - 11 November 2026
 
+The [checked-history continuation](g1/CHECKED_HISTORY_REHEARSAL_2026-11-14.md)
+connects explicit checked employment/education records to immutable offline
+inputs, retained answer/source evidence and revision cancellation. Two authored
+local12B text-field cases pass: 9/9 answerable fields, unknown 0/7, no incorrect
+or unverified entries/source mismatches. Initial 0/2 and intermediate 1/2 runs
+remain retained. This is not held-out or complete-workflow evidence. General
+candidate facts/qualification answers, broader controls, repeated history,
+conditional/section journeys, final native/visual acceptance and document
+truth/layout/ATS gates remain unfinished. Live source invalidation and owned exit
+pass; native-call cancellation latency, idle expiry, sustained memory behavior
+and clean-host installation remain open. No release readiness is claimed.
+
 The [native file-detail continuation](g1/NATIVE_FILE_LABEL_DETAILS_2026-11-14.md)
 recovers PDF-only visual confirmation without replacing its original image or
 omitted observation. Four development field cases pass (11/11 answerable,

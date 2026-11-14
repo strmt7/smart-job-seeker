@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "reviewed_on": "2026-11-14",
-  "reviewed_source": "42704c9d787caafba02a5ad46fc00fbfc21b8246",
+  "reviewed_source": "f7d28ffa1ef8258e014ed547c8f4f6f37f07ea2e",
   "goal": "Continue the existing active Smart Jobseeker product-development goal",
   "plan": "docs/COMPLETION_PLAN_2026-11-11.md",
   "assessment": "docs/REPO_STATE_REVIEW_2026-11-11.md",
@@ -49,7 +49,8 @@
         "docs/g1/NATIVE_FRAME_IDENTITY_2026-11-13.md",
         "docs/g1/INLINE_FRAME_COMPLETENESS_2026-11-13.md",
         "docs/g1/SELECTED_CANDIDATE_PDFS_2026-11-14.md",
-        "docs/g1/NATIVE_FILE_LABEL_DETAILS_2026-11-14.md"
+        "docs/g1/NATIVE_FILE_LABEL_DETAILS_2026-11-14.md",
+        "docs/g1/CHECKED_HISTORY_REHEARSAL_2026-11-14.md"
       ],
       "next_action": "Prepare and qualify lazy private model/cache admission after native eligibility and efficient verified qualification-cache reuse. Retain native worker failure diagnostics and sufficient RAM-admitted aggregate job capacity measured with model/browser/helpers. Native-call interruption, cleanup latency and uncollected-session idle expiry remain open.",
       "execution_batch": "A",
@@ -67,7 +68,8 @@
         "2026-11-13: reproduced and repaired Close acknowledgement before admission release; three immediate isolated sessions and concurrent-refusal assertions pass, as does consumer-failure recovery. This does not complete cancellation latency, idle expiry or long-running leak qualification.",
         "2026-11-13: post-crop model retest refused before process startup under current shared-policy admission. All three earlier model PIDs rechecked exited; scoped audit0owned matches. Other workloads untouched; no budget below measured needs was forced. This is development containment evidence, not completed product lazy admission or sustained leak qualification.",
         "2026-11-13: later headroom admitted the post-crop model pass and same-input repeat. App limit10GiB unchanged; outer12GiB then measured11GiB, shared half-free admission and3GiB reserve unchanged. Native app commit peaks9138704384/9148370944 bytes, sampled host minima13323198464/14355136512 bytes. Both trees drained, shared runtime unchanged; not product lazy-admission or leak qualification.",
-        "2026-11-13: native cleanup errors preserve the already-recorded owner failure, retaining failure outcome/eight-second deadline. One earlier expanded run left Close unconfirmed; cause remains open. Later isolated repeat, final15-case matrix and4-context radio each close their browsers; scoped audit0matches. Not proof of sustained leak freedom or a fix for the earlier failure."
+        "2026-11-13: native cleanup errors preserve the already-recorded owner failure, retaining failure outcome/eight-second deadline. One earlier expanded run left Close unconfirmed; cause remains open. Later isolated repeat, final15-case matrix and4-context radio each close their browsers; scoped audit0matches. Not proof of sustained leak freedom or a fix for the earlier failure.",
+        "2026-11-14: profile correction cancels the source-bound offline rehearsal while its owned model runtime is live; native model exit and pending=false are observed. This is not mid-native-call interruption-latency, idle-expiry or sustained-memory qualification."
       ],
       "open_checkpoint": "Native-observation and cleanup latency, uncollected inspection-session expiry, and broader admitted-workload behavior remain unqualified.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package."
@@ -111,7 +113,8 @@
         "docs/RELEASE_DIRECTION_REVIEW_2026-11-14.md",
         "docs/g1/CONDITIONAL_FORM_CONTINUATION_2026-11-14.md",
         "docs/g1/SELECTED_CANDIDATE_PDFS_2026-11-14.md",
-        "docs/g1/NATIVE_FILE_LABEL_DETAILS_2026-11-14.md"
+        "docs/g1/NATIVE_FILE_LABEL_DETAILS_2026-11-14.md",
+        "docs/g1/CHECKED_HISTORY_REHEARSAL_2026-11-14.md"
       ],
       "execution_batch": "B",
       "steps": [
@@ -276,7 +279,8 @@
         "docs/g1/PUBLIC_RESEARCH_DECISIONS_2026-11-14.md",
         "docs/g1/SAVED_CONTACT_SNAPSHOTS_2026-11-14.md",
         "docs/g1/SELECTED_CANDIDATE_PDFS_2026-11-14.md",
-        "docs/g1/NATIVE_FILE_LABEL_DETAILS_2026-11-14.md"
+        "docs/g1/NATIVE_FILE_LABEL_DETAILS_2026-11-14.md",
+        "docs/g1/CHECKED_HISTORY_REHEARSAL_2026-11-14.md"
       ],
       "execution_batch": "C",
       "steps": [
@@ -288,7 +292,7 @@
         "After every action, read back native state and perform local-model visual review; detect stale state and no progress.",
         "Measure the local model on the frozen corpus; provide actionable review records rather than invented answers."
       ],
-      "next_action": "Connect reviewed candidate facts/history to the bound offline actor, with source revisions, sensitive/unknown abstention and correction invalidation; then complete varied conditional/repeated/section journeys with final native/visual workflow review and full archives. Native file-only details recover the retained PDF-only failure: four development field cases pass11/11 answerable fields with unknown0/13. Preserve the byte-identical original image, initial omission and all earlier failures. Broader widgets, embedded details and held-out workflows remain unqualified. Investigate research schema/finalization independently without repeating browser stages to tune prose.",
+      "next_action": "Connect source-bound reviewed candidate facts/qualification answers to the offline actor; then complete mixed contacts/PDF/history journeys with conditional, repeated and section controls, final native/visual workflow review and full archives. Checked-history text fields now pass2/2 authored local12B cases,9/9 answerable with unknown0/7, exact source links and live profile-revision cancellation. Preserve initial0/2/intermediate1/2 runs. General facts, broader controls, embedded file details and held-out complete workflows remain unqualified. Research semantic usefulness remains a separate qualification task.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "start_requirements": [
         "The frozen schema2 known-source initial-control case and native mutation fixture admit investigation of the observed actuator failure. This does not admit broad planner promotion; that still requires the varied held-out tranche and full workflow truth.",
@@ -313,9 +317,10 @@
         "2026-11-14: opt-in typed anonymous runtime research with retained native HTTP/model evidence, source/robots/PII guards and independent no-action authority. Local12B actually searches and reads MDN/W3C but all5runs remain review; no supported advice, repaired field or workflow credit. Core8/app3/transport4 regressions pass; workspace1393/615ignored,171UI scripts,29headless rendered cases and native zoom screenshots pass. Original model/harness failures retained; all model trees drain and shared runtime stays unchanged.",
         "2026-11-14: isolated owned local12B qualification; free-provider fallback, HTML5 fragment/focus views and native-byte reuse, full action feedback, precise validator issues and constrained exact-source citation repair. Final-source native-text advice passes provenance; attachment question stops on irrelevant search results (1/2 advisory outcomes, not semantic/repair/workflow or held-out qualification). All prior failures retained. Workspace1408passed/616ignored,171UI scripts,29headless rendered cases, build/Clippy/fmt/audit/license checks pass; both owned model sessions/namespaces and rendered browser/app close.",
         "2026-11-14: explicit saved-contact snapshots replace the single bundled-profile bottleneck. Contact-only projection and source/hash validation, candidate-free public worker requests, freshness checks and no demo-document substitution. Two frozen fictional profiles through the compiled route each verify 3/3 contacts with independent native/visual evidence and leave 0/1 required uploads entered; no incorrect/unverified entries. This is 2/2 development field cases, not complete candidate/document/history workflows or held-out qualification. Exact temporary test-profile restoration remains unverified after API normalization; original model and filesystem-check limitations are retained.",
-        "2026-11-14 final checkpoint: workspace 1414 passed / 616 ignored, full fixture-only browser selection 139 passed, Clippy/build/fmt pass. UI 171 scripts and 29 rendered cases pass at recorded sources. Research prompt packing preserves source excerpts/validation while omitting rejected prose with byte accounting; source IDs/counts are bound and repair state survives invalid generations. Four retained attachment investigations remain review; no model/semantic/repair promotion. Scoped host audit has no matching processes or registrations and no shared resident models; 33,963,266,048 bytes RAM available. Exact private fixture-data restoration remains unverified."
+        "2026-11-14 final checkpoint: workspace 1414 passed / 616 ignored, full fixture-only browser selection 139 passed, Clippy/build/fmt pass. UI 171 scripts and 29 rendered cases pass at recorded sources. Research prompt packing preserves source excerpts/validation while omitting rejected prose with byte accounting; source IDs/counts are bound and repair state survives invalid generations. Four retained attachment investigations remain review; no model/semantic/repair promotion. Scoped host audit has no matching processes or registrations and no shared resident models; 33,963,266,048 bytes RAM available. Exact private fixture-data restoration remains unverified.",
+        "2026-11-14: checked-only history snapshots, reused question/record/value planner, separate immutable plan/entry archives, exact source-component checks and correction invalidation. Local12B2/2 development text-field cases9/9 answerable, unknown0/7; live owned-model exit after profile correction and nonmutating stale archive annotation pass. Windows1431/617ignored,172JavaScript and49rendered cases pass. No whole-workflow or held-out promotion."
       ],
-      "open_checkpoint": "Saved contacts work in two frozen development cases; candidate PDFs and broader reviewed facts/histories remain disconnected. Four anonymous attachment investigations still stop in review: actual direct-document reads work, but quotation/duplicate-source, context and incomplete-output failures are retained. Source-bound citation caps and persistent repair constraints have deterministic regressions; effective native schema/finalization, semantic usefulness and whole-workflow/held-out coverage remain open."
+      "open_checkpoint": "Saved contacts, explicitly selected candidate PDFs and checked career history are connected to bound offline snapshots. Their authored field cases do not establish whole-workflow/held-out coverage or final document truth/layout/ATS acceptance. General candidate facts/qualification answers and broader controls/repeated journeys remain unfinished. Anonymous public technical research can read direct documents; semantic usefulness and effective schema/finalization remain unqualified. Earlier model, browser and research failures remain retained."
     },
     {
       "id": "R05",

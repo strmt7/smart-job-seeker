@@ -156,6 +156,22 @@ pub fn reviewed(raw: &str) -> Result<Vec<SelectedRecord>, String> {
         .collect()
 }
 
+/// Immutable offline input: checked records only, preserving supplied precision.
+pub(crate) fn checked_snapshot(raw: &str) -> Result<String, String> {
+    let canonical = canonicalize(raw)?;
+    if canonical.is_empty() {
+        return Err("Add checked career history before using this option".into());
+    }
+    let mut history: History =
+        serde_json::from_str(&canonical).map_err(|_| "Saved history is invalid")?;
+    history.employment.retain(|item| item.reviewed);
+    history.education.retain(|item| item.reviewed);
+    if history.employment.is_empty() && history.education.is_empty() {
+        return Err("Check at least one career history entry before using this option".into());
+    }
+    serde_json::to_string(&history).map_err(|_| "Cannot preserve checked career history".into())
+}
+
 pub(crate) fn known_date_range(value: &str) -> Option<(u32, u32)> {
     date_range(value).ok().flatten()
 }

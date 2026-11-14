@@ -37,6 +37,8 @@ struct Task {
     cancel: Arc<AtomicBool>,
     rx: mpsc::Receiver<Result<Value, String>>,
     result: Option<Result<Value, String>>,
+    candidate_revision: Option<String>,
+    invalidated: Option<&'static str>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 static COMPLETED: Mutex<Option<(String, PathBuf, Value, Instant)>> = Mutex::new(None);
@@ -75,7 +77,7 @@ fn public_url(raw: &str, profile: &Value) -> Result<(String, String), String> {
     Ok((url.to_string(), source))
 }
 pub fn start(ws: &Workspace, job: &JobIdentityId, id: String) -> Result<(), String> {
-    start_task(ws, job, id, None, false, &[])
+    start_task(ws, job, id, None, false, false, &[])
 }
 pub fn start_preview(
     ws: &Workspace,
@@ -115,6 +117,7 @@ pub fn start_preview_options(
             rehearse,
             public_research,
             use_saved_contacts,
+            use_saved_history: false,
             documents: Vec::new(),
         },
     )
@@ -123,6 +126,7 @@ pub(crate) struct PreviewOptions {
     pub(crate) rehearse: bool,
     pub(crate) public_research: bool,
     pub(crate) use_saved_contacts: bool,
+    pub(crate) use_saved_history: bool,
     pub(crate) documents: Vec<crate::rehearsal_candidate::DocumentSelection>,
 }
 pub(crate) fn start_selected_preview(
@@ -136,10 +140,13 @@ pub(crate) fn start_selected_preview(
         rehearse,
         public_research,
         use_saved_contacts,
+        use_saved_history,
         documents,
     } = options;
     crate::rehearsal_candidate::validate_selections(&documents)?;
-    if (public_research || use_saved_contacts || !documents.is_empty()) && !rehearse {
+    if (public_research || use_saved_contacts || use_saved_history || !documents.is_empty())
+        && !rehearse
+    {
         return Err(
             "Research, saved contacts and selected PDFs are offline autofill rehearsal options"
                 .into(),
@@ -159,6 +166,7 @@ pub(crate) fn start_selected_preview(
             candidate_snapshot_sha256: None,
         }),
         use_saved_contacts,
+        use_saved_history,
         &documents,
     )
 }
@@ -168,6 +176,7 @@ fn start_task(
     id: String,
     mut replay: Option<crate::recorded_preview::Source>,
     use_saved_contacts: bool,
+    use_saved_history: bool,
     documents: &[crate::rehearsal_candidate::DocumentSelection],
 ) -> Result<(), String> {
     if !checked_id(&id) {
@@ -209,6 +218,29 @@ fn start_task(
         }
         crate::suggestions::contact_profile_snapshot(&profile)?;
     }
+    if use_saved_history {
+        if !replay.as_ref().is_some_and(|source| source.rehearse)
+            || raw_profile
+                .as_ref()
+                .is_none_or(|raw| raw.len() > 256 * 1024)
+        {
+            return Err(
+                "Checked history requires an available saved profile and offline rehearsal".into(),
+            );
+        }
+        crate::candidate_history::checked_snapshot(
+            profile["career_history"]
+                .as_str()
+                .ok_or("Add checked career history before using this option")?,
+        )?;
+    }
+    let candidate_revision = (use_saved_contacts || use_saved_history)
+        .then(|| {
+            raw_profile
+                .as_ref()
+                .map(|raw| waypoint_domain::sha256_hex(raw.as_bytes()))
+        })
+        .flatten();
     let (url, source) = public_url(
         selected
             .canonical_url
@@ -250,12 +282,12 @@ fn start_task(
     .ok_or("Page copies require a saved workspace")?;
     let root = record.source_capture_directory();
     std::fs::create_dir(&root).map_err(|_| "Cannot create page-copy folder")?;
-    if use_saved_contacts || !documents.is_empty() {
+    if use_saved_contacts || use_saved_history || !documents.is_empty() {
         let source = replay
             .as_mut()
             .filter(|source| source.rehearse)
             .ok_or("Saved contacts require an offline rehearsal")?;
-        let raw = if use_saved_contacts {
+        let raw = if use_saved_contacts || use_saved_history {
             Some(
                 raw_profile
                     .as_deref()
@@ -268,7 +300,17 @@ fn start_task(
             .parent()
             .ok_or("Candidate record is unavailable")?
             .join("screenshots");
-        source.candidate_snapshot_sha256 = Some(if documents.is_empty() {
+        source.candidate_snapshot_sha256 = Some(if use_saved_history {
+            crate::rehearsal_candidate::stage_inputs(
+                ws,
+                &snapshots,
+                job.as_str(),
+                raw,
+                use_saved_contacts,
+                true,
+                documents,
+            )?
+        } else if documents.is_empty() {
             crate::rehearsal_candidate::stage(
                 &snapshots,
                 raw.ok_or("Saved contacts were not selected")?,
@@ -358,8 +400,38 @@ fn start_task(
         cancel,
         rx,
         result: None,
+        candidate_revision,
+        invalidated: None,
     });
     Ok(())
+}
+/// Revoke a running saved-candidate input after a correction. The owned worker
+/// remains tracked until native teardown is observed; no retry is scheduled.
+pub(crate) fn invalidate_candidate_profile(ws: &Workspace) -> Result<(), String> {
+    let mut active = TASK.lock().map_err(|_| "Page capture unavailable")?;
+    if let Some(task) = active.as_mut() {
+        invalidate_task_profile(ws, task);
+    }
+
+    Ok(())
+}
+fn invalidate_task_profile(ws: &Workspace, task: &mut Task) {
+    if ws.db_path.as_ref() != Some(&task.workspace) || task.candidate_revision.is_none() {
+        return;
+    }
+    let current = ws
+        .candidate_profile()
+        .ok()
+        .flatten()
+        .map(|raw| waypoint_domain::sha256_hex(raw.as_bytes()));
+    if current.as_ref() != task.candidate_revision.as_ref() {
+        task.invalidated = Some(if current.is_some() {
+            "candidate_profile_changed"
+        } else {
+            "candidate_profile_unavailable"
+        });
+        task.cancel.store(true, Ordering::Release);
+    }
 }
 pub fn pending(ws: &Workspace) -> Result<Value, String> {
     let active = TASK.lock().map_err(|_| "Page capture unavailable")?;
@@ -413,6 +485,7 @@ fn progress(root: &Path, id: &str) -> Value {
     json!("starting")
 }
 pub fn poll(ws: &Workspace, id: &str) -> Result<Value, String> {
+    invalidate_candidate_profile(ws)?;
     let mut active = TASK.lock().map_err(|_| "Page capture unavailable")?;
     let Some(task) = active
         .as_mut()
@@ -469,20 +542,27 @@ fn with_current_source(ws: &Workspace, mut value: Value) -> Value {
     value["current_source"] = json!(matches);
     with_current_candidate(ws, value)
 }
+pub(crate) fn candidate_profile_bound(source: &Value) -> bool {
+    source["scope"] == "saved_candidate_contacts"
+        || (source["scope"] == "saved_candidate_materials"
+            && (source["contacts_selected"] == true || source["history_selected"] == true))
+}
+pub(crate) fn candidate_profile_match(source: &Value, current: Option<&str>) -> Option<bool> {
+    let expected = source["source_profile_sha256"]
+        .as_str()
+        .filter(|value| value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit()))?;
+    current.map(|current| current == expected)
+}
 fn with_current_candidate(ws: &Workspace, mut value: Value) -> Value {
     let source = &value["result"]["preview"]["rehearsal"]["candidate_source"];
-    if source["scope"] == "saved_candidate_contacts"
-        || (source["scope"] == "saved_candidate_materials" && source["contacts_selected"] == true)
-    {
-        let current = source["source_profile_sha256"]
-            .as_str()
-            .and_then(|expected| {
-                ws.candidate_profile()
-                    .ok()
-                    .flatten()
-                    .map(|raw| waypoint_domain::sha256_hex(raw.as_bytes()) == expected)
-            });
-        value["current_candidate_profile"] = json!(current);
+    if candidate_profile_bound(source) {
+        let current = ws
+            .candidate_profile()
+            .ok()
+            .flatten()
+            .map(|raw| waypoint_domain::sha256_hex(raw.as_bytes()));
+        value["current_candidate_profile"] =
+            json!(candidate_profile_match(source, current.as_deref()));
     }
     value
 }
@@ -507,6 +587,13 @@ fn finalize(
             json!({"status":if error==CANCELLED{"cancelled"}else{"failed"},"task_id":id,"job_id":task.job.as_str(),"attempt_id":id,"error":error})
         }
     };
+    if let Some(reason) = task.invalidated {
+        value["candidate_input_invalidated"] = json!(reason);
+        if value["status"] == "complete" || value["status"] == "cancelled" {
+            value["status"] = json!("cancelled");
+            value["error"] = json!("Saved candidate information changed or became unavailable; start a fresh rehearsal. Partial evidence was retained.");
+        }
+    }
     if task.replay {
         value["kind"] = json!("recorded_preview");
     }
@@ -979,6 +1066,9 @@ mod tests {
         assert_eq!(serde_json::to_value(request).unwrap(), bound);
         for field in [
             "profile",
+            "career_history",
+            "history",
+            "records",
             "email",
             "password",
             "cookies",
@@ -1046,6 +1136,8 @@ mod tests {
             cancel: Arc::new(AtomicBool::new(false)),
             rx,
             result: None,
+            candidate_revision: None,
+            invalidated: None,
         };
         (dir, ws, task)
     }
@@ -1113,6 +1205,50 @@ mod tests {
         );
         value.as_object_mut().unwrap().remove("source_url_sha256");
         assert!(with_current_source(&ws, value)["current_source"].is_null());
+    }
+    #[test]
+    fn corrected_candidate_inputs_cancel_only_the_bound_workspace_and_preserve_evidence() {
+        let (_dir, ws, mut task) = fixture();
+        let raw = r#"{"first_name":"Avery"}"#;
+        ws.save_candidate_profile(raw).unwrap();
+        task.candidate_revision = Some(waypoint_domain::sha256_hex(raw.as_bytes()));
+        invalidate_task_profile(&ws, &mut task);
+        assert!(!task.cancel.load(Ordering::Acquire));
+        let (_other_dir, other, _) = fixture();
+        other.save_candidate_profile("{}").unwrap();
+        invalidate_task_profile(&other, &mut task);
+        assert!(!task.cancel.load(Ordering::Acquire));
+        ws.save_candidate_profile(r#"{"first_name":"Morgan"}"#)
+            .unwrap();
+        invalidate_task_profile(&ws, &mut task);
+        assert!(task.cancel.load(Ordering::Acquire));
+        assert_eq!(task.invalidated, Some("candidate_profile_changed"));
+        let value = finalize(&ws, &mut task, Ok(completed())).unwrap();
+        assert_eq!(value["status"], "cancelled");
+        assert_eq!(value["result"], completed());
+        assert_eq!(value["record_saved"], true);
+        let (_dir, ws, mut document_only) = fixture();
+        document_only.candidate_revision = None;
+        ws.save_candidate_profile("{}").unwrap();
+        invalidate_task_profile(&ws, &mut document_only);
+        assert!(!document_only.cancel.load(Ordering::Acquire));
+    }
+    #[test]
+    fn candidate_invalidation_never_hides_a_failed_native_shutdown() {
+        let (_dir, ws, mut task) = fixture();
+        task.invalidated = Some("candidate_profile_changed");
+        let value = finalize(
+            &ws,
+            &mut task,
+            Err("Capture shutdown is unconfirmed".into()),
+        )
+        .unwrap();
+        assert_eq!(value["status"], "failed");
+        assert_eq!(value["error"], "Capture shutdown is unconfirmed");
+        assert_eq!(
+            value["candidate_input_invalidated"],
+            "candidate_profile_changed"
+        );
     }
     #[test]
     fn candidate_snapshot_freshness_is_recomputed_without_changing_its_source() {

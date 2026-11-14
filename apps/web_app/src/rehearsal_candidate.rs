@@ -22,6 +22,8 @@ pub(crate) struct Snapshot {
     job_id: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) documents: Vec<SnapshotDocument>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) history: Option<String>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -138,20 +140,57 @@ pub(crate) fn stage_selected(
     raw_profile: Option<&str>,
     selections: &[DocumentSelection],
 ) -> Result<String, String> {
+    stage_inputs(
+        ws,
+        directory,
+        job,
+        raw_profile,
+        raw_profile.is_some(),
+        false,
+        selections,
+    )
+}
+
+pub(crate) fn stage_inputs(
+    ws: &waypoint_workspace::Workspace,
+    directory: &Path,
+    job: &str,
+    raw_profile: Option<&str>,
+    use_contacts: bool,
+    use_history: bool,
+    selections: &[DocumentSelection],
+) -> Result<String, String> {
     ordinary(directory, true)?;
     if !document_id(job) {
         return Err("Invalid candidate job binding".into());
     }
     validate_selections(selections)?;
-    if selections.is_empty() {
-        return Err("Select candidate PDFs before staging them".into());
+    if selections.is_empty() && !use_history {
+        return Err("Select candidate PDFs or checked history before staging them".into());
     }
-    let contacts = match raw_profile {
-        Some(raw) if raw.len() <= 256 * 1024 => crate::suggestions::contact_profile_snapshot(
-            &serde_json::from_str(raw).map_err(|_| "Saved contact profile is invalid")?,
-        )?,
-        Some(_) => return Err("Saved profile exceeds the rehearsal input limit".into()),
+    if (use_contacts || use_history) && raw_profile.is_none_or(|raw| raw.len() > 256 * 1024) {
+        return Err("Saved candidate profile is unavailable or exceeds its limit".into());
+    }
+    if raw_profile.is_some() && !use_contacts && !use_history {
+        return Err("Saved candidate information was not selected".into());
+    }
+    let profile: Value = match raw_profile {
+        Some(raw) => serde_json::from_str(raw).map_err(|_| "Saved candidate profile is invalid")?,
         None => json!({}),
+    };
+    let contacts = if use_contacts {
+        crate::suggestions::contact_profile_snapshot(&profile)?
+    } else {
+        json!({})
+    };
+    let history = if use_history {
+        Some(crate::candidate_history::checked_snapshot(
+            profile["career_history"]
+                .as_str()
+                .ok_or("Add checked career history before using this option")?,
+        )?)
+    } else {
+        None
     };
     let mut total = 0usize;
     let mut infos = Vec::new();
@@ -176,7 +215,9 @@ pub(crate) fn stage_selected(
         infos.push(info);
     }
     let root = document_root(directory)?;
-    fs::create_dir(&root).map_err(|_| "Cannot create candidate PDF folder")?;
+    if !selections.is_empty() {
+        fs::create_dir(&root).map_err(|_| "Cannot create candidate PDF folder")?;
+    }
     let mut documents = Vec::new();
     for (index, (selection, info)) in selections.iter().zip(infos).enumerate() {
         let bytes = ws
@@ -199,13 +240,14 @@ pub(crate) fn stage_selected(
     retain(
         directory,
         &Snapshot {
-            schema: 2,
+            schema: if use_history { 3 } else { 2 },
             source_profile_sha256: raw_profile
                 .map(|raw| waypoint_domain::sha256_hex(raw.as_bytes()))
                 .unwrap_or_default(),
             contacts,
             job_id: Some(job.into()),
             documents,
+            history,
         },
     )
 }
@@ -240,6 +282,7 @@ pub(crate) fn stage(directory: &Path, raw_profile: &str) -> Result<String, Strin
         contacts,
         job_id: None,
         documents: Vec::new(),
+        history: None,
     };
     retain(directory, &snapshot)
 }
@@ -259,22 +302,31 @@ pub(crate) fn load(directory: &Path, expected: &str) -> Result<Snapshot, String>
     }
     let snapshot: Snapshot =
         serde_json::from_slice(&bytes).map_err(|_| "Invalid candidate snapshot")?;
+    let history_valid = match &snapshot.history {
+        Some(raw) => {
+            snapshot.schema == 3 && crate::candidate_history::checked_snapshot(raw)? == *raw
+        }
+        None => snapshot.schema != 3,
+    };
+    let contacts_empty = snapshot.contacts == json!({});
     let profile_valid = if snapshot.source_profile_sha256.is_empty() {
-        snapshot.schema == 2 && snapshot.contacts == json!({})
+        snapshot.schema == 2 && contacts_empty
     } else {
         digest(&snapshot.source_profile_sha256)
-            && crate::suggestions::contact_profile_snapshot(&snapshot.contacts)?
-                == snapshot.contacts
+            && ((snapshot.schema == 3 && contacts_empty)
+                || crate::suggestions::contact_profile_snapshot(&snapshot.contacts)?
+                    == snapshot.contacts)
     };
     if !profile_valid
-        || !matches!(snapshot.schema, 1 | 2)
+        || !history_valid
+        || !matches!(snapshot.schema, 1..=3)
         || (snapshot.schema == 1
             && (bytes.len() > 48 * 1024
                 || snapshot.job_id.is_some()
                 || !snapshot.documents.is_empty()))
-        || (snapshot.schema == 2
-            && (snapshot.documents.is_empty()
-                || snapshot.job_id.as_deref().is_none_or(|id| !document_id(id))))
+        || (matches!(snapshot.schema, 2 | 3)
+            && (snapshot.job_id.as_deref().is_none_or(|id| !document_id(id))
+                || (snapshot.schema == 2 && snapshot.documents.is_empty())))
     {
         return Err("Candidate snapshot contains unsupported data".into());
     }
@@ -304,11 +356,21 @@ pub(crate) fn load(directory: &Path, expected: &str) -> Result<Snapshot, String>
 impl Snapshot {
     pub(crate) fn metadata(&self, binding: &str) -> Value {
         let mut value = json!({"scope":"saved_candidate_contacts","snapshot_sha256":binding,"source_profile_sha256":self.source_profile_sha256,"profile_sha256":waypoint_domain::sha256_hex(self.contacts.to_string().as_bytes()),"documents":"not_selected"});
-        if self.schema == 2 {
+        if matches!(self.schema, 2 | 3) {
             value["scope"] = json!("saved_candidate_materials");
-            value["contacts_selected"] = json!(!self.source_profile_sha256.is_empty());
+            value["contacts_selected"] = json!(self
+                .contacts
+                .as_object()
+                .is_some_and(|contacts| !contacts.is_empty()));
             value["documents"] = json!(self.documents);
             value["document_review"] = json!("not_established_by_selection");
+        }
+        if let Some(history) = &self.history {
+            value["history_selected"] = json!(true);
+            value["history_sha256"] = json!(waypoint_domain::sha256_hex(history.as_bytes()));
+            value["history_records"] = json!(crate::candidate_history::reviewed(history)
+                .map(|records| records.len())
+                .ok());
         }
         value
     }
@@ -322,6 +384,9 @@ impl Snapshot {
         }
         if self.job_id.as_deref() != Some(job) {
             return Err("Candidate PDFs belong to a different job".into());
+        }
+        if self.documents.is_empty() {
+            return Ok(None);
         }
         let root = document_root(directory)?;
         ordinary(&root, true)?;
@@ -523,6 +588,57 @@ mod tests {
             fs::write(path, &bytes).unwrap();
             assert!(load(&snapshots, &waypoint_domain::sha256_hex(&bytes)).is_err());
         }
+    }
+    fn checked_history() -> String {
+        json!({"version":1,"employment":[{"id":"a".repeat(32),"employer":"Fictional Northstar","title":"Quality engineer","start_date":"2021","current":true,"reviewed":true},{"id":"b".repeat(32),"employer":"Unreviewed private employer","title":"Unreviewed role","reviewed":false}],"education":[]}).to_string()
+    }
+    #[test]
+    fn history_only_snapshots_exclude_unchecked_records_and_demo_contacts() {
+        let ws = workspace();
+        let (_folder, snapshots) = folders();
+        let raw=json!({"career_history":checked_history(),"first_name":"Avery","instructions":"private instructions"}).to_string();
+        let binding = stage_inputs(&ws, &snapshots, "job", Some(&raw), false, true, &[]).unwrap();
+        let snapshot = load(&snapshots, &binding).unwrap();
+        assert_eq!(snapshot.contacts, json!({}));
+        let history = snapshot.history.as_ref().unwrap();
+        assert!(!history.contains("Unreviewed private employer"));
+        assert!(!history.contains("private instructions"));
+        assert_eq!(
+            crate::candidate_history::reviewed(history).unwrap().len(),
+            1
+        );
+        assert_eq!(snapshot.metadata(&binding)["contacts_selected"], false);
+        assert_eq!(snapshot.metadata(&binding)["history_selected"], true);
+        assert_eq!(snapshot.metadata(&binding)["history_records"], 1);
+        assert!(snapshot.attachments(&snapshots, "job").unwrap().is_none());
+        assert!(snapshot.attachments(&snapshots, "another-job").is_err());
+        assert!(!snapshots
+            .parent()
+            .unwrap()
+            .join("materials/rehearsal-documents")
+            .exists());
+    }
+    #[test]
+    fn history_catalogs_reject_unchecked_or_malformed_input_even_with_a_new_hash() {
+        let ws = workspace();
+        for history in [
+            "".into(),
+            "not JSON".into(),
+            json!({"version":1,"employment":[],"education":[]}).to_string(),
+        ] {
+            let (_folder, snapshots) = folders();
+            let raw = json!({"career_history":history}).to_string();
+            assert!(stage_inputs(&ws, &snapshots, "job", Some(&raw), false, true, &[]).is_err());
+            assert!(!snapshots.join(NAME).exists());
+        }
+        let (_folder, snapshots) = folders();
+        let raw = json!({"career_history":checked_history()}).to_string();
+        let binding = stage_inputs(&ws, &snapshots, "job", Some(&raw), false, true, &[]).unwrap();
+        let mut snapshot = load(&snapshots, &binding).unwrap();
+        snapshot.history = Some(checked_history());
+        let bytes = serde_json::to_vec(&snapshot).unwrap();
+        fs::write(snapshots.join(NAME), &bytes).unwrap();
+        assert!(load(&snapshots, &waypoint_domain::sha256_hex(&bytes)).is_err());
     }
     #[test]
     fn contacts_are_explicit_bounded_and_never_replaced_by_demo_values() {
