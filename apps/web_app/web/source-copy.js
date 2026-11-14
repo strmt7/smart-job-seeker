@@ -104,6 +104,7 @@
         const research = el('details', '', 'source-copy-details source-research');
         research.append(el('summary', 'Technical research'));
         const result = note?.result;
+        if (note?.source_status?.degraded === true) research.append(el('p', 'Some search services were unavailable. Results may be incomplete.', 'footnote'));
         research.append(el('p', result?.status === 'advice_available' ? result.advice : 'Technical research needs review.', 'footnote'));
         const reason = result?.reason || note?.reason;
         if (result?.status !== 'advice_available' && typeof reason === 'string') {

@@ -417,6 +417,15 @@ used by development tools and tests. Do not add WSL or Docker as product require
   covers that case for newly started browsers, but old processes and temp
   profiles may remain. Record measurements rather than assuming all memory
   pressure is due to the app.
+- Qualify research decisions separately from unchanged browser/vision stages.
+  A fixed replay missing a changed query is missing input, not live-provider or
+  model-intelligence evidence. Pass actual schemas in the prompt, preserve all
+  completed read arguments and current budgets, and return precise validation
+  issues. Citation repairs may offer bounded exact-source choices but must keep
+  the original refusal and require fresh model output. Provenance-valid advice
+  is not full semantic support, a tested repair or action authority. Preserve
+  irrelevant-search stops and all earlier failures; see
+  `docs/g1/PUBLIC_RESEARCH_DECISIONS_2026-11-14.md`.
 - **Ollama `think:true` + strict JSON/schema format silently returns an empty
   `response`** while filling `thinking` (done_reason=length): structured generation
   in `ollama.rs` therefore pins `think:false`. Reasoning probes check the separate

@@ -1023,12 +1023,11 @@ impl Rehearsal {
                         } else {
                             family
                         };
-                        let issue = if target_refused {
-                            "visual control inspection"
-                        } else {
-                            "native field feedback verification"
-                        };
-                        let context=format!("General technical research for {issue} of a {kind} on {platform}. Explain relevant supported browser/vision techniques and their limitations using public authoritative documentation. Do not research applicant answers, legal eligibility, authentication or challenge bypass. No candidate labels, values, images or personal URLs are provided. Findings remain advice; do not authorize or retry an application action.");
+                        let context = crate::form_research::technical_question(
+                            kind,
+                            platform,
+                            target_refused,
+                        );
                         self.research_notes.push(match self.vision.research_issue(directory,profile,&context) {
                             Ok(value)=>value,Err(error)=>json!({"status":"needs_review","reason":bounded_text(&error),"form_actions_authorized":false}),
                         });

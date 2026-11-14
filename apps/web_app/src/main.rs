@@ -93,6 +93,8 @@ mod pdf_runtime;
 mod pdf_setup;
 mod pdf_transcribe;
 mod private_inference;
+#[cfg(windows)]
+mod public_document;
 mod recorded_preview;
 mod resident_inference;
 mod runtime_setup;
@@ -102,6 +104,8 @@ mod smtp_handoff;
 mod source_answer;
 #[cfg(all(test, windows))]
 mod source_answer_qualification;
+#[cfg(all(test, windows))]
+mod source_research_qualification;
 #[cfg(all(test, windows))]
 mod source_vision_qualification;
 mod storage_settings;

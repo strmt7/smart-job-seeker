@@ -1,3 +1,15 @@
+## Focused research and native local-model decisions - 2026-11-14
+
+Anonymous research now has free-provider fallback, HTML5 section/focus extraction,
+actual document links, cached native response views and complete action feedback.
+A constrained citation repair yields the first provenance-valid local12B advice.
+A separate attachment question still stops on irrelevant search results: final
+native scope1/2 advisory conclusions, no semantic/repair/workflow qualification.
+All failures remain retained. Workspace1,408passed/616ignored,171UI scripts and
+29headless rendered cases pass; debug build/Clippy/fmt/audit/license checks pass.
+[Evidence and next work](docs/g1/PUBLIC_RESEARCH_DECISIONS_2026-11-14.md).
+The app remains a prototype. No real application was interacted with or sent.
+
 ## Anonymous public research runtime - 2026-11-14
 
 Saved-page rehearsals now offer an opt-in local-model search/read tool loop,

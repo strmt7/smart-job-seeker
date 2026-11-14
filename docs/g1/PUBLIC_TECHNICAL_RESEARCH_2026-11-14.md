@@ -1,5 +1,10 @@
 # Public technical research - 14 November 2026
 
+Later [decision/extraction qualification](PUBLIC_RESEARCH_DECISIONS_2026-11-14.md)
+supersedes the Wiby-only/introductory-extraction limitations below and records the
+first provenance-valid local-model conclusion. This document retains its earlier
+source and failed integration evidence.
+
 This continuation starts from `ec231343ee42effe7fbf3611aee12d3560041c5c`.
 The local inference endpoint remains loopback-only; the application can separately
 provide anonymous public internet tools to that model. Developer research tools

@@ -1,23 +1,23 @@
 # Known limitations register (T050)
 
-The [anonymous research runtime](docs/g1/PUBLIC_TECHNICAL_RESEARCH_2026-11-14.md)
-now provides actual public search/document reads to the local model, behind an
-explicit rehearsal option and independent transport guards. All five measured
-model runs remain in review: the model repeats requests and its optional
-reassessment exhausts the supported output budget without a final answer.
-Supported conclusions and useful autonomous remediation are not demonstrated.
-The initial provider is Wiby; configurable/fallback technical search, better
-source/fragment extraction and isolated model-decision qualification remain open.
-The saved browser stays isolated, and advice cannot retry actions or promote
-lessons. Rendered UI 29 cases and 171 scripts pass; earlier blank zoom captures are
-retained as rejected evidence. Broader installation, workflow, sustained-memory
-and release gates remain unfinished.
+The [research decision continuation](docs/g1/PUBLIC_RESEARCH_DECISIONS_2026-11-14.md)
+adds provider fallback, actual document references, static focused/fragment views,
+cached native bytes and constrained quotation repair. One final-source local12B
+investigation reaches provenance-valid advice; the attachment investigation stops
+on irrelevant search results. This1/2 development outcome is not a representative
+benchmark. Its quotation does not establish every claim in the advice. Semantic
+support, autonomous useful remediation, complete candidate journeys and held-out
+qualification remain open. All earlier failures are retained. Source/view/prompt
+budgets deliberately expose omissions; login/challenge and unsupported documents
+remain unavailable. Advice cannot retry actions or promote lessons. Scoped29-case
+rendered and171-script UI checks pass; broader Windows installation, sustained
+memory and release gates remain unfinished.
 
 The [conditional continuation](docs/g1/CONDITIONAL_FORM_CONTINUATION_2026-11-14.md)
 qualifies native additive transitions and one unchanged local 12B development
 case: 2/2 facts, reached unknown0/1, no incorrect/unverified entries. Five prior
 failures remain retained. Reasoning and complete native label context are now
-used in this path, but runtime public-research integration, arbitrary candidate
+used in this path, but public-research-driven repair, arbitrary candidate
 history, representative held-out workflows and native final review remain open.
 Embedded supplementary details are unsupported; other native/visual walls stay
 in review. The [direction review](docs/RELEASE_DIRECTION_REVIEW_2026-11-14.md)

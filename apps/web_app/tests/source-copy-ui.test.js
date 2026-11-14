@@ -35,6 +35,8 @@ function harness(api, onFinished) {
     assert.equal(request.public_research===true,expected);
     assert.equal(request.rehearse===true,action==='Rehearse autofill');
   }
+  const degraded=harness(async()=>{}).preview({views:[],rehearsal:{scope:'fictional_saved_form',public_research:[{source_status:{degraded:true},result:{status:'needs_review'}}]}},{});
+  assert(find(degraded,node=>node.textContent==='Some search services were unavailable. Results may be incomplete.'));
   const unavailable=harness(async()=>{}).preview({views:[],rehearsal:{scope:'fictional_saved_form',public_research:[{result:{status:'needs_review',reason:'no_progress'}}]}},{});
   assert(find(unavailable,node=>node.textContent==='The model could not make further progress with the available sources.'));
   const researchPanel=harness(async()=>{}).preview({views:[],rehearsal:{scope:'fictional_saved_form',public_research:[{result:{status:'advice_available',advice:'Check the documented input type.',evidence:[{url:'https://docs.example.invalid/browser'},{url:'javascript:alert(1)'}]}}]}},{});

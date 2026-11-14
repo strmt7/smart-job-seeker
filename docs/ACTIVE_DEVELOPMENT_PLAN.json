@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "reviewed_on": "2026-11-14",
-  "reviewed_source": "ec231343ee42effe7fbf3611aee12d3560041c5c",
+  "reviewed_source": "d5980874badd8e4d7df72cc311a6c92590f24287",
   "goal": "Continue the existing active Smart Jobseeker product-development goal",
   "plan": "docs/COMPLETION_PLAN_2026-11-11.md",
   "assessment": "docs/REPO_STATE_REVIEW_2026-11-11.md",
@@ -244,7 +244,9 @@
         "crates/waypoint_research/src/lib.rs",
         "apps/web_app/src/form_research.rs",
         "crates/waypoint_research/src/tools.rs",
-        "crates/waypoint_browser/src/capture_session/public_read.rs"
+        "crates/waypoint_browser/src/capture_session/public_read.rs",
+        "apps/web_app/src/public_document.rs",
+        "apps/web_app/src/source_research_qualification.rs"
       ],
       "acceptance": [
         "Typed bounded planning using supported candidate facts",
@@ -265,7 +267,8 @@
         "docs/g1/INLINE_FRAME_COMPLETENESS_2026-11-13.md",
         "docs/RELEASE_DIRECTION_REVIEW_2026-11-14.md",
         "docs/g1/CONDITIONAL_FORM_CONTINUATION_2026-11-14.md",
-        "docs/g1/PUBLIC_TECHNICAL_RESEARCH_2026-11-14.md"
+        "docs/g1/PUBLIC_TECHNICAL_RESEARCH_2026-11-14.md",
+        "docs/g1/PUBLIC_RESEARCH_DECISIONS_2026-11-14.md"
       ],
       "execution_batch": "C",
       "steps": [
@@ -277,7 +280,7 @@
         "After every action, read back native state and perform local-model visual review; detect stale state and no progress.",
         "Measure the local model on the frozen corpus; provide actionable review records rather than invented answers."
       ],
-      "next_action": "Isolate owned local-model tool decisions and excerpt quality without repeating unchanged browser/mapping stages. Qualify grounded technical conclusions, fragment/section-aware reading and useful recovery before enabling any guarded repair. Then connect existing candidate-supported history/facts to complete contained journeys and archives; preserve unknowns, independent visual/native review and all no-send/approval gates.",
+      "next_action": "Improve permitted direct-source recovery after irrelevant searches and evaluate semantic support on frozen varied technical issues without rerunning unchanged browser stages. Then connect useful bounded research to independently validated typed repairs and complete contained candidate/document/history journeys with archives and final native/visual review. Preserve original failures, unknowns and all no-send/approval gates.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "start_requirements": [
         "The frozen schema2 known-source initial-control case and native mutation fixture admit investigation of the observed actuator failure. This does not admit broad planner promotion; that still requires the varied held-out tranche and full workflow truth.",
@@ -299,9 +302,10 @@
         "2026-11-14: native conditional main/inline additions retain current scope/document/target identity and require fresh planning; ten cases close, with four positive native readbacks/four transitions and eight refusal cases. Three unchanged-source local12B runs each0/2; formatting/key definitions did not fix initial mapping abstention. Unknown citizenship is unreached, not a proven abstention. No workflow/held-out credit.",
         "2026-11-14: separate bounded local reasoning repairs initial mapping abstention. Complete native label detail and structural separator comparison repair two further visual-input/comparer failures. Unchanged frozen conditional development case verifies2/2 facts, reached unknown0/1, two fresh replans, four independently matched before/after detail reviews, no incorrect/unverified/unexpected/ambiguous/unbound entries. One run only; whole workflow and held-out qualification remain open. All five failures retained; current workspace1378passed/614ignored, Clippy/build pass.",
         "2026-11-14 final declaration/packaging check: named read-only JS passes Node syntax and four native associated-detail cases; current workspace1378passed/614ignored, Clippy/build pass. Final separately bound binary repeats unchanged-truth conditional2/2 with reached unknown0/1 and zero critical entries. Model/app tree drains; two development runs are not held-out/model promotion or full-workflow completion.",
-        "2026-11-14: opt-in typed anonymous runtime research with retained native HTTP/model evidence, source/robots/PII guards and independent no-action authority. Local12B actually searches and reads MDN/W3C but all5runs remain review; no supported advice, repaired field or workflow credit. Core8/app3/transport4 regressions pass; workspace1393/615ignored,171UI scripts,29headless rendered cases and native zoom screenshots pass. Original model/harness failures retained; all model trees drain and shared runtime stays unchanged."
+        "2026-11-14: opt-in typed anonymous runtime research with retained native HTTP/model evidence, source/robots/PII guards and independent no-action authority. Local12B actually searches and reads MDN/W3C but all5runs remain review; no supported advice, repaired field or workflow credit. Core8/app3/transport4 regressions pass; workspace1393/615ignored,171UI scripts,29headless rendered cases and native zoom screenshots pass. Original model/harness failures retained; all model trees drain and shared runtime stays unchanged.",
+        "2026-11-14: isolated owned local12B qualification; free-provider fallback, HTML5 fragment/focus views and native-byte reuse, full action feedback, precise validator issues and constrained exact-source citation repair. Final-source native-text advice passes provenance; attachment question stops on irrelevant search results (1/2 advisory outcomes, not semantic/repair/workflow or held-out qualification). All prior failures retained. Workspace1408passed/616ignored,171UI scripts,29headless rendered cases, build/Clippy/fmt/audit/license checks pass; both owned model sessions/namespaces and rendered browser/app close."
       ],
-      "open_checkpoint": "All5compiled research-model runs remain needs_review/no_progress; actual public reads work, grounded conclusions and repair effectiveness are unqualified. Wiby-only default, bounded introductory extraction, reasoning-length exhaustion and native interruption/cleanup latency remain open."
+      "open_checkpoint": "First provenance-valid advice demonstrated, not complete semantic support or useful form repair. A separate attachment investigation stops after irrelevant search results. Direct-source recovery, representative frozen questions, complete candidate/document/conditional journeys, native final review, held-out promotion and native interruption/sustained-memory gates remain open."
     },
     {
       "id": "R05",
@@ -807,7 +811,7 @@
   "immediate_slices": [
     {
       "task": "R04",
-      "deliverable": "Connect existing public research through a typed bounded runtime broker, separate from candidate-bearing inert browsers, then join candidate facts/history and complete workflows/archives. Separate local reasoning, constrained decisions and independent native/visual checks are now demonstrated on one conditional case, not generally qualified. Preserve earlier failures, all unknowns and no-send gates; avoid more isolated geometry work without an observed journey blocker."
+      "deliverable": "Qualify direct-source recovery and semantic support after the first provenance-valid local-model research conclusion; complete candidate-supported contained journeys, archives and final native/visual review. A separate attachment investigation still stops on irrelevant search results. Preserve all no-send/approval gates; no broad planner or held-out promotion."
     },
     {
       "task": "R02",
@@ -822,5 +826,29 @@
       "deliverable": "Explicit free-provider recovery/backoff and measured broad retrieval/application-route reachability; retain FreeSerp unavailable and SearXNG429 evidence rather than claim successful global search."
     }
   ],
-  "direction_review": "docs/RELEASE_DIRECTION_REVIEW_2026-11-14.md"
+  "direction_review": "docs/RELEASE_DIRECTION_REVIEW_2026-11-14.md",
+  "latest_runtime_research_checkpoint": {
+    "baseline_head": "d5980874badd8e4d7df72cc311a6c92590f24287",
+    "evidence": "docs/g1/PUBLIC_RESEARCH_DECISIONS_2026-11-14.md",
+    "private_evidence": "target/research-decisions-w7swu99t/",
+    "workspace": {
+      "passed": 1408,
+      "ignored": 616,
+      "groups": 43
+    },
+    "ui_scripts_passed": 171,
+    "rendered_cases_passed": 29,
+    "model_scope": "Two final-source anonymous public research development questions; no browser or candidate material. One provenance-valid advice, one needs_review; no semantic, repair, workflow or held-out promotion.",
+    "all_packages_complete": false,
+    "host": {
+      "private_receipt": "target/development-host-f232c2ffdd854766aa2393f75f9b752e.private.json",
+      "matching_processes": 0,
+      "matching_services": 0,
+      "matching_tasks": 0,
+      "matching_startup": 0,
+      "shared_resident_models": 0,
+      "available_ram_bytes": 34155413504,
+      "scope": "Scoped read-only checkpoint and native owned-process/listener teardown, not sustained leak freedom."
+    }
+  }
 }
