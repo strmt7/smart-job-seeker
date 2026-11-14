@@ -21,6 +21,9 @@
 //!   them.
 
 mod captured_frame;
+mod conditional_field;
+#[cfg(all(test, windows))]
+mod conditional_field_qualification;
 mod frame_identity;
 #[cfg(all(test, windows))]
 mod inline_frame_qualification;
@@ -2240,9 +2243,17 @@ impl CdpDriver {
         self.screenshot_element(selector, true, false)
     }
 
-    /// Capture a tighter main-page label/control region without changing focus.
+    /// Capture a native-associated label/control region without changing focus.
     /// A distant or clipped label can remain unreadable; this grants no action.
     pub fn screenshot_field_detail(&mut self, selector: &str) -> Result<String, DriverError> {
+        self.screenshot_field_detail_bound(selector)
+            .map(|(image, _)| image)
+    }
+
+    fn screenshot_field_detail_bound(
+        &mut self,
+        selector: &str,
+    ) -> Result<(String, bool), DriverError> {
         if self.captured_scope.is_some() {
             return Err(DriverError(
                 "Embedded controls keep their existing bounded context".into(),
@@ -2251,6 +2262,15 @@ impl CdpDriver {
         let node = self
             .node_id(selector)?
             .ok_or_else(|| DriverError("Field is unavailable for detail capture".into()))?;
+        if let Some(bounds) = self.field_label_context_bounds(node)? {
+            let image = self.screenshot_bounds(&bounds, false, false, false)?;
+            if self.field_label_context_bounds(node)?.as_ref() != Some(&bounds) {
+                return Err(DriverError(
+                    "Field label geometry changed during capture".into(),
+                ));
+            }
+            return Ok((image, true));
+        }
         let model = self
             .cdp
             .call("DOM.getBoxModel", json!({"nodeId":node}))
@@ -2261,6 +2281,51 @@ impl CdpDriver {
             .ok_or_else(|| DriverError("Field has no detail bounds".into()))?;
         let numbers: Vec<f64> = quad.iter().filter_map(Value::as_f64).collect();
         self.screenshot_bounds_with_crop(&numbers, true, false, FieldContextCrop::Detail)
+            .map(|image| (image, false))
+    }
+
+    fn field_label_context_bounds(&mut self, node: u64) -> Result<Option<Vec<f64>>, DriverError> {
+        let resolved = self
+            .cdp
+            .call("DOM.resolveNode", json!({"nodeId":node}))
+            .map_err(derr)?;
+        let object = resolved
+            .pointer("/object/objectId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DriverError("Field label context is unavailable".into()))?;
+        let found = self.cdp.call(
+            "Runtime.callFunctionOn",
+            json!({"objectId":object,
+            "functionDeclaration":include_str!("field_label_context.js"),"returnByValue":true}),
+        );
+        let released = self
+            .cdp
+            .call("Runtime.releaseObject", json!({"objectId":object}));
+        let found = found.map_err(derr)?;
+        released.map_err(derr)?;
+        if found.get("exceptionDetails").is_some() {
+            return Err(DriverError(
+                "Field label context could not be inspected".into(),
+            ));
+        }
+        let value = &found["result"]["value"];
+        if value["unavailable"] == true {
+            return Ok(None);
+        }
+        let bounds = value["bounds"]
+            .as_array()
+            .filter(|bounds| bounds.len() == 8)
+            .ok_or_else(|| {
+                DriverError(
+                    "Associated labels are clipped, hidden or exceed the detail budget".into(),
+                )
+            })?;
+        let numbers: Option<Vec<_>> = bounds
+            .iter()
+            .map(|v| v.as_f64().filter(|n| n.is_finite()))
+            .collect();
+        let numbers = numbers.ok_or_else(|| DriverError("Invalid field label bounds".into()))?;
+        Ok(Some(numbers))
     }
 
     /// Capture post-entry context, including more of a native file chooser's

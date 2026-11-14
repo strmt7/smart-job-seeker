@@ -112,6 +112,18 @@ pub trait Inference {
         self.generate_structured(schema_name, prompt, max_output_tokens)
     }
 
+    /// Optional plain reasoning pass. Only the completed final assessment is
+    /// returned; it is untrusted advice, never a fact, action or approval.
+    /// Unsupported backends make no request and return None.
+    fn generate_advice(
+        &mut self,
+        _purpose: &str,
+        _prompt: &str,
+        _max_output_tokens: u32,
+    ) -> Result<Option<(String, UsageReport)>, InferenceError> {
+        Ok(None)
+    }
+
     fn cancel(&mut self) -> Result<(), InferenceError> {
         Err(InferenceError::Cancelled)
     }

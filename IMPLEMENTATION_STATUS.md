@@ -1,3 +1,18 @@
+## Conditional forms and local reasoning - 2026-11-14
+
+Conditional additions now stop the stale plan, preserve verified entries and
+request a fresh plan. Separate bounded local reasoning resolves an observed
+mapping abstention; supplementary native label context and structural label
+comparison fix subsequent visual-input/comparer failures. The unchanged local
+12B development case verifies 2/2 facts and leaves its reached required unknown
+untouched, with four independent before/after detail reviews. Ten native core
+cases and four detail cases have scoped passing evidence; all close. Current
+workspace: 1,378 passed / 614 ignored; Clippy/build/fmt pass.
+[Evidence](docs/g1/CONDITIONAL_FORM_CONTINUATION_2026-11-14.md).
+No complete-workflow or held-out claim. The [direction review](docs/RELEASE_DIRECTION_REVIEW_2026-11-14.md)
+prioritizes runtime internet tools and complete candidate journeys; the app
+remains a prototype, with no release or application submission.
+
 ## Tall and clipped embedded forms - 2026-11-13
 
 Visible fields inside tall, wide and partly visible inline forms now pass native

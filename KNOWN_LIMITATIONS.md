@@ -1,5 +1,16 @@
 # Known limitations register (T050)
 
+The [conditional continuation](docs/g1/CONDITIONAL_FORM_CONTINUATION_2026-11-14.md)
+qualifies native additive transitions and one unchanged local 12B development
+case: 2/2 facts, reached unknown0/1, no incorrect/unverified entries. Five prior
+failures remain retained. Reasoning and complete native label context are now
+used in this path, but runtime public-research integration, arbitrary candidate
+history, representative held-out workflows and native final review remain open.
+Embedded supplementary details are unsupported; other native/visual walls stay
+in review. The [direction review](docs/RELEASE_DIRECTION_REVIEW_2026-11-14.md)
+records the remaining release gates. No release-ready, universal-accuracy or
+sustained leak-freedom claim is made.
+
 The [viewport continuation](docs/g1/FRAME_VIEWPORT_AVAILABILITY_2026-11-13.md)
 qualifies five visible frame-geometry variations, preserves four additional
 review cases and fixes zero-field clipped/transparent scopes losing review.

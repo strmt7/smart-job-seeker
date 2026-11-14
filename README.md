@@ -16,6 +16,10 @@ verified functionality, open problems and development inefficiencies. Its
 [detailed execution plan](docs/COMPLETION_PLAN_2026-11-11.md) and
 [active queue](docs/ACTIVE_DEVELOPMENT_PLAN.json) guide the ongoing development goal.
 
+The [current direction review](docs/RELEASE_DIRECTION_REVIEW_2026-11-14.md) records
+the release gaps, current primary-source research and implementation sequence
+for local inference with internet-connected agent tools.
+
 [Saved-page controls](docs/PUBLIC_FORM_OUTLINES.md) show observed labels and
 question groups under a job's page-copy details and application records.
 Missing states and incomplete coverage remain explicit; this view does not

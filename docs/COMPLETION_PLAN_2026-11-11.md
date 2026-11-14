@@ -61,6 +61,13 @@ admission, server-dependent uploads, installation and remaining gates stay open.
 
 ## Immediate execution order
 
+The [2026-11-14 direction review](RELEASE_DIRECTION_REVIEW_2026-11-14.md)
+refines this order: prioritize R04 reasoning/runtime research and complete
+candidate journeys, with R02 independent evaluation and R01 lifecycle gates.
+This changes delivery emphasis, not the remaining acceptance criteria. Local
+inference must be able to use bounded public internet tools; developer-only
+research is not runtime-agent autonomy.
+
 1. **R01: retain the scoped control-plane checkpoints.** Socket framing,
    inventory deferral, fit and [owned form inspection](g1/DEFERRED_FORM_INSPECTION_2026-11-11.md)
    have passing local evidence. Native-observation/cleanup latency and uncollected-

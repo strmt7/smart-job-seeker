@@ -77,6 +77,21 @@ pub struct IndependentFieldAccess {
 }
 
 impl LiveForm {
+    /// Compare native embedded-scope evidence from two current inspections.
+    /// Absent scope evidence is not document identity: the browser must also
+    /// bind its actual document/loader before accepting any continuation.
+    pub fn shares_inspected_native_scope(&self, other: &Self) -> bool {
+        match (&self.independent_fields, &other.independent_fields) {
+            (Some(first), Some(next)) => {
+                !self.independent_field_entry_blocked()
+                    && !other.independent_field_entry_blocked()
+                    && self.origin == other.origin
+                    && first.native_scope_identity == next.native_scope_identity
+            }
+            _ => false,
+        }
+    }
+
     /// Called by a complete browser inspection. Page-wide barriers and custom
     /// widget reviews remain separate until their human-readable presentation.
     pub fn from_inspection(

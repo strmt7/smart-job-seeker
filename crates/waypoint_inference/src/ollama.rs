@@ -465,6 +465,69 @@ impl Inference for OllamaInference {
         self.generate_formatted(schema_name, prompt, max_output_tokens, schema.clone())
     }
 
+    fn generate_advice(
+        &mut self,
+        purpose: &str,
+        prompt: &str,
+        max_output_tokens: u32,
+    ) -> Result<Option<(String, UsageReport)>, InferenceError> {
+        if self.cancelled() {
+            return Err(InferenceError::Cancelled);
+        }
+        if !(768..=2048).contains(&max_output_tokens) || prompt.len() > 8000 {
+            return Err(InferenceError::BudgetExceeded);
+        }
+        // Reason separately: combining thinking and a strict schema has
+        // exhausted the output budget without a final answer on this runtime.
+        let mut body = serde_json::json!({"model":self.model,"prompt":prompt,
+            "stream":false,"think":true,
+            "options":{"num_predict":max_output_tokens,"temperature":0.0}});
+        let context = if self.resident_context {
+            Some(
+                resident_context_from_ps(&self.get_json("/api/ps", 3000)?, &self.model)
+                    .map_err(InferenceError::RuntimeUnreachable)?,
+            )
+        } else {
+            self.context_window
+        };
+        if let Some(tokens) = context {
+            body["options"]["num_ctx"] = tokens.into();
+        }
+        let out = self.post_json("/api/generate", &body, GENERATE_TIMEOUT_MS)?;
+        if let Some(observer) = &mut self.response_observer {
+            observer(purpose, &out);
+        }
+        if self.cancelled() {
+            return Err(InferenceError::Cancelled);
+        }
+        require_natural_stop(&out)?;
+        // Never substitute the thinking field for a missing final response,
+        // or truncate an assessment into apparently complete advice.
+        let text = out
+            .get("response")
+            .and_then(Value::as_str)
+            .filter(|text| !text.trim().is_empty())
+            .ok_or_else(|| InferenceError::StructuredOutputFailed("no final assessment".into()))?;
+        if text.len() > 2048 {
+            return Err(InferenceError::BudgetExceeded);
+        }
+        Ok(Some((
+            text.to_owned(),
+            UsageReport {
+                prompt_tokens: out
+                    .get("prompt_eval_count")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0),
+                completion_tokens: out.get("eval_count").and_then(Value::as_u64).unwrap_or(0),
+                wall_time_ms: out
+                    .get("total_duration")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0)
+                    / 1_000_000,
+            },
+        )))
+    }
+
     fn cancel(&mut self) -> Result<(), InferenceError> {
         self.cancel_flag.store(true, Ordering::Relaxed);
         Ok(())
@@ -1298,6 +1361,91 @@ mod tests {
                 vec![("fictional_schema".into(), expected)]
             );
         }
+    }
+
+    #[test]
+    fn advice_requires_a_complete_bounded_final_response_and_retains_failures() {
+        for (reason, answer, accepted) in [
+            ("stop", "The question asks for a contact fact.", true),
+            ("stop", "", false),
+            ("length", "An incomplete assessment", false),
+            ("stop", " ", false),
+            ("stop", &"x".repeat(2049), false),
+        ] {
+            let native = serde_json::json!({"done":true,"done_reason":reason,"response":answer,
+                "thinking":"Private intermediate reasoning is not final advice", "eval_count":900});
+            let expected = native.clone();
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap();
+            let server = std::thread::spawn(move || {
+                let mut stream = accept_fixture(&listener);
+                let request = read_fixture_request(&mut stream);
+                let split = find_headers_end(&request).unwrap();
+                let body: Value = serde_json::from_slice(&request[split + 4..]).unwrap();
+                assert_eq!(body["think"], true);
+                assert!(body.get("format").is_none());
+                assert_eq!(body["options"]["num_predict"], 1536);
+                assert_eq!(body["options"]["num_ctx"], 4096);
+                let reply = native.to_string();
+                write!(
+                    stream,
+                    "HTTP/1.1 200 Fictional\r\nContent-Length: {}\r\n\r\n{reply}",
+                    reply.len()
+                )
+                .unwrap();
+            });
+            let observed = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let sink = observed.clone();
+            let mut inference = OllamaInference::new(&format!("http://{addr}"), "local")
+                .unwrap()
+                .with_context_window(4096)
+                .unwrap();
+            inference.set_response_observer(move |purpose, native| {
+                sink.lock()
+                    .unwrap()
+                    .push((purpose.to_owned(), native.clone()));
+            });
+            let result =
+                inference.generate_advice("fictional_analysis", "Fictional question", 1536);
+            assert_eq!(result.is_ok(), accepted);
+            if accepted {
+                let (text, usage) = result.unwrap().unwrap();
+                assert_eq!(text, answer);
+                assert_eq!(usage.completion_tokens, 900);
+            }
+            server.join().unwrap();
+            assert_eq!(
+                *observed.lock().unwrap(),
+                vec![("fictional_analysis".into(), expected)]
+            );
+        }
+    }
+
+    #[test]
+    fn advice_rejects_invalid_budgets_and_cancellation_before_connection() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let mut inference = OllamaInference::new(
+            &format!("http://{}", listener.local_addr().unwrap()),
+            "local",
+        )
+        .unwrap();
+        for tokens in [0, 767, 2049] {
+            assert!(matches!(
+                inference.generate_advice("fixture", "Question", tokens),
+                Err(InferenceError::BudgetExceeded)
+            ));
+        }
+        assert!(matches!(
+            inference.generate_advice("fixture", &"x".repeat(8001), 1536),
+            Err(InferenceError::BudgetExceeded)
+        ));
+        inference.cancel().unwrap();
+        assert!(matches!(
+            inference.generate_advice("fixture", "Question", 1536),
+            Err(InferenceError::Cancelled)
+        ));
+        assert!(matches!(listener.accept(),Err(e) if e.kind()==std::io::ErrorKind::WouldBlock));
     }
 
     #[test]

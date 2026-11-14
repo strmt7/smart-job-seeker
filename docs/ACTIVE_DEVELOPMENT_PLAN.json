@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
-  "reviewed_on": "2026-11-13",
-  "reviewed_source": "1cc4029eee0e89fb8d8a6f4aa0b224dda016e154",
+  "reviewed_on": "2026-11-14",
+  "reviewed_source": "e8f932e719b8426546192ffdac43de851816c044",
   "goal": "Continue the existing active Smart Jobseeker product-development goal",
   "plan": "docs/COMPLETION_PLAN_2026-11-11.md",
   "assessment": "docs/REPO_STATE_REVIEW_2026-11-11.md",
-  "next_task": "R02",
+  "next_task": "R04",
   "boundaries": [
     "main only",
     "headless development only",
@@ -105,7 +105,9 @@
         "docs/g1/NATIVE_FRAME_IDENTITY_2026-11-13.md",
         "docs/g1/INLINE_FRAME_COMPLETENESS_2026-11-13.md",
         "docs/g1/STRUCTURAL_CONTROL_EVALUATION_2026-11-13.md",
-        "docs/g1/FRAME_VIEWPORT_AVAILABILITY_2026-11-13.md"
+        "docs/g1/FRAME_VIEWPORT_AVAILABILITY_2026-11-13.md",
+        "docs/RELEASE_DIRECTION_REVIEW_2026-11-14.md",
+        "docs/g1/CONDITIONAL_FORM_CONTINUATION_2026-11-14.md"
       ],
       "execution_batch": "B",
       "steps": [
@@ -114,7 +116,7 @@
         "Freeze employer/layout-family held-out partition before tuning.",
         "Report field, workflow, abstention, error, elapsed and resource denominators; repeat model-sensitive promotion candidates."
       ],
-      "next_action": "Continue representative independent frame/section and whole-workflow truth, then actual model-scored held-out acceptance. Fixed-source schema3 identities and authored tall/partly visible frame geometry are now qualified. The tall development case is2/2 once with unknown0/6, not promotion or majority-site accuracy. Repeated controls across complete sections, French6/7, conditional transitions and native final-review proof remain open. Preserve all old annotations/failures and partition boundaries.",
+      "next_action": "Freeze complete repeated-section/final-review truth and expand varied candidate profiles/held-out layouts. Retain the unchanged conditional development2/2 run with reached unknown0/1, all five earlier failures, French6/7 and original partitions. No promotion or workflow credit from one case; preserve independent value/image/native proofs.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "completed_scopes": [
         "Bounded corpus identity/partition/input protocol and explicit field gate; two development cases, no held-out coverage.",
@@ -130,7 +132,10 @@
         "2026-11-13: source32d2bec exact binary, post-crop English development truth unchanged except explicit used_for_tuning/revision2 provenance. Two same-input local12B runs each2/2 verified, unknown0/6, no wrong/unexpected/unverified performed entries or critical uncertainties. Whole-workflow not_qualified; French remains6/7. Immutable results and actual repeat radio image retained.",
         "2026-11-13: final native frame matrix15cases,8entrycases/10exact readbacks,7explicit review outcomes, allclosed; paired observations/source bindings/stale callback refusals retained. This is native capability evidence only, no new model/workflow/held-out score. Stable independent logical frame oracle identity is the next evaluation requirement.",
         "2026-11-13: schema3 structural control/owner identity preserves legacy native actions and schema1/2 reports. Six native scenarios/twelve observations/sixteen controls remain stable across reload/ID changes and distinguish same-URL siblings; allclosed. Twenty-nine corpus tests pass. One compiled embedded development variation is2/2 supported facts with unknown0/6 in two same-input local12B runs; zero incorrect/ambiguous/unexpected/unverified/unbound entries. No whole-workflow/held-out credit; exact binary and frozen source/control/value truth retained.",
-        "2026-11-13: native owner availability uses a common ancestor-viewport hit point; clipped/transparent scopes preserve review even with0inspected fields. Final24native cases:13entrycases/16exact readbacks/11review-only/allclosed. Compiled clipped preview confirms0fields/blocked/review/no model. One independent frozen tall-frame development local12B case2/2verified,unknown0/6,zero critical/unbound entries. No whole-workflow/held-out/promotion credit; prior failures retained."
+        "2026-11-13: native owner availability uses a common ancestor-viewport hit point; clipped/transparent scopes preserve review even with0inspected fields. Final24native cases:13entrycases/16exact readbacks/11review-only/allclosed. Compiled clipped preview confirms0fields/blocked/review/no model. One independent frozen tall-frame development local12B case2/2verified,unknown0/6,zero critical/unbound entries. No whole-workflow/held-out/promotion credit; prior failures retained.",
+        "2026-11-14: native conditional main/inline additions retain current scope/document/target identity and require fresh planning; ten cases close, with four positive native readbacks/four transitions and eight refusal cases. Three unchanged-source local12B runs each0/2; formatting/key definitions did not fix initial mapping abstention. Unknown citizenship is unreached, not a proven abstention. No workflow/held-out credit.",
+        "2026-11-14: separate bounded local reasoning repairs initial mapping abstention. Complete native label detail and structural separator comparison repair two further visual-input/comparer failures. Unchanged frozen conditional development case verifies2/2 facts, reached unknown0/1, two fresh replans, four independently matched before/after detail reviews, no incorrect/unverified/unexpected/ambiguous/unbound entries. One run only; whole workflow and held-out qualification remain open. All five failures retained; current workspace1378passed/614ignored, Clippy/build pass.",
+        "2026-11-14 final declaration/packaging check: named read-only JS passes Node syntax and four native associated-detail cases; current workspace1378passed/614ignored, Clippy/build pass. Final separately bound binary repeats unchanged-truth conditional2/2 with reached unknown0/1 and zero critical entries. Model/app tree drains; two development runs are not held-out/model promotion or full-workflow completion."
       ],
       "start_requirements": [
         "Existing versioned input-binding/evaluation protocol is implemented; reviewed in tools/form_corpus.py and docs/FORM_EVALUATION.md."
@@ -232,12 +237,17 @@
         "crates/waypoint_browser/src/lib.rs",
         "apps/web_app/src/attachment_mapping.rs",
         "apps/web_app/src/suggestions.rs",
-        "crates/waypoint_applications/src/form_mapping.rs"
+        "crates/waypoint_applications/src/form_mapping.rs",
+        "apps/web_app/src/visual_review.rs",
+        "apps/web_app/src/resident_inference.rs",
+        "crates/waypoint_inference/src/ollama.rs",
+        "crates/waypoint_research/src/lib.rs"
       ],
       "acceptance": [
         "Typed bounded planning using supported candidate facts",
         "Custom choices, repeated histories, conditional/multistep/frame scenarios",
-        "Independent before/after visual and native checks; no-progress review fallback"
+        "Independent before/after visual and native checks; no-progress review fallback",
+        "Local inference with evaluated bounded runtime public research; no PII query leakage, remote-model fallback or transfer of research network authority to candidate actions"
       ],
       "evidence": [
         "docs/g1/INDEPENDENT_ENTRY_EVIDENCE_2026-11-11.md",
@@ -249,17 +259,21 @@
         "docs/g1/POST_ENTRY_VALUE_COVERAGE_2026-11-13.md",
         "docs/g1/CHOICE_CONTEXT_AND_RADIO_CAPTURE_2026-11-13.md",
         "docs/g1/NATIVE_FRAME_IDENTITY_2026-11-13.md",
-        "docs/g1/INLINE_FRAME_COMPLETENESS_2026-11-13.md"
+        "docs/g1/INLINE_FRAME_COMPLETENESS_2026-11-13.md",
+        "docs/RELEASE_DIRECTION_REVIEW_2026-11-14.md",
+        "docs/g1/CONDITIONAL_FORM_CONTINUATION_2026-11-14.md"
       ],
       "execution_batch": "C",
       "steps": [
         "Preserve a generic bounded post-entry failure observation and screenshot with provenance; qualify input mutation/formatting and prerequisite-control behavior on contained varied fixtures before using that evidence for planner repair.",
+        "Use completed plain reasoning separately from strict output schemas; retain original abstentions, native completion metadata and explicit recovery budgets. Measure unchanged frozen tasks before claiming gains.",
+        "Connect anonymous public technical research to the local actor through existing source permissions, robots/PII guards and bounded cancellable requests; retrieved text remains untrusted advice and cannot authorize candidate writes.",
         "Connect candidate-supported facts and native/visual observations to a small typed action planner.",
         "Implement bounded choose/enter/attach/section/repeated-history decisions with independent current-state validation.",
         "After every action, read back native state and perform local-model visual review; detect stale state and no progress.",
         "Measure the local model on the frozen corpus; provide actionable review records rather than invented answers."
       ],
-      "next_action": "After broader frozen qualification, investigate radio over-abstention and reviewed fact descriptors without label-specific rules; continue arbitrary fact/history, conditional/multistep/frame planning with independent current native/visual/value proof. Preserve the passing shared coverage mechanism and all unfinished workflow criteria.",
+      "next_action": "Connect existing public research through a typed bounded runtime broker, separate from candidate-bearing inert browsers, then join candidate facts/history and complete workflows/archives. Separate local reasoning, constrained decisions and independent native/visual checks are now demonstrated on one conditional case, not generally qualified. Preserve earlier failures, all unknowns and no-send gates; avoid more isolated geometry work without an observed journey blocker.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "start_requirements": [
         "The frozen schema2 known-source initial-control case and native mutation fixture admit investigation of the observed actuator failure. This does not admit broad planner promotion; that still requires the varied held-out tranche and full workflow truth.",
@@ -277,7 +291,10 @@
         "Shared pre/post coverage resolver retains exact/native-telephone and conflict/ambiguity/failure gates. Post-entry native detail recovers Country; French6/7 with0 wrong/unverified performed entries,2 unknown untouched and radio withheld. Prior family4/6, no full-workflow or held-out success. Native regressions and actual UI pass.",
         "2026-11-13: bounded complete native choices (12items/200UTF8bytes each/1024serializedbytes) inform key mapping without selecting an answer or clearing manual review. Full-prompt batching respects8000bytes including instructions/keys/layout and retains all ten controls in the regression that old code skipped. Existing200field/20perbatch limits remain; no new candidate values sent in key-mapping prompts. Local French remains6/7, so generic multilingual radio over-abstention is unresolved.",
         "2026-11-13: shared radio crop now improves the unchanged-truth English development case1/2 to2/2 in two local12B runs, with six required unknowns untouched. French6/7 and full workflow/held-out qualification remain open. No label-specific mapper or manual/sensitive override introduced.",
-        "2026-11-13: backend now admits fully inspected same-origin/inherited frames and preserves unknown/opaque/covered/stale barriers. Final native matrix and actual crop inspection pass; no local-model frame accuracy or whole-workflow credit. All existing current native/visual/value checks still apply."
+        "2026-11-13: backend now admits fully inspected same-origin/inherited frames and preserves unknown/opaque/covered/stale barriers. Final native matrix and actual crop inspection pass; no local-model frame accuracy or whole-workflow credit. All existing current native/visual/value checks still apply.",
+        "2026-11-14: native conditional main/inline additions retain current scope/document/target identity and require fresh planning; ten cases close, with four positive native readbacks/four transitions and eight refusal cases. Three unchanged-source local12B runs each0/2; formatting/key definitions did not fix initial mapping abstention. Unknown citizenship is unreached, not a proven abstention. No workflow/held-out credit.",
+        "2026-11-14: separate bounded local reasoning repairs initial mapping abstention. Complete native label detail and structural separator comparison repair two further visual-input/comparer failures. Unchanged frozen conditional development case verifies2/2 facts, reached unknown0/1, two fresh replans, four independently matched before/after detail reviews, no incorrect/unverified/unexpected/ambiguous/unbound entries. One run only; whole workflow and held-out qualification remain open. All five failures retained; current workspace1378passed/614ignored, Clippy/build pass.",
+        "2026-11-14 final declaration/packaging check: named read-only JS passes Node syntax and four native associated-detail cases; current workspace1378passed/614ignored, Clippy/build pass. Final separately bound binary repeats unchanged-truth conditional2/2 with reached unknown0/1 and zero critical entries. Model/app tree drains; two development runs are not held-out/model promotion or full-workflow completion."
       ]
     },
     {
@@ -610,10 +627,10 @@
   ],
   "original_reviewed_source": "4acb9a955bcb961ad7a27cb9538e77bb0e03a547",
   "goal_harness": {
-    "binding": "Existing active Smart Jobseeker goal; reverified active on 2026-11-13; objective unchanged.",
+    "binding": "Existing active Smart Jobseeker goal; reverified active on 2026-11-14; objective unchanged.",
     "entry_point": "AGENTS.md",
     "queue": "docs/ACTIVE_DEVELOPMENT_PLAN.json",
-    "selection": "Continue R02 representative and whole-workflow truth after structural frame identity and authored viewport qualification. Preserve old failures and partition boundaries; target-less/offscreen/covered/uncertain contexts retain review. Broader R03 fidelity, conditional/repeated sections, R01 lifecycle/lazy admission and actual held-out local-model acceptance remain open; no real employer actuation or release.",
+    "selection": "R04: connect evaluated bounded runtime public research and candidate-aware complete journeys. R02 independent frozen/held-out truth and R01 lifecycle remain gates. Conditional development case now verifies2/2 facts with reached unknown0/1 after five preserved failures; no complete workflow, held-out promotion, real employer writes or release.",
     "completion": "A package completion does not complete the product goal. Keep the overall goal active until all required product work is achieved.",
     "scheduling": "No new agents, automation, service or background scheduler created by this plan."
   },
@@ -636,25 +653,63 @@
     "build_state": "Last focused test compile failed; three stale start callers remain in current source. No current full-workspace pass claimed."
   },
   "working_tree_checkpoint": {
-    "baseline_head": "1cc4029eee0e89fb8d8a6f4aa0b224dda016e154",
-    "validated_changes": "Common-viewport iframe owner availability and explicit review for clipped/transparent zero-field scopes; native action/readback/image guards remain unchanged.",
+    "baseline_head": "e8f932e719b8426546192ffdac43de851816c044",
+    "validated_changes": "Conditional native continuation/replanning; bounded plain local reasoning before typed mapping recovery; complete native-associated label detail with independent agreement; structural separator comparison; researched product direction and complete-journey priorities.",
     "validated_source_sha256": {
-      "crates/waypoint_browser/src/lib.rs": "deac83efc7d0e9e3c4cda6ae99392248cb73ddb68ab6f073359e20511341ca40",
+      "crates/waypoint_browser/src/capture_discovery.rs": "e0ca52125a874951fa5e362629d8b4e766180302cd8a9667ae01582685f44ab0",
+      "crates/waypoint_browser/src/capture_session.rs": "fde4fad0dd5497e990afbd848dbcf85b9bcbf7f16c387725a4c1dd78c9f909e6",
+      "crates/waypoint_browser/src/rehearsal_capture.rs": "c2c453bb5e9ceedda6e01c95175590ec44800244490db9af5c273d35f8f392b5",
+      "crates/waypoint_browser/src/rehearsal_replay.py": "0d86dab7b0a200727e02d20845b1966a55c083c646eb9e6e55877e1bfd74e038",
+      "crates/waypoint_browser/src/captured_frame.rs": "43cfe7e0745537d0f8861c0c7fdb3c0cb19a74375fdadf144170720ac3292378",
+      "crates/waypoint_browser/src/lib.rs": "620a794bf9a537c2422aa1be343dc57e92d61601ad2ce958d9cdc5309e537e3b",
+      "apps/web_app/src/recorded_preview.rs": "01c71981bfcc8194b2db07e9ff9186af22f4815db2d15361094e005db3812d26",
+      "apps/web_app/src/visual_review.rs": "0d852cc24eab9373a19134884e8b331079106a735bcf124697d306c97c91a14d",
+      "crates/waypoint_domain/src/lib.rs": "a9c1d2b7b10b45a8fb535e2b31f4cb8e85d9e970c80d78348efbc0c9b2562912",
+      "crates/waypoint_domain/src/telephone.rs": "04739a3b0eceeb31ee9eadd9a64835e0a903f1a9d797245523b23d0e668011c7",
+      "apps/web_app/data/rehearsal-profile.json": "ce6e680f2e7180e1f7f6a7bf027123beaae25bb4dfb790098b6fe67afcd919e5",
+      "apps/web_app/src/rehearsal-sample.pdf": "67174a6e3717b70a030dcb988b825d5e77e839448ba2f02ca3f2131b0058ca2d",
+      "tools/form_corpus.py": "97a22f176591b1bc2eb381500bf2196cd2989631ca36ecf3a3bda4c1e45f6fe6",
+      "apps/web_app/src/local_model_worker.py": "e038a37a2181823574fb9424cc63d7e2485ec9bf1d6b292dd7c9f33a334def5d",
+      "apps/web_app/web/source-copy.js": "67ac6ba4e42691c8ddd94fef09d28ff9188e0c1c26b391891b440b7d71c4e08d",
+      "apps/web_app/src/private_inference.rs": "397454946fde4dc4dfe36cefda57765f49d836c9a0b7a052043e278ddc599f0b",
+      "apps/web_app/src/form_preview.rs": "bfb6cff26aaa5f6b13b107f22e8e60eac75baf775f633fdc8e95d9bfcac4a66d",
+      "apps/web_app/src/suggestions.rs": "aa9b49b264430b108364b29d7842e12c57d5e5967cdc828bbdc60a0f24bf9cfc",
+      "apps/web_app/src/main.rs": "ca39159a2ba1202dcbcc3b46cfd17384b5657a4b918c359f18ef182fa30e8265",
+      "apps/web_app/src/attachment_mapping.rs": "459d964954b166ac0a5d0adb9388b252efc212fe709298f93f16d7d0109a2875",
+      "apps/web_app/src/rehearsal-cover-letter.pdf": "0438103bc95980d039cb09038f3627ba6304954fdab29a3d6a160fc52163252a",
+      "crates/waypoint_inference/src/ollama.rs": "7890c4c4aec6f5b0b2dfd239b41c6de8802d55416bd2f9eb646d905451e26545",
+      "crates/waypoint_browser/src/logical_control_qualification.rs": "b17a317ef58ad234f4f62a2aac4dff887a3c5461cbfa57f119189c7dacdda915",
       "crates/waypoint_browser/src/frame_identity.rs": "77482b864d5eb9b28dbc15c73af6f73c7fca66496d948a177a763ebe3226552c",
-      "crates/waypoint_browser/src/inline_frame_qualification.rs": "62771850083530e6048e5eb31c8d75ebc2f006604ec49951cad4ca5178ef15fd"
+      "crates/waypoint_browser/src/recorded_dialog.rs": "dd768a9cde60fe9a80aeb07222bbe8cedf87b6ff68c6dffee909e722d36e95e5",
+      "crates/waypoint_browser/src/rehearsal.rs": "014ec3370d3a09c64256a2c30680b5a54d6c8d804202e601648fa9028e9e1990",
+      "apps/web_app/src/mapping_diagnostics.rs": "0f6794d226e69bfe1e0c5f2e0fed3281f41b641b7df7753c14e4cc4790241312",
+      "crates/waypoint_browser/src/conditional_field.rs": "a055a841c0397112d646bf3731faf3c831e7872aa91230c50421bbe62fad5cd3",
+      "crates/waypoint_applications/src/driver.rs": "78d5c7e4fbf2eb6fa873cec23e0a231a22750241c4b1d6b79ec02cd1c0ea3ffe",
+      "crates/waypoint_inference/src/lib.rs": "5a97fd72b0041314d7618163266d604e5b67fb9250a31369478a15f5f5aaa17c",
+      "apps/web_app/src/resident_inference.rs": "8692d19408d74fb9e3435f81b7b826fdac79c6d60981ac84b46bd515473cdb00",
+      "crates/waypoint_browser/src/field_label_context.js": "eb3e68e455168a3edd88d29b909b3454261328146db66f0f1b96c3ad38f470be",
+      "crates/waypoint_browser/src/conditional_field_qualification.rs": "b9e6aaee557c91b90b3e1d50f91a90f65f11b3c4280f403ab3adbfe12d804b02"
     },
-    "app_sha256": "d0cee28195a3ff1c405f118a7ff27f3cad79181a5333fc982e194eb8709af3f6",
-    "build_state": "Windows1371passed/612ignored43groups, Clippy/build/fmt pass; native24cases13entrycases16exact readbacks11review/allclosed; compiled clipped preview0fields/blocked/review/no model.",
+    "app_sha256": "3a82bb4f7af72697a8fb7f417c745f1743d342b7257dac8adc67290054a16d0f",
+    "build_state": "Current source: workspace1378passed/614ignored in43groups; Clippy, debug Windows build and formatting pass. Four native detail cases bind associated context and close. Conditional core ten-case evidence retained at its recorded source; no new dependency or UI source changes.",
     "model_qualification": {
-      "new_runs": 1,
+      "scope": "Two same-input schema3 conditional development runs at separately bound binaries; final source adds only a name to the read-only JS function declaration. No whole-workflow, held-out or model-promotion credit.",
       "model": "gemma4:12b-it-q4_K_M",
-      "scope": "Authored4800px inline frame with questions after2400px source spacer; development2/2supported facts,unknown0/6,zero critical/unbound entries. No workflow/held-out/promotion score.",
-      "results": [
-        "target/viewport-frame-model-fqhvkss0/result.private.json"
-      ],
-      "minimum_available_host_ram_bytes": 18372354048,
-      "all_completed_trees_drained": true,
-      "all_shared_unchanged": true
+      "digest": "6114515d63c17436a7c0417d82820ac65ad643e2806c5a3c89cb62846436ed0b",
+      "context_length": 4096,
+      "verified_answerable": 2,
+      "answerable": 2,
+      "unknown_entered": 0,
+      "unknown": 1,
+      "conditional_replans": 2,
+      "native_associated_detail_reviews": 4,
+      "five_previous_failures_retained": true,
+      "job_peak_commit_bytes": 9446395904,
+      "host_minimum_available_bytes": 24298807296,
+      "process_tree_drained": true,
+      "shared_runtime_unchanged": true,
+      "development_runs": 2,
+      "private_result": "target/conditional-final-model-l53a0f5b/result.private.json"
     },
     "native_frame_qualification": {
       "private_evidence": "target/viewport-final-l5c9nca7",
@@ -662,18 +717,28 @@
       "entry_cases": 13,
       "exact_field_readbacks": 16,
       "review_cases_no_entry": 11,
-      "all_browsers_closed": true
+      "all_browsers_closed": true,
+      "scope_note": "Historical frame evidence at its recorded source; do not relabel as a rerun of current source."
     },
     "host_checkpoint": {
-      "private_evidence": "target/development-host-70f8f8af476e49848b6dda1ba96a80e6.private.json",
-      "available_ram_bytes": 30265565184,
+      "private_receipt": "target/development-host-04d942ad986e40a189c9534624ad6b98.private.json",
       "matching_processes": 0,
-      "resident_models": 0,
-      "persistent_registrations": 0,
-      "scope": "Final scoped observation after native/model/app/controller exit, no errors. Not sustained leak proof or exhaustive host inventory."
+      "matching_services": 0,
+      "matching_tasks": 0,
+      "matching_startup": 0,
+      "available_ram_bytes": 34777341952,
+      "scope": "Read-only scoped checkpoint, not sustained leak freedom; model cleanup separately bound in controller report."
     },
-    "evidence": "docs/g1/FRAME_VIEWPORT_AVAILABILITY_2026-11-13.md",
-    "private_evidence": "target/frame-viewport-ugouaf82"
+    "evidence": "docs/g1/CONDITIONAL_FORM_CONTINUATION_2026-11-14.md",
+    "private_evidence": "target/conditional-form-hf5kk_ah/; target/conditional-section-model-jit9y_2a/; target/native-label-context-ey8mgfvc/; target/release-direction-k6jjuyrs/; target/conditional-final-model-l53a0f5b/; target/named-label-context-whwkn20r/",
+    "native_conditional_qualification": {
+      "core_cases": 10,
+      "positive_cases": 2,
+      "refusal_cases": 8,
+      "core_source_scope": "Prior recorded conditional-core source; retained native matrix",
+      "current_native_label_cases": 4,
+      "current_all_closed": true
+    }
   },
   "dependency_semantics": "depends_on are completion prerequisites; start_requirements admit bounded implementation before the whole prerequisite package completes. Containment, UI consistency and resource ownership apply continuously.",
   "last_validated_checkpoint": {
@@ -735,24 +800,21 @@
   },
   "immediate_slices": [
     {
-      "task": "R02",
-      "deliverable": "Continue representative independent frame/section and whole-workflow truth, then actual model-scored held-out acceptance. Fixed-source schema3 identities and authored tall/partly visible frame geometry are now qualified. The tall development case is2/2 once with unknown0/6, not promotion or majority-site accuracy. Repeated controls across complete sections, French6/7, conditional transitions and native final-review proof remain open. Preserve all old annotations/failures and partition boundaries."
+      "task": "R04",
+      "deliverable": "Connect existing public research through a typed bounded runtime broker, separate from candidate-bearing inert browsers, then join candidate facts/history and complete workflows/archives. Separate local reasoning, constrained decisions and independent native/visual checks are now demonstrated on one conditional case, not generally qualified. Preserve earlier failures, all unknowns and no-send gates; avoid more isolated geometry work without an observed journey blocker."
     },
     {
       "task": "R02",
-      "deliverable": "Eligible varied private copies and independently frozen answer/workflow truth before any held-out model run; preserve all six old/new intake candidate outcomes and reclassified development provenance."
+      "deliverable": "Freeze complete repeated-section/final-review truth and expand varied candidate profiles/held-out layouts. Retain the unchanged conditional development2/2 run with reached unknown0/1, all five earlier failures, French6/7 and original partitions. No promotion or workflow credit from one case; preserve independent value/image/native proofs."
     },
     {
       "task": "R01",
       "deliverable": "Native-before-model/cache admission and remaining lifecycle/cancellation/idle-expiry evidence; reuse verified caches and keep RAM policy."
     },
     {
-      "task": "R04",
-      "deliverable": "Reviewed fact descriptors, radio over-abstention and broader histories/conditional planning after representative qualification."
-    },
-    {
       "task": "R07",
       "deliverable": "Explicit free-provider recovery/backoff and measured broad retrieval/application-route reachability; retain FreeSerp unavailable and SearXNG429 evidence rather than claim successful global search."
     }
-  ]
+  ],
+  "direction_review": "docs/RELEASE_DIRECTION_REVIEW_2026-11-14.md"
 }

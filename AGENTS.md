@@ -64,6 +64,13 @@ repo up cold. Read this first, then `README.md`, then the references below.
 - See [agent tools and coverage](docs/agent-tools.md) for explicit setup,
   external caches, receipt limits and the scope of the Codecov report. These
   are development tools, not application runtime dependencies.
+- Local inference does not mean an offline-only agent. The product should use
+  bounded public internet research through its runtime network/privacy/policy
+  tools. Developer research tools are not evidence that this runtime loop works.
+  Keep anonymous public research separate from candidate-bearing browser
+  contexts; retrieved advice cannot create candidate facts, grant authority or
+  weaken the no-send boundary. Validate and scope learned corrections before
+  reuse, with expiry/revocation and held-out regression evidence.
 
 ## Development process and host ownership
 
@@ -260,6 +267,17 @@ used by development tools and tests. Do not add WSL or Docker as product require
 
 ## Real pitfalls already hit (don't rediscover these)
 
+- A short control crop can truncate a long question even when the control is
+  fully visible. Preserve the original image and use current native-associated
+  labels/headings for a separate bounded detail; do not supply expected text to
+  the visual model. Section-separator spacing is structural label formatting,
+  not an answer difference. Preserve exact values, section order, duplicate and
+  conflict vetoes, and require independent agreement on native-bound detail.
+  A fieldset's default minimum width can prevent a purported clipping fixture
+  from clipping; prove its actual native geometry. CSS bounds and raster pixels
+  differ when detail capture uses the existing 2× scale. See
+  `docs/g1/CONDITIONAL_FORM_CONTINUATION_2026-11-14.md`.
+
 - Inline-frame entry requires completed document inspections and current native
   source/origin/rendering evidence; identity alone cannot clear a frame barrier.
   Inherited `srcdoc`/`about:blank` frames may report `://` in the protocol origin.
@@ -439,6 +457,9 @@ used by development tools and tests. Do not add WSL or Docker as product require
 For continuation of the active product-development goal, read
 `docs/REPO_STATE_REVIEW_2026-11-11.md`, the detailed
 `docs/COMPLETION_PLAN_2026-11-11.md` and `docs/ACTIVE_DEVELOPMENT_PLAN.json`.
+The [2026-11-14 direction review](docs/RELEASE_DIRECTION_REVIEW_2026-11-14.md)
+adds current competitor research and prioritizes the actual reasoning/tool actor
+and complete candidate journeys; it preserves every unfinished acceptance gate.
 Use that queue's prioritized `next_task` once its `start_requirements` are ready;
 `depends_on` records completion prerequisites, not a ban on independent preparation.
 Containment, ownership and interface obligations apply throughout. Keep all

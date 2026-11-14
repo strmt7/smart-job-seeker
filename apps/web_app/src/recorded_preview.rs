@@ -302,6 +302,8 @@ const VIEW_FIELD_LIMIT: usize = 40;
 const SECTION_ADVANCE_LIMIT: usize = 2;
 #[cfg(windows)]
 const DIALOG_ACTION_LIMIT: usize = 2;
+#[cfg(windows)]
+const CONDITIONAL_REPLAN_LIMIT: usize = 4;
 
 #[cfg(windows)]
 fn record_scope(
@@ -318,6 +320,7 @@ fn record_scope(
     let mut prior = Vec::new();
     let mut pending: Option<(usize, String)> = None;
     let mut pending_dialog: Option<usize> = None;
+    let mut section_capture_start = rehearsal.as_deref().map_or(0, |value| value.captures.len());
     loop {
         let view = views.len() + 1;
         let capture = capture_view(driver, directory, view, label, form.clone(), embedded);
@@ -377,12 +380,25 @@ fn record_scope(
             rehearsal.sections.push(json!({"view":view,"status":"stopped","reason":"page_needs_review","barriers":form.independent_field_barriers()}));
             return Ok(());
         }
-        let first_capture = rehearsal.captures.len();
-        rehearsal.exercise(driver, directory, view, &form);
+        let continuation =
+            rehearsal.exercise(driver, directory, view, &form, section_capture_start);
         if rehearsal.halted {
             return Ok(());
         }
-        let verified: Vec<_> = rehearsal.captures[first_capture..]
+        if let Some(next) = continuation {
+            if rehearsal.conditionals >= CONDITIONAL_REPLAN_LIMIT {
+                rehearsal.sections.push(json!({"view":view,"status":"stopped","reason":"conditional_replan_limit","unplanned_fields":next.schema.fields.len()}));
+                rehearsal.halted = true;
+                return Ok(());
+            }
+            rehearsal.conditionals += 1;
+            rehearsal.sections.push(json!({"view":view,"status":"conditional_reinspection","next_view":views.len()+1,
+                "previous_fields":form.schema.fields.len(),"inspected_fields":next.schema.fields.len(),
+                "schema_sha256":waypoint_domain::sha256_hex(next.schema.schema_hash_input().as_bytes())}));
+            form = next;
+            continue;
+        }
+        let verified: Vec<_> = rehearsal.captures[section_capture_start..]
             .iter()
             .map(|(_, capture, _)| capture)
             .collect();
@@ -403,10 +419,11 @@ fn record_scope(
                 pending = Some((view, control));
                 prior.push(form);
                 form = next;
+                section_capture_start = rehearsal.captures.len();
             }
             Ok(RecordedSectionOutcome::Stopped(reason)) => {
                 if matches!(reason, RecordedSectionStop::FieldChanged) {
-                    for (index, _, _) in rehearsal.captures.drain(first_capture..) {
+                    for (index, _, _) in rehearsal.captures.drain(section_capture_start..) {
                         rehearsal.fields[index]["status"] = json!("changed_after_entry");
                         rehearsal.fields[index]
                             .as_object_mut()
@@ -694,6 +711,7 @@ struct Rehearsal {
     sections: Vec<Value>,
     dialogs: Vec<Value>,
     advances: usize,
+    conditionals: usize,
     profile: Result<Value, String>,
     attachment_plans: Vec<Value>,
     fact_plans: Vec<Value>,
@@ -718,6 +736,7 @@ impl Rehearsal {
             sections: Vec::new(),
             dialogs: Vec::new(),
             advances: 0,
+            conditionals: 0,
             profile,
             attachment_plans: Vec::new(),
             fact_plans: Vec::new(),
@@ -730,17 +749,26 @@ impl Rehearsal {
         directory: &Path,
         view: usize,
         form: &waypoint_applications::driver::LiveForm,
-    ) {
+        carry_from: usize,
+    ) -> Option<waypoint_applications::driver::LiveForm> {
         use waypoint_applications::driver::BrowserDriver;
         use waypoint_applications::form_mapping::{FormFieldType, PacketValue};
         if self.halted
             || self.fields.len() >= REHEARSAL_LIMIT
             || form.independent_field_entry_blocked()
         {
-            return;
+            return None;
+        }
+        for (index, capture, _) in &self.captures[carry_from..] {
+            if driver.verify_recorded_field(capture).is_err() {
+                self.fields[*index]["status"] = json!("changed_after_entry");
+                self.fields[*index]["native_verified"] = json!(false);
+                self.halted = true;
+                return None;
+            }
         }
         let Ok(profile) = self.profile.as_ref() else {
-            return;
+            return None;
         };
         let profile_sha =
             waypoint_domain::sha256_hex(include_bytes!("../data/rehearsal-profile.json"));
@@ -803,8 +831,16 @@ impl Rehearsal {
             }
         }
         let mut captures = Vec::new();
+        let mut continuation = None;
+        let mut settled_form = form.clone();
         let field_limit = REHEARSAL_LIMIT;
         for field in &form.schema.fields {
+            if self.captures[carry_from..]
+                .iter()
+                .any(|(_, capture, _)| capture.matches_field(field))
+            {
+                continue;
+            }
             if self.fields.len() >= field_limit {
                 break;
             }
@@ -849,9 +885,13 @@ impl Rehearsal {
             }
             let mut target_refused = false;
             let mut witness = None;
-            let verified: Vec<_> = captures.iter().map(|(_, capture, _)| capture).collect();
+            let verified: Vec<_> = self.captures[carry_from..]
+                .iter()
+                .chain(captures.iter())
+                .map(|(_, capture, _)| capture)
+                .collect();
             let replay_before = driver.rehearsal_replay_report().ok();
-            match driver.rehearse_recorded_field_reviewed(
+            match driver.rehearse_recorded_field_progressive(
                 form,
                 &field.selector,
                 value,
@@ -867,6 +907,10 @@ impl Rehearsal {
                 },
             ) {
                 Ok(capture) => {
+                    if let Some(next) = capture.continuation() {
+                        settled_form = next.clone();
+                        continuation = Some(next.clone());
+                    }
                     result["control"] = json!(capture.control());
                     result["kind"] = json!(capture.kind());
                     result["status"] = json!("visual_unavailable");
@@ -947,14 +991,14 @@ impl Rehearsal {
             result["replay_activity"] =
                 observed_replay_activity(replay_before.as_ref(), replay_after.as_ref());
             self.fields.push(result);
-            if self.halted {
+            if self.halted || continuation.is_some() {
                 break;
             }
         }
         if !captures.is_empty() {
             let unchanged = driver
                 .inspect_current()
-                .is_ok_and(|current| current == *form);
+                .is_ok_and(|current| current == settled_form);
             for (index, capture, image_saved) in captures {
                 if unchanged && driver.verify_recorded_field(&capture).is_ok() {
                     self.fields[index]["native_verified"] = json!(true);
@@ -979,6 +1023,11 @@ impl Rehearsal {
                     self.halted = true;
                 }
             }
+        }
+        if self.halted {
+            None
+        } else {
+            continuation
         }
     }
 
@@ -1088,6 +1137,7 @@ impl Rehearsal {
 
     fn finish(self) -> Value {
         json!({"scope":"fictional_saved_form","profile_sha256":waypoint_domain::sha256_hex(include_bytes!("../data/rehearsal-profile.json")),"profile_error":self.profile.as_ref().err(),"field_limit":REHEARSAL_LIMIT,"section_advance_limit":SECTION_ADVANCE_LIMIT,"halted":self.halted,"fields":self.fields,"fact_plans":self.fact_plans,"attachment_plans":self.attachment_plans,"sections":self.sections,"dialogs":self.dialogs,"dialog_action_limit":DIALOG_ACTION_LIMIT,"vision_model":self.vision.identity,
+            "conditional_replans":self.conditionals,"conditional_replan_limit":CONDITIONAL_REPLAN_LIMIT,
             "visual_gate":{"required":true,"available":self.vision.model.is_some(),"targets":self.vision.targets}})
     }
 }
@@ -1160,7 +1210,13 @@ fn save_view(
     image: String,
     embedded: bool,
 ) -> Result<Value, String> {
-    let (name, sha256) = save_image(directory, sequence, &image)?;
+    // Full-view captures have a separate range from field/target/diagnostic
+    // evidence. Conditional replans can otherwise collide with field 0010.
+    let image_sequence = sequence
+        .checked_add(1000)
+        .filter(|value| *value <= 9999)
+        .ok_or("Saved page view limit exceeded")?;
+    let (name, sha256) = save_image(directory, image_sequence, &image)?;
     let fields: Vec<_> = form
         .schema
         .fields

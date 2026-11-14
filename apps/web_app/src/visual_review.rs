@@ -227,11 +227,19 @@ pub fn expected_from_preview(
 }
 
 fn normalized_label(label: &str) -> String {
+    // The em dash is our structural section separator, not an answer value.
+    // Models may serialize it with or without adjacent spaces. Preserve words,
+    // section order and punctuation; exact value comparison is separate.
     label
-        .split_whitespace()
+        .split('—')
+        .map(|part| {
+            part.split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_lowercase()
+        })
         .collect::<Vec<_>>()
-        .join(" ")
-        .to_lowercase()
+        .join(" — ")
 }
 
 /// A screenshot cannot identify which of several similarly labeled fields is
@@ -1140,9 +1148,19 @@ fn recorded_outcome(review: &Value) -> RecordedVisionOutcome {
     }
 }
 
-#[cfg(any(windows, test))]
+#[cfg(test)]
 fn review_blind_target_with(
     recheck_scope: &'static str,
+    observe: impl FnMut(&str) -> Result<Result<Value, String>, String>,
+    compare_target: impl Fn(&Value) -> Value,
+) -> (RecordedVisionOutcome, Option<Value>) {
+    review_blind_target_with_detail(recheck_scope, false, observe, compare_target)
+}
+
+#[cfg(any(windows, test))]
+fn review_blind_target_with_detail(
+    recheck_scope: &'static str,
+    required_detail: bool,
     mut observe: impl FnMut(&str) -> Result<Result<Value, String>, String>,
     compare_target: impl Fn(&Value) -> Value,
 ) -> (RecordedVisionOutcome, Option<Value>) {
@@ -1155,17 +1173,41 @@ fn review_blind_target_with(
         Err(_) => return (RecordedVisionOutcome::Stopped, None),
     };
     let prompt = format!("{RECORDED_CONTROL_PROMPT}{CONTROL_COVERAGE_GUIDANCE}");
-    finish_coverage_review_with(initial, recheck_scope, || observe(&prompt), compare_target)
+    finish_detail_review_with(
+        initial,
+        recheck_scope,
+        required_detail,
+        || observe(&prompt),
+        compare_target,
+    )
 }
 
-#[cfg(any(windows, test))]
+#[cfg(test)]
 fn finish_coverage_review_with(
     initial: Value,
     recheck_scope: &'static str,
     observe: impl FnOnce() -> Result<Result<Value, String>, String>,
     compare_target: impl Fn(&Value) -> Value,
 ) -> (RecordedVisionOutcome, Option<Value>) {
+    finish_detail_review_with(initial, recheck_scope, false, observe, compare_target)
+}
+
+#[cfg(any(windows, test))]
+fn finish_detail_review_with(
+    initial: Value,
+    recheck_scope: &'static str,
+    required_detail: bool,
+    observe: impl FnOnce() -> Result<Result<Value, String>, String>,
+    compare_target: impl Fn(&Value) -> Value,
+) -> (RecordedVisionOutcome, Option<Value>) {
     let outcome = recorded_outcome(&initial);
+    if required_detail && initial["observation_limit_reached"] != false {
+        let mut report = initial;
+        report["coverage_recheck"] = json!({"scope":recheck_scope,"attempts":1,
+            "status":"blocked","reason":"observation_limit","overlap_conflict":false,
+            "native_associated_detail_required":true});
+        return (RecordedVisionOutcome::Unobserved, Some(report));
+    }
     // An unobserved comparison can also mean duplicate labels. Only a truly
     // absent target admits a recheck: each singleton must also be unobserved.
     let missing = outcome == RecordedVisionOutcome::Unobserved
@@ -1176,7 +1218,12 @@ fn finish_coverage_review_with(
                     == Some("unobserved")
             })
         });
-    if !missing {
+    // Positive native-associated context must itself be read, even if a small
+    // original crop looked correct. Never retry a contradiction or ambiguity.
+    let verify_detail = required_detail
+        && outcome == RecordedVisionOutcome::Matched
+        && initial["observation_limit_reached"] == false;
+    if !missing && !verify_detail {
         return (outcome, Some(initial));
     }
 
@@ -1205,8 +1252,7 @@ fn finish_coverage_review_with(
             })
         });
     report["initial_review"] = initial;
-    report["coverage_recheck"] =
-        json!({"scope":recheck_scope,"attempts":2,"status":status,"overlap_conflict":conflict});
+    report["coverage_recheck"] = json!({"scope":recheck_scope,"attempts":2,"status":status,"overlap_conflict":conflict,"native_associated_detail_required":required_detail});
     (
         failure.unwrap_or_else(|| recorded_outcome(&report)),
         Some(report),
@@ -1223,12 +1269,13 @@ pub(crate) fn review_recorded_target(
     let guard = model.request_guard.clone();
     // No expected label, type or answer is included in the model prompt.
 
-    review_blind_target_with(
+    review_blind_target_with_detail(
         if target.detail_image().is_some() {
             "same_native_target_detail"
         } else {
             "same_immutable_image"
         },
+        target.associated_label_detail(),
         |prompt| {
             model.checked_with(
                 || crate::resident_model_identity_at(addr),
@@ -1389,9 +1436,10 @@ pub(crate) fn review_recorded_field(
             let Some(detail) = capture.detail_image() else {
                 return (recorded_outcome(&review), Some(review));
             };
-            finish_coverage_review_with(
+            finish_detail_review_with(
                 review,
                 "same_native_field_detail",
+                capture.associated_label_detail(),
                 || {
                     model.checked_with(
                         || crate::resident_model_identity_at(addr),
@@ -1947,6 +1995,103 @@ mod tests {
         );
         assert_eq!(report["observations"][0]["visible_value"], "Different City");
         assert_eq!(recorded_comparison_status(&report), None);
+    }
+
+    #[test]
+    fn native_detail_requires_independent_agreement_and_keeps_section_identity() {
+        let row = |label: &str, value: &str| json!({"label":label,"visible_value":value});
+        let target = "Profile location — Country";
+        let mut limited = vec![row(target, "text")];
+        limited.extend((1..MAX_OBSERVATIONS).map(|i| row(&format!("Neighbor {i}"), "text")));
+        for (initial, detail, expected, requests) in [
+            (
+                limited,
+                vec![row(target, "text")],
+                RecordedVisionOutcome::Unobserved,
+                1,
+            ),
+            (
+                vec![row("Profile location—Country", "text")],
+                vec![row(target, "text")],
+                RecordedVisionOutcome::Matched,
+                2,
+            ),
+            (
+                vec![row(target, "text")],
+                vec![row("Profile location—Country", "file")],
+                RecordedVisionOutcome::Unobserved,
+                2,
+            ),
+            (
+                vec![row(target, "file")],
+                vec![row(target, "text")],
+                RecordedVisionOutcome::Difference,
+                1,
+            ),
+            (
+                vec![row(target, "text"), row("Profile location—Country", "text")],
+                vec![row(target, "text")],
+                RecordedVisionOutcome::Unobserved,
+                1,
+            ),
+            (
+                vec![row(target, "text")],
+                vec![row("Other section—Country", "text")],
+                RecordedVisionOutcome::Unobserved,
+                2,
+            ),
+        ] {
+            let first = json!({"observations":initial});
+            let second = json!({"observations":detail});
+            let mut calls = 0;
+            let (outcome, report) = review_blind_target_with_detail(
+                "same_native_target_detail",
+                true,
+                |prompt| {
+                    assert!(!prompt.contains(target));
+                    calls += 1;
+                    Ok(Ok(if calls == 1 {
+                        first.clone()
+                    } else {
+                        second.clone()
+                    }))
+                },
+                |observed| {
+                    compare_recorded_labels(
+                        observed,
+                        &[(target.into(), "text".into())],
+                        false,
+                        ValueComparison::Exact,
+                        None,
+                    )
+                },
+            );
+            assert_eq!(outcome, expected);
+            assert_eq!(calls, requests);
+            let report = report.unwrap();
+            if requests == 2 {
+                assert_eq!(
+                    report["initial_review"]["observations"],
+                    first["observations"]
+                );
+                assert_eq!(
+                    report["coverage_recheck"]["native_associated_detail_required"],
+                    true
+                );
+            }
+        }
+        let observed = json!({"observations":[row("Profile location—Country","canada")]});
+        let comparison = compare_recorded_labels(
+            &observed,
+            &[(target.into(), "Canada".into())],
+            false,
+            ValueComparison::Exact,
+            None,
+        );
+        assert_eq!(
+            recorded_outcome(&comparison),
+            RecordedVisionOutcome::Difference
+        );
     }
 
     #[test]

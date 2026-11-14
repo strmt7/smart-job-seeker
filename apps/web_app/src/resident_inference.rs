@@ -84,6 +84,18 @@ where
     fn cancel(&mut self) -> Result<(), InferenceError> {
         self.inner.cancel()
     }
+
+    fn generate_advice(
+        &mut self,
+        purpose: &str,
+        prompt: &str,
+        max: u32,
+    ) -> Result<Option<(String, UsageReport)>, InferenceError> {
+        self.check()?;
+        let result = self.inner.generate_advice(purpose, prompt, max)?;
+        self.check()?;
+        Ok(result)
+    }
 }
 #[cfg(test)]
 mod tests {
@@ -110,7 +122,41 @@ mod tests {
                 },
             ))
         }
+        fn generate_advice(
+            &mut self,
+            _: &str,
+            _: &str,
+            _: u32,
+        ) -> Result<Option<(String, UsageReport)>, InferenceError> {
+            let (_, usage) = self.generate_structured("fixture", "fixture", 768)?;
+            Ok(Some(("Fictional assessment".into(), usage)))
+        }
     }
+    #[test]
+    fn advisory_generation_checks_identity_before_and_after_request() {
+        for changed_before in [false, true] {
+            let calls = Cell::new(0);
+            let checks = Cell::new(0);
+            let mut guarded = ResidentInference::new(Fake(&calls), "fictional".into(), || {
+                let n = checks.get();
+                checks.set(n + 1);
+                Ok(Some(ResidentIdentity {
+                    name: "fictional".into(),
+                    digest: if changed_before || n > 0 { "b" } else { "a" }.repeat(64),
+                }))
+            })
+            .with_identity(ResidentIdentity {
+                name: "fictional".into(),
+                digest: "a".repeat(64),
+            })
+            .unwrap();
+            assert!(guarded
+                .generate_advice("fixture", "Fictional", 1536)
+                .is_err());
+            assert_eq!(calls.get(), usize::from(!changed_before));
+        }
+    }
+
     #[test]
     fn prebound_identity_refuses_a_different_digest_before_inference() {
         let calls = Cell::new(0);

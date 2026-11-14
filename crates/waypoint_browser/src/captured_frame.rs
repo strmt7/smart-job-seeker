@@ -131,6 +131,7 @@ pub struct RecordedFieldCapture {
     image: String,
     detail_image: Option<String>,
     detail_error: Option<String>,
+    associated_label_detail: bool,
     label: String,
     kind: RecordedFieldKind,
     required_marker: bool,
@@ -142,6 +143,14 @@ pub struct RecordedFieldCapture {
     value_comparison: &'static str,
     file_group_label: Option<String>,
     file_group_context: Option<waypoint_applications::form_mapping::FormFieldContext>,
+    binding: Option<RecordedFieldBinding>,
+    continuation: Option<LiveForm>,
+}
+
+struct RecordedFieldBinding {
+    field: FormField,
+    backend: u64,
+    form: LiveForm,
 }
 
 /// A fresh, focused target image made by the recorded driver before an action.
@@ -150,6 +159,7 @@ pub struct RecordedTargetCapture {
     image: String,
     detail_image: Option<String>,
     detail_error: Option<String>,
+    associated_label_detail: bool,
     label: String,
     kind: &'static str,
     required_marker: bool,
@@ -307,6 +317,9 @@ fn unique_file_group_label(form: &LiveForm, field: &FormField) -> Option<String>
 }
 
 impl RecordedTargetCapture {
+    pub fn associated_label_detail(&self) -> bool {
+        self.associated_label_detail
+    }
     pub fn witness(&self) -> Option<RecordedFieldWitness> {
         self.witness.clone()
     }
@@ -348,6 +361,21 @@ struct RecordedDocument {
 }
 
 impl RecordedFieldCapture {
+    pub fn associated_label_detail(&self) -> bool {
+        self.associated_label_detail
+    }
+    /// A native-inspected additive state, never an approval or an old fill plan.
+    pub fn continuation(&self) -> Option<&LiveForm> {
+        self.continuation.as_ref()
+    }
+
+    /// Use only after current native verification, to avoid reentering a field.
+    pub fn matches_field(&self, field: &FormField) -> bool {
+        self.binding
+            .as_ref()
+            .is_some_and(|binding| binding.field == *field)
+    }
+
     pub fn detail_image(&self) -> Option<&str> {
         self.detail_image.as_deref()
     }
@@ -544,6 +572,7 @@ impl CdpDriver {
             witness: None,
             detail_image: None,
             detail_error: None,
+            associated_label_detail: false,
             image,
             label: target.label.clone(),
             required_marker: false,
@@ -635,6 +664,45 @@ impl CdpDriver {
         selector: &str,
         value: &str,
         verified_fields: &[&RecordedFieldCapture],
+        review_target: impl FnMut(&RecordedTargetCapture) -> Result<(), DriverError>,
+    ) -> Result<RecordedFieldCapture, DriverError> {
+        self.rehearse_recorded_field_inner(
+            form,
+            selector,
+            value,
+            verified_fields,
+            false,
+            review_target,
+        )
+    }
+
+    /// Allow only a positively verified additive post-entry state. The caller
+    /// must abandon its old plan and review/replan against the returned state.
+    pub fn rehearse_recorded_field_progressive(
+        &mut self,
+        form: &LiveForm,
+        selector: &str,
+        value: &str,
+        verified_fields: &[&RecordedFieldCapture],
+        review_target: impl FnMut(&RecordedTargetCapture) -> Result<(), DriverError>,
+    ) -> Result<RecordedFieldCapture, DriverError> {
+        self.rehearse_recorded_field_inner(
+            form,
+            selector,
+            value,
+            verified_fields,
+            true,
+            review_target,
+        )
+    }
+
+    fn rehearse_recorded_field_inner(
+        &mut self,
+        form: &LiveForm,
+        selector: &str,
+        value: &str,
+        verified_fields: &[&RecordedFieldCapture],
+        progressive: bool,
         mut review_target: impl FnMut(&RecordedTargetCapture) -> Result<(), DriverError>,
     ) -> Result<RecordedFieldCapture, DriverError> {
         use waypoint_applications::form_mapping::FormFieldType;
@@ -703,6 +771,9 @@ impl CdpDriver {
             Ok(())
         };
         check_scope(self, "before the field review")?;
+        let backend = progressive
+            .then(|| self.recorded_field_backend(selector))
+            .transpose()?;
         let network_before = self.observed_non_read_requests()?;
         let image = if matches!(kind, RecordedFieldKind::Radio) {
             self.screenshot_recorded_radio(selector, value, false)?
@@ -710,9 +781,11 @@ impl CdpDriver {
             self.scroll_field_into_view(selector)?;
             self.screenshot_field_context(selector)?
         };
-        let (detail_image, detail_error) = self.recorded_detail_context(selector, kind);
+        let (detail_image, detail_error, associated_label_detail) =
+            self.recorded_detail_context(selector, kind);
         let control = self.recorded_control_identity(form, selector)?;
         review_target(&RecordedTargetCapture {
+            associated_label_detail,
             detail_image,
             detail_error,
             witness: Some(RecordedFieldWitness {
@@ -735,6 +808,11 @@ impl CdpDriver {
             },
         })?;
         check_scope(self, "after the field image review")?;
+        if let Some(backend) = backend {
+            if self.recorded_field_backend(selector)? != backend {
+                return Err(review());
+            }
+        }
         self.stop_if_non_read_request_observed(network_before)?;
         for capture in verified_fields {
             self.verify_recorded_field(capture)?;
@@ -787,18 +865,50 @@ impl CdpDriver {
         } else {
             self.screenshot_field_feedback(selector)?
         };
-        let (detail_image, detail_error) = self.recorded_detail_context(selector, kind);
+        let (detail_image, detail_error, associated_label_detail) =
+            self.recorded_detail_context(selector, kind);
         if matches!(kind, RecordedFieldKind::Text)
             && self.text_value_snapshot(selector)?.value != observed_value
         {
             return Err(review());
         }
-        check_scope(self, "after field entry")?;
+        let post_form = if progressive {
+            let current = self.inspect_current()?;
+            if self.recorded_document()? != document
+                || (current != *form
+                    && !crate::conditional_field::additive_recorded_form(form, &current))
+                || self.recorded_field_backend(selector)? != backend.ok_or_else(review)?
+            {
+                return Err(DriverError("The saved form changed beyond a verified additive field transition; review it before continuing".into()));
+            }
+            for capture in verified_fields {
+                self.verify_recorded_field(capture)?;
+            }
+            Some(current)
+        } else {
+            check_scope(self, "after field entry")?;
+            None
+        };
         self.verify_recorded_command(&command)?;
         self.observed_non_read_requests()?;
         self.stop_if_non_read_request_observed(network_before)?;
         let file_group_label = unique_file_group_label(form, field);
+        let continuation = post_form
+            .as_ref()
+            .filter(|current| *current != form)
+            .cloned();
+        let binding = match (backend, post_form) {
+            (Some(backend), Some(form)) => Some(RecordedFieldBinding {
+                field: (*field).clone(),
+                backend,
+                form,
+            }),
+            _ => None,
+        };
         Ok(RecordedFieldCapture {
+            associated_label_detail,
+            binding,
+            continuation,
             detail_image,
             detail_error,
             file_group_context: file_group_label.as_ref().map(|_| field.context.clone()),
@@ -822,16 +932,16 @@ impl CdpDriver {
         &mut self,
         selector: &str,
         kind: RecordedFieldKind,
-    ) -> (Option<String>, Option<String>) {
+    ) -> (Option<String>, Option<String>, bool) {
         if matches!(kind, RecordedFieldKind::Text | RecordedFieldKind::Select)
             && self.captured_scope.is_none()
         {
-            match self.screenshot_field_detail(selector) {
-                Ok(image) => (Some(image), None),
-                Err(error) => (None, Some(error.to_string())),
+            match self.screenshot_field_detail_bound(selector) {
+                Ok((image, bound)) => (Some(image), None, bound),
+                Err(error) => (None, Some(error.to_string()), false),
             }
         } else {
-            (None, None)
+            (None, None, false)
         }
     }
 
@@ -996,6 +1106,20 @@ impl CdpDriver {
         }
         if self.recorded_document()? != capture.document {
             return Err(review());
+        }
+        if let Some(binding) = &capture.binding {
+            let current = self.inspect_current()?;
+            if !binding.form.shares_inspected_native_scope(&current)
+                || current.walls != binding.form.walls
+                || !current
+                    .schema
+                    .fields
+                    .iter()
+                    .any(|field| field == &binding.field)
+                || self.recorded_field_backend(&binding.field.selector)? != binding.backend
+            {
+                return Err(review());
+            }
         }
         if let Some(context) = &capture.file_group_context {
             let BrowserCommand::UploadFile { selector, .. } = &capture.command else {
