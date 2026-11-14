@@ -1,5 +1,22 @@
 # Known limitations register (T050)
 
+The [saved-contact continuation](docs/g1/SAVED_CONTACT_SNAPSHOTS_2026-11-14.md)
+verifies two development profiles through the compiled offline route, each with
+3/3 contact fields and an unresolved required upload left untouched. Candidate PDF
+selection, reviewed history/facts, complete journeys, final review and held-out
+coverage remain open. Its temporary fixture profile failed exact restoration
+comparison after a normal profile save; process cleanup is verified separately.
+Four anonymous attachment investigations still stop in review, despite actual
+public reads and corrected context/citation contracts. Effective structured-schema
+behavior, semantic advice and useful repairs remain unqualified.
+
+The [multi-session readiness correction](docs/g1/MULTI_SESSION_FIXTURE_READINESS_2026-11-14.md)
+passes the full 139-case local browser selection, retaining the earlier hosted and
+local failures. This does not solve existing WebSocket or OS/transport isolation
+limits and is not a universal no-send guarantee. The final workspace passes 1,414
+tests with 616 explicitly ignored; broader installation, lifecycle and release
+gates remain unfinished. No release readiness is claimed.
+
 The [research decision continuation](docs/g1/PUBLIC_RESEARCH_DECISIONS_2026-11-14.md)
 adds provider fallback, actual document references, static focused/fragment views,
 cached native bytes and constrained quotation repair. One final-source local12B

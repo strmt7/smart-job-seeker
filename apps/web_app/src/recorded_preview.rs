@@ -19,6 +19,8 @@ pub(crate) struct Source {
     pub(crate) rehearse: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(crate) public_research: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) candidate_snapshot_sha256: Option<String>,
 }
 
 fn linked(metadata: &fs::Metadata) -> bool {
@@ -56,6 +58,14 @@ fn read(path: &Path, max: usize) -> Result<Vec<u8>, String> {
 
 impl Source {
     pub(crate) fn validate(&self, url: &str) -> Result<(), String> {
+        if let Some(digest) = &self.candidate_snapshot_sha256 {
+            if !self.rehearse
+                || digest.len() != 64
+                || !digest.bytes().all(|b| b.is_ascii_hexdigit())
+            {
+                return Err("Candidate contact details require a bound offline rehearsal".into());
+            }
+        }
         if self.public_research && !self.rehearse {
             return Err("Public research requires an autofill rehearsal".into());
         }
@@ -161,9 +171,19 @@ fn render_at(
     config.content_root = archive;
     config.content_files = inventory.files;
     config.replay_manifest = Some("replay.json".into());
-    if source.rehearse {
-        config.attachments = Some(stage_sample_attachments(screenshots)?);
-    }
+    let candidate = source
+        .candidate_snapshot_sha256
+        .as_deref()
+        .map(|binding| {
+            crate::rehearsal_candidate::load(screenshots, binding)
+                .map(|snapshot| (snapshot, binding.to_owned()))
+        })
+        .transpose()?;
+    config.attachments = if source.rehearse && candidate.is_none() {
+        Some(stage_sample_attachments(screenshots)?)
+    } else {
+        None
+    };
     let mut model_session = if source.rehearse {
         selection
             .map(|selected| crate::private_inference::Session::admit(selected, python, screenshots))
@@ -186,6 +206,7 @@ fn render_at(
             selection.map(|value| &value.choice),
             runtime_guard,
             source.public_research,
+            candidate,
         )
     });
     let result: Result<Value, String> = (|| {
@@ -729,6 +750,7 @@ struct Rehearsal {
     advances: usize,
     conditionals: usize,
     profile: Result<Value, String>,
+    candidate_metadata: Value,
     attachment_plans: Vec<Value>,
     fact_plans: Vec<Value>,
     public_research: bool,
@@ -742,10 +764,15 @@ impl Rehearsal {
         choice: Option<&crate::model_preferences::Choice>,
         guard: Option<crate::visual_review::RequestGuard>,
         public_research: bool,
+        candidate: Option<(crate::rehearsal_candidate::Snapshot, String)>,
     ) -> Self {
         let vision = RehearsalVision::new(addr, choice, guard);
-        let profile = serde_json::from_str(include_str!("../data/rehearsal-profile.json"))
-            .map_err(|_| "The bundled fictional rehearsal profile is invalid".to_owned());
+        let candidate_metadata = candidate.as_ref().map(|(snapshot,binding)|snapshot.metadata(binding)).unwrap_or_else(||json!({"scope":"bundled_fictional_contact_profile","profile_sha256":waypoint_domain::sha256_hex(include_bytes!("../data/rehearsal-profile.json")),"documents":"bundled_fictional_pdfs"}));
+        let profile = match candidate {
+            Some((snapshot, _)) => Ok(snapshot.contacts),
+            None => serde_json::from_str(include_str!("../data/rehearsal-profile.json"))
+                .map_err(|_| "The bundled fictional rehearsal profile is invalid".to_owned()),
+        };
         let halted = vision.model.is_none() || profile.is_err();
         Self {
             vision,
@@ -757,6 +784,7 @@ impl Rehearsal {
             advances: 0,
             conditionals: 0,
             profile,
+            candidate_metadata,
             attachment_plans: Vec::new(),
             fact_plans: Vec::new(),
             public_research,
@@ -791,8 +819,7 @@ impl Rehearsal {
         let Ok(profile) = self.profile.as_ref() else {
             return None;
         };
-        let profile_sha =
-            waypoint_domain::sha256_hex(include_bytes!("../data/rehearsal-profile.json"));
+        let profile_sha = self.candidate_metadata["profile_sha256"].clone();
         let schema_sha = waypoint_domain::sha256_hex(form.schema.schema_hash_input().as_bytes());
         let (plan, diagnostics) = match self.vision.plan_profile(form, profile) {
             Ok(result) => (result.plan, Some(result.diagnostics)),
@@ -806,7 +833,7 @@ impl Rehearsal {
                     .take(12)
                     .map(|warning| bounded_text(warning))
                     .collect();
-                self.fact_plans.push(json!({"view":view,"status":"proposed","source":"bundled_fictional_profile",
+                self.fact_plans.push(json!({"view":view,"status":"proposed","source":self.candidate_metadata["scope"],
                     "profile_sha256":profile_sha,"schema_sha256":schema_sha,"proposed_fields":plan.suggestions.len(),
                     "manual_fields":plan.model_review_selectors.len(),"warnings":warnings,
                     "omitted_warnings":plan.manual_review.len().saturating_sub(12),"diagnostics":diagnostics}));
@@ -816,7 +843,7 @@ impl Rehearsal {
                 let reason = result
                     .err()
                     .unwrap_or_else(|| "The form changed during profile matching".into());
-                self.fact_plans.push(json!({"view":view,"status":"needs_review","source":"bundled_fictional_profile",
+                self.fact_plans.push(json!({"view":view,"status":"needs_review","source":self.candidate_metadata["scope"],
                     "profile_sha256":profile_sha,"schema_sha256":schema_sha,"reason":bounded_text(&reason),
                     "diagnostic":reason.chars().take(512).collect::<String>(),"diagnostics":diagnostics}));
                 // Other actors can still propose independent documents. No
@@ -831,7 +858,12 @@ impl Rehearsal {
             .iter()
             .any(|field| field.field_type == FormFieldType::File)
         {
-            match self.vision.plan_attachments(&form.schema) {
+            let plan = if self.candidate_metadata["scope"] == "saved_candidate_contacts" {
+                Err("Candidate documents have not been selected; demonstration files will not be attached".into())
+            } else {
+                self.vision.plan_attachments(&form.schema)
+            };
+            match plan {
                 Ok(plan) => {
                     self.attachment_plans
                         .push(json!({"view":view,"status":"proposed","decisions":plan.decisions}));
@@ -901,8 +933,8 @@ impl Rehearsal {
             let mut result =
                 json!({"view":view,"label":bounded_text(&field.label),"status":"entry_unverified"});
             if field.field_type != FormFieldType::File {
-                result["candidate_source"] = json!({"scope":"bundled_fictional_contact_profile",
-                    "profile_sha256":profile_sha,"schema_sha256":schema_sha});
+                result["candidate_source"] = json!({"scope":self.candidate_metadata["scope"],
+                    "profile_sha256":profile_sha,"snapshot_sha256":self.candidate_metadata["snapshot_sha256"],"schema_sha256":schema_sha});
             }
             let mut target_refused = false;
             let mut witness = None;
@@ -1098,7 +1130,7 @@ impl Rehearsal {
                 return None;
             }
         };
-        let mut record = json!({"view":view,"status":"needs_review","scope":"fictional_saved_copy_only","description":dialog.description()});
+        let mut record = json!({"view":view,"status":"needs_review","scope":if self.candidate_metadata["scope"]=="saved_candidate_contacts"{"offline_saved_copy_only"}else{"fictional_saved_copy_only"},"description":dialog.description()});
         let outcome = (|| -> Result<Option<waypoint_applications::driver::LiveForm>, String> {
             crate::check_inference_memory()?;
             let model = self
@@ -1183,7 +1215,7 @@ impl Rehearsal {
     }
 
     fn finish(self) -> Value {
-        json!({"scope":"fictional_saved_form","profile_sha256":waypoint_domain::sha256_hex(include_bytes!("../data/rehearsal-profile.json")),"profile_error":self.profile.as_ref().err(),"field_limit":REHEARSAL_LIMIT,"section_advance_limit":SECTION_ADVANCE_LIMIT,"halted":self.halted,"fields":self.fields,"fact_plans":self.fact_plans,"attachment_plans":self.attachment_plans,"sections":self.sections,"dialogs":self.dialogs,"dialog_action_limit":DIALOG_ACTION_LIMIT,"vision_model":self.vision.identity,
+        json!({"scope":if self.candidate_metadata["scope"]=="saved_candidate_contacts"{"saved_candidate_contacts"}else{"fictional_saved_form"},"candidate_source":self.candidate_metadata,"profile_sha256":self.candidate_metadata["profile_sha256"],"profile_error":self.profile.as_ref().err(),"field_limit":REHEARSAL_LIMIT,"section_advance_limit":SECTION_ADVANCE_LIMIT,"halted":self.halted,"fields":self.fields,"fact_plans":self.fact_plans,"attachment_plans":self.attachment_plans,"sections":self.sections,"dialogs":self.dialogs,"dialog_action_limit":DIALOG_ACTION_LIMIT,"vision_model":self.vision.identity,
             "conditional_replans":self.conditionals,"conditional_replan_limit":CONDITIONAL_REPLAN_LIMIT,
             "public_research_enabled":self.public_research,"public_research":self.research_notes,
             "visual_gate":{"required":true,"available":self.vision.model.is_some(),"targets":self.vision.targets}})
@@ -1861,7 +1893,8 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn rehearsal_without_a_qualified_visual_model_stops_before_entry() {
-        let result = Rehearsal::new("127.0.0.1:0".parse().unwrap(), None, None, false).finish();
+        let result =
+            Rehearsal::new("127.0.0.1:0".parse().unwrap(), None, None, false, None).finish();
         assert_eq!(result["halted"], true);
         assert_eq!(result["visual_gate"]["required"], true);
         assert_eq!(result["visual_gate"]["available"], false);
@@ -1975,6 +2008,7 @@ mod tests {
             job_id: "fixture-job".into(),
             rehearse: false,
             public_research: false,
+            candidate_snapshot_sha256: None,
         };
         let url = "https://example.org/fictional";
         let summary_path = source.directory.join("source-page-summary.json");
@@ -1983,6 +2017,18 @@ mod tests {
             |value: &Value| fs::write(&summary_path, serde_json::to_vec(value).unwrap()).unwrap();
         write(&summary);
         assert!(source.validate(url).is_ok());
+        for (rehearse, digest, valid) in [
+            (false, "a".repeat(64), false),
+            (true, "a".repeat(64), true),
+            (true, "../candidate.json".into(), false),
+            (true, "z".repeat(64), false),
+        ] {
+            let mut selected: Source =
+                serde_json::from_value(serde_json::to_value(&source).unwrap()).unwrap();
+            selected.rehearse = rehearse;
+            selected.candidate_snapshot_sha256 = Some(digest);
+            assert_eq!(selected.validate(url).is_ok(), valid);
+        }
         assert!(source.validate("https://example.org/different").is_err());
         summary["job_id"] = json!("other-job");
         write(&summary);

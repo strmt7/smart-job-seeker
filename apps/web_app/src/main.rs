@@ -96,6 +96,7 @@ mod private_inference;
 #[cfg(windows)]
 mod public_document;
 mod recorded_preview;
+mod rehearsal_candidate;
 mod resident_inference;
 mod runtime_setup;
 mod runtime_start;
@@ -3321,27 +3322,34 @@ fn serve_request(
                     None => false,
                     Some(value) => value.as_bool().ok_or("Invalid public research option")?,
                 };
-                if public_research {
+                let use_saved_contacts = match body.get("use_saved_contacts") {
+                    None => false,
+                    Some(value) => value.as_bool().ok_or("Invalid saved-contact option")?,
+                };
+                let attempt = body["attempt_id"]
+                    .as_str()
+                    .ok_or("Missing saved page identity")?;
+                if use_saved_contacts {
+                    job_capture::start_preview_options(
+                        ws,
+                        &job,
+                        id.clone(),
+                        attempt,
+                        rehearse,
+                        public_research,
+                        true,
+                    )?;
+                } else if public_research {
                     job_capture::start_preview_with_research(
                         ws,
                         &job,
                         id.clone(),
-                        body["attempt_id"]
-                            .as_str()
-                            .ok_or("Missing saved page identity")?,
+                        attempt,
                         rehearse,
-                        public_research,
+                        true,
                     )?;
                 } else {
-                    job_capture::start_preview(
-                        ws,
-                        &job,
-                        id.clone(),
-                        body["attempt_id"]
-                            .as_str()
-                            .ok_or("Missing saved page identity")?,
-                        rehearse,
-                    )?;
+                    job_capture::start_preview(ws, &job, id.clone(), attempt, rehearse)?;
                 }
             } else {
                 job_capture::start(ws, &job, id.clone())?;

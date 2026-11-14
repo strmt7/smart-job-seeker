@@ -2947,7 +2947,7 @@ fn fetch_interception_does_not_block_existing_websocket_messages() {
 #[test]
 #[ignore = "headless protocol experiment with fictional loopback requests across two targets"]
 fn fetch_request_stage_can_block_a_loopback_post() {
-    use serde_json::json;
+    use serde_json::{json, Value};
     use std::io::{Read, Write};
     use std::sync::{
         atomic::{AtomicBool, Ordering},
@@ -2955,6 +2955,40 @@ fn fetch_request_stage_can_block_a_loopback_post() {
     };
     use std::time::{Duration, Instant};
     use waypoint_browser::cdp::{BrowserProcess, Cdp};
+    fn wait_for_fixture(cdp: &mut Cdp, session: &str, url: &str, navigation: &Value) {
+        assert!(
+            navigation.get("errorText").is_none(),
+            "fixture navigation failed: {navigation}"
+        );
+        let loader = navigation["loaderId"]
+            .as_str()
+            .expect("a document navigation must have its native loader");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let current=cdp.call_session(session,"Runtime.evaluate",json!({"expression":"({url:location.href,ready:document.readyState})","returnByValue":true})).unwrap();
+            let frame = cdp
+                .call_session(session, "Page.getFrameTree", json!({}))
+                .unwrap();
+            if cdp.saw_event_for_session("Page.loadEventFired", session)
+                && frame
+                    .pointer("/frameTree/frame/loaderId")
+                    .and_then(Value::as_str)
+                    == Some(loader)
+                && current.pointer("/result/value/url").and_then(Value::as_str) == Some(url)
+                && current
+                    .pointer("/result/value/ready")
+                    .and_then(Value::as_str)
+                    == Some("complete")
+            {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the intended fixture document was not ready in its own session: {current}"
+            );
+            cdp.pump_checked(Duration::from_millis(30)).unwrap();
+        }
+    }
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     listener.set_nonblocking(true).unwrap();
@@ -2974,7 +3008,15 @@ fn fetch_request_stage_can_block_a_loopback_post() {
                     {
                         worker_received.store(true, Ordering::Relaxed);
                     }
-                    let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                    // Make the earlier-document load signal observably stale.
+                    if data[..size].starts_with(b"GET /second-fixture ") {
+                        std::thread::sleep(Duration::from_millis(350));
+                    }
+                    let body=b"<!doctype html><html><head><link rel=icon href=data:,></head><body>Fictional interception fixture</body></html>";
+                    let header=format!("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",body.len());
+                    let _ = stream
+                        .write_all(header.as_bytes())
+                        .and_then(|_| stream.write_all(body));
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     std::thread::sleep(Duration::from_millis(20))
@@ -2987,16 +3029,19 @@ fn fetch_request_stage_can_block_a_loopback_post() {
     let mut cdp = Cdp::new(browser.connect().unwrap()).unwrap();
     cdp.call("Page.enable", json!({})).unwrap();
     cdp.call("Runtime.enable", json!({})).unwrap();
-    cdp.call(
-        "Page.navigate",
-        json!({"url":format!("http://127.0.0.1:{port}/fixture")}),
-    )
-    .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !cdp.saw_event("Page.loadEventFired") && Instant::now() < deadline {
-        cdp.pump(Duration::from_millis(100));
-    }
-    assert!(cdp.saw_event("Page.loadEventFired"));
+    let primary_navigation = cdp
+        .call(
+            "Page.navigate",
+            json!({"url":format!("http://127.0.0.1:{port}/fixture")}),
+        )
+        .unwrap();
+    let primary_session = cdp.session.clone();
+    wait_for_fixture(
+        &mut cdp,
+        &primary_session,
+        &format!("http://127.0.0.1:{port}/fixture"),
+        &primary_navigation,
+    );
     cdp.take_events();
     let target = cdp
         .call_browser("Target.createTarget", json!({"url":"about:blank"}))
@@ -3012,14 +3057,50 @@ fn fetch_request_stage_can_block_a_loopback_post() {
     cdp.call_session(
         &second,
         "Page.navigate",
-        json!({"url":format!("http://127.0.0.1:{port}/fixture")}),
+        json!({"url":"data:text/html,<title>Earlier fixture document</title>"}),
     )
     .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !cdp.saw_event("Page.loadEventFired") && Instant::now() < deadline {
-        cdp.pump_checked(Duration::from_millis(100)).unwrap();
+    let earlier_deadline = Instant::now() + Duration::from_secs(5);
+    while !cdp
+        .events
+        .iter()
+        .any(|(name, event)| name == "Page.loadEventFired" && event["sessionId"] == second)
+        && Instant::now() < earlier_deadline
+    {
+        cdp.pump_checked(Duration::from_millis(30)).unwrap();
     }
-    assert!(cdp.saw_event("Page.loadEventFired"));
+    assert!(cdp
+        .events
+        .iter()
+        .any(|(name, event)| name == "Page.loadEventFired" && event["sessionId"] == second));
+    let second_navigation = cdp
+        .call_session(
+            &second,
+            "Page.navigate",
+            json!({"url":format!("http://127.0.0.1:{port}/second-fixture")}),
+        )
+        .unwrap();
+    wait_for_fixture(
+        &mut cdp,
+        &second,
+        &format!("http://127.0.0.1:{port}/second-fixture"),
+        &second_navigation,
+    );
+    // The same URL alone cannot establish that a reload reached its new loader.
+    let reloaded = cdp
+        .call_session(
+            &second,
+            "Page.navigate",
+            json!({"url":format!("http://127.0.0.1:{port}/second-fixture")}),
+        )
+        .unwrap();
+    assert_ne!(reloaded["loaderId"], second_navigation["loaderId"]);
+    wait_for_fixture(
+        &mut cdp,
+        &second,
+        &format!("http://127.0.0.1:{port}/second-fixture"),
+        &reloaded,
+    );
     cdp.call(
         "Fetch.enable",
         json!({"patterns":[{"urlPattern":"*","requestStage":"Request"}]}),

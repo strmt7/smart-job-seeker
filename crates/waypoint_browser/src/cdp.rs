@@ -862,7 +862,10 @@ fn retain_event(events: &mut Vec<(String, Value)>, value: Value, raw_len: usize)
         value
     };
     if name == "Page.loadEventFired" {
-        events.retain(|(event, _)| event != "Page.loadEventFired");
+        let session = value.get("sessionId");
+        events.retain(|(event, prior)| {
+            event != "Page.loadEventFired" || prior.get("sessionId") != session
+        });
     }
     if events.len() >= MAX_EVENTS {
         let oldest_non_load = events
@@ -1159,6 +1162,14 @@ impl Cdp {
 
     pub fn saw_event(&self, name: &str) -> bool {
         self.events.iter().any(|(e, _)| e == name)
+    }
+    /// A retained event in one flat session. This alone is not proof of a new
+    /// navigation: callers must also verify the intended current document.
+    pub fn saw_event_for_session(&self, name: &str, session: &str) -> bool {
+        !session.is_empty()
+            && self.events.iter().any(|(event, value)| {
+                event == name && value.get("sessionId").and_then(Value::as_str) == Some(session)
+            })
     }
 }
 
@@ -1512,6 +1523,34 @@ mod tests {
         assert!(!events.iter().any(|(name, _)| name == "oversized"));
     }
 
+    #[test]
+    fn load_events_coalesce_only_within_their_actual_flat_session() {
+        let mut events = Vec::new();
+        for (session, timestamp) in [("first", 1), ("second", 2), ("first", 3)] {
+            retain_event(
+                &mut events,
+                json!({"method":"Page.loadEventFired","sessionId":session,"params":{"timestamp":timestamp}}),
+                100,
+            );
+        }
+        assert_eq!(events.len(), 2);
+        assert!(events
+            .iter()
+            .any(|(_, event)| event["sessionId"] == "first" && event["params"]["timestamp"] == 3));
+        assert!(events
+            .iter()
+            .any(|(_, event)| event["sessionId"] == "second" && event["params"]["timestamp"] == 2));
+        retain_event(
+            &mut events,
+            json!({"method":"Page.loadEventFired","params":{"timestamp":4}}),
+            100,
+        );
+        assert_eq!(
+            events.len(),
+            3,
+            "an unscoped event cannot erase scoped evidence"
+        );
+    }
     #[test]
     fn document_status_survives_event_flood_without_storing_headers_or_urls() {
         let mut events = Vec::new();

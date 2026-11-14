@@ -417,6 +417,16 @@ used by development tools and tests. Do not add WSL or Docker as product require
   covers that case for newly started browsers, but old processes and temp
   profiles may remain. Record measurements rather than assuming all memory
   pressure is due to the app.
+- A global or earlier `Page.loadEventFired` is not multi-target readiness.
+  Bind the flat session, actual current URL/document and native loader. Retain
+  per-session load signals, keep wildcard interception/count assertions, and
+  give controlled fixtures an inline icon to avoid unrelated favicon traffic.
+  See `docs/g1/MULTI_SESSION_FIXTURE_READINESS_2026-11-14.md`.
+- Candidate rehearsals must bind their input revision and never substitute demo
+  contacts/documents for missing candidate material. Retain durable originals
+  before changing a test profile and verify restoration: normal profile saves
+  can normalize defaults/history. Startup logs contain workspace access tokens;
+  retain them privately and extract/redact fields before displaying any output.
 - Qualify research decisions separately from unchanged browser/vision stages.
   A fixed replay missing a changed query is missing input, not live-provider or
   model-intelligence evidence. Pass actual schemas in the prompt, preserve all

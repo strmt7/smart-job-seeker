@@ -122,7 +122,7 @@ fn finish(text: String, mut output: Extracted, focus: Option<&str>) -> Result<Ex
         let mut matches = folded.match_indices(&needle);
         let first = matches
             .next()
-            .ok_or("Requested text was not found in the public document scope")?
+            .ok_or("Requested literal text was not found in the public document scope. Read the same URL with focus:null for an overview, or choose a shorter literal from observed text; do not repeat this failed view")?
             .0;
         let count = 1 + matches.count();
         let mut start = first.saturating_sub(240);

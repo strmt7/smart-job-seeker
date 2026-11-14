@@ -75,7 +75,7 @@ fn public_url(raw: &str, profile: &Value) -> Result<(String, String), String> {
     Ok((url.to_string(), source))
 }
 pub fn start(ws: &Workspace, job: &JobIdentityId, id: String) -> Result<(), String> {
-    start_task(ws, job, id, None)
+    start_task(ws, job, id, None, false)
 }
 pub fn start_preview(
     ws: &Workspace,
@@ -95,8 +95,19 @@ pub fn start_preview_with_research(
     rehearse: bool,
     public_research: bool,
 ) -> Result<(), String> {
-    if public_research && !rehearse {
-        return Err("Public technical research is an autofill rehearsal option".into());
+    start_preview_options(ws, job, id, attempt, rehearse, public_research, false)
+}
+pub fn start_preview_options(
+    ws: &Workspace,
+    job: &JobIdentityId,
+    id: String,
+    attempt: &str,
+    rehearse: bool,
+    public_research: bool,
+    use_saved_contacts: bool,
+) -> Result<(), String> {
+    if (public_research || use_saved_contacts) && !rehearse {
+        return Err("Research and saved contacts are offline autofill rehearsal options".into());
     }
     let directory = crate::attempt_record::attempt_directory(ws, job, attempt)?;
     start_task(
@@ -109,14 +120,17 @@ pub fn start_preview_with_research(
             job_id: job.as_str().to_owned(),
             rehearse,
             public_research,
+            candidate_snapshot_sha256: None,
         }),
+        use_saved_contacts,
     )
 }
 fn start_task(
     ws: &Workspace,
     job: &JobIdentityId,
     id: String,
-    replay: Option<crate::recorded_preview::Source>,
+    mut replay: Option<crate::recorded_preview::Source>,
+    use_saved_contacts: bool,
 ) -> Result<(), String> {
     if !checked_id(&id) {
         return Err("Invalid page-copy identity".into());
@@ -136,13 +150,27 @@ fn start_task(
     waypoint_workspace::default_registry()
         .check_public_route(&selected.source, waypoint_policy::Operation::Read)
         .map_err(|e| e.to_string())?;
-    let profile: Value = ws
-        .candidate_profile()
-        .map_err(|e| e.to_string())?
-        .map(|s| serde_json::from_str(&s))
+    let raw_profile = ws.candidate_profile().map_err(|e| e.to_string())?;
+    let profile: Value = raw_profile
+        .as_deref()
+        .map(serde_json::from_str)
         .transpose()
         .map_err(|_| "Stored profile is invalid")?
         .unwrap_or_else(|| json!({}));
+    if use_saved_contacts {
+        if !replay.as_ref().is_some_and(|source| source.rehearse) {
+            return Err("Saved contacts require an offline rehearsal".into());
+        }
+        if raw_profile
+            .as_ref()
+            .is_none_or(|raw| raw.len() > 256 * 1024)
+        {
+            return Err(
+                "Saved contact profile is unavailable or exceeds the rehearsal input limit".into(),
+            );
+        }
+        crate::suggestions::contact_profile_snapshot(&profile)?;
+    }
     let (url, source) = public_url(
         selected
             .canonical_url
@@ -184,6 +212,21 @@ fn start_task(
     .ok_or("Page copies require a saved workspace")?;
     let root = record.source_capture_directory();
     std::fs::create_dir(&root).map_err(|_| "Cannot create page-copy folder")?;
+    if use_saved_contacts {
+        let source = replay
+            .as_mut()
+            .filter(|source| source.rehearse)
+            .ok_or("Saved contacts require an offline rehearsal")?;
+        let raw = raw_profile
+            .as_deref()
+            .ok_or("Add saved contact details before using this rehearsal option")?;
+        let snapshots = root
+            .parent()
+            .ok_or("Candidate record is unavailable")?
+            .join("screenshots");
+        source.candidate_snapshot_sha256 =
+            Some(crate::rehearsal_candidate::stage(&snapshots, raw)?);
+    }
     let scope = match &replay {
         Some(source) if source.rehearse => "recorded_autofill_rehearsal",
         Some(_) => "recorded_page_preview",
@@ -368,6 +411,21 @@ fn with_current_source(ws: &Workspace, mut value: Value) -> Value {
         )
     })();
     value["current_source"] = json!(matches);
+    with_current_candidate(ws, value)
+}
+fn with_current_candidate(ws: &Workspace, mut value: Value) -> Value {
+    let source = &value["result"]["preview"]["rehearsal"]["candidate_source"];
+    if source["scope"] == "saved_candidate_contacts" {
+        let current = source["source_profile_sha256"]
+            .as_str()
+            .and_then(|expected| {
+                ws.candidate_profile()
+                    .ok()
+                    .flatten()
+                    .map(|raw| waypoint_domain::sha256_hex(raw.as_bytes()) == expected)
+            });
+        value["current_candidate_profile"] = json!(current);
+    }
     value
 }
 
@@ -395,6 +453,7 @@ fn finalize(
         value["kind"] = json!("recorded_preview");
     }
     value["source_url_sha256"] = json!(waypoint_domain::sha256_hex(task.source_url.as_bytes()));
+    value = with_current_candidate(ws, value);
     let event=task.record.event(json!({"type":"source_capture_result","time":crate::now(),"task_id":id,"status":value["status"],"current_source":current,"result":value["result"]}));
     let summary_saved = task.record.source_capture_result(&value).is_ok();
     let status_saved = task.record.status("manual_review", crate::now()).is_ok();
@@ -856,6 +915,10 @@ mod tests {
         let request: Request = serde_json::from_value(preview.clone()).unwrap();
         assert!(request.replay.as_ref().unwrap().rehearse);
         assert_eq!(serde_json::to_value(request).unwrap(), preview);
+        let mut bound = preview.clone();
+        bound["replay"]["candidate_snapshot_sha256"] = json!("a".repeat(64));
+        let request: Request = serde_json::from_value(bound.clone()).unwrap();
+        assert_eq!(serde_json::to_value(request).unwrap(), bound);
         for field in [
             "profile",
             "email",
@@ -992,6 +1055,24 @@ mod tests {
         );
         value.as_object_mut().unwrap().remove("source_url_sha256");
         assert!(with_current_source(&ws, value)["current_source"].is_null());
+    }
+    #[test]
+    fn candidate_snapshot_freshness_is_recomputed_without_changing_its_source() {
+        let (_dir, ws, _task) = fixture();
+        let raw = r#"{"email":"morgan@example.invalid"}"#;
+        ws.save_candidate_profile(raw).unwrap();
+        let value = json!({"result":{"preview":{"rehearsal":{"candidate_source":{"scope":"saved_candidate_contacts","source_profile_sha256":waypoint_domain::sha256_hex(raw.as_bytes())}}}},"current_candidate_profile":false});
+        assert_eq!(
+            with_current_candidate(&ws, value.clone())["current_candidate_profile"],
+            true
+        );
+        ws.save_candidate_profile(r#"{"email":"changed@example.invalid"}"#)
+            .unwrap();
+        let revised = with_current_candidate(&ws, value.clone());
+        assert_eq!(revised["current_candidate_profile"], false);
+        assert_eq!(revised["result"], value["result"]);
+        let missing = json!({"result":{"preview":{"rehearsal":{"candidate_source":{"scope":"saved_candidate_contacts"}}}}});
+        assert!(with_current_candidate(&ws, missing)["current_candidate_profile"].is_null());
     }
     #[test]
     fn cancellation_does_not_hide_an_unconfirmed_shutdown() {

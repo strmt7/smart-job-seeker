@@ -30,10 +30,25 @@ function harness(api, onFinished) {
     });
     const controls=instance.actions('research-job','saved-record');
     assert.equal(button(controls,action).className,'button-secondary');
-    find(controls,node=>node.tag==='input'&&node.type==='checkbox').checked=enabled;
+    find(controls,node=>node.tag==='label'&&node.children.some(child=>child.textContent==='Research technical issues online')).children[0].checked=enabled;
     await button(controls,action).listeners.click();
     assert.equal(request.public_research===true,expected);
     assert.equal(request.rehearse===true,action==='Rehearse autofill');
+  }
+  for (const [enabled,action] of [[false,'Rehearse autofill'],[true,'Rehearse autofill'],[true,'Create recorded preview']]) {
+    let request;
+    const instance=harness(async(route,body)=>{
+      if(route.endsWith('/pending'))return {active:false};
+      if(route.endsWith('/preview-start')){request=body;return {task_id:'snapshot-task'};}
+      if(route.endsWith('/status'))return {task_id:'snapshot-task',job_id:'snapshot-job',status:'complete'};
+      throw Error('Unexpected snapshot route');
+    });
+    const controls=instance.actions('snapshot-job','saved-record');
+    const option=find(controls,node=>node.tag==='label'&&node.children.some(child=>child.textContent==='Use saved contact details')).children[0];
+    assert.equal(Boolean(option.checked),false);option.checked=enabled;
+    await button(controls,action).listeners.click();
+    assert.equal(request.use_saved_contacts===true,enabled&&action==='Rehearse autofill');
+    assert.equal(Object.keys(request).some(key=>['profile','email','contacts'].includes(key)),false);
   }
   const degraded=harness(async()=>{}).preview({views:[],rehearsal:{scope:'fictional_saved_form',public_research:[{source_status:{degraded:true},result:{status:'needs_review'}}]}},{});
   assert(find(degraded,node=>node.textContent==='Some search services were unavailable. Results may be incomplete.'));
@@ -49,6 +64,11 @@ function harness(api, onFinished) {
     {kind:'page',label:'Page',image:'0001.png',sha256:digest,fields:[{label:'Parent name'}]},
     {kind:'frame',label:'Qualifications',image:'0002.png',sha256:digest,fields:[{label:'Child answer',required:true}]},
   ] };
+  const candidatePanel=harness(async()=>{}).preview({...preview,rehearsal:{scope:'saved_candidate_contacts',fields:[]}},{});
+  assert(find(candidatePanel,node=>node.textContent==='This saved copy uses a snapshot of your contact details. Candidate documents have not been selected. Later steps and server validation still need review.'));
+  assert.equal(Boolean(find(candidatePanel,node=>typeof node.textContent==='string'&&node.textContent.startsWith('Rehearsal uses fictional details'))),false);
+  const noCandidateImage=harness(async()=>{}).preview({views:[],rehearsal:{scope:'saved_candidate_contacts',fields:[]}},{});
+  assert(find(noCandidateImage,node=>typeof node.textContent==='string'&&node.textContent.startsWith('This saved copy uses a snapshot')));
   for (const [changes,closed] of [[{},true],[{native_closed:false},false],[{closure_reverified:false},false],[{scope:'live'},false],[{post_visual:{inspection:'uncertain',blocking_dialogs:[]}},false]]) {
     const action={view:1,status:'closed_in_saved_copy',scope:'fictional_saved_copy_only',native_closed:true,closure_reverified:true,post_visual:{inspection:'complete',blocking_dialogs:[]},followup_capture:'saved',to:2,...changes};
     const panel=harness(async()=>{}).preview({...preview,views:[preview.views[0],{...preview.views[1],after_dialog:true}],rehearsal:{scope:'fictional_saved_form',dialogs:[action],fields:[]}},{});

@@ -1,12 +1,13 @@
 # Completion plan - 11 November 2026
 
-The [public technical research continuation](g1/PUBLIC_TECHNICAL_RESEARCH_2026-11-14.md)
-adds the bounded application runtime broker and actual local-model public reads.
-All five model integrations remain in review; source-grounded advice and useful
-remediation remain open. The next R04 step isolates those model decisions and
-source extraction instead of repeating unchanged browser qualification. Complete
-candidate journeys, held-out evaluation, lifecycle and installation remain required.
-No release is authorized. The queue retains all unfinished acceptance criteria.
+The [saved-contact continuation](g1/SAVED_CONTACT_SNAPSHOTS_2026-11-14.md)
+connects explicit candidate contact snapshots to the offline actor. Two fictional
+profiles each verify 3/3 contact fields and leave the unresolved upload untouched.
+Candidate PDFs, reviewed history/facts, complete journeys and held-out evaluation
+remain unfinished. Public research now reaches direct documents; semantic advice
+and useful repairs still require qualification. The [active queue](ACTIVE_DEVELOPMENT_PLAN.json)
+retains all acceptance criteria, including lifecycle and installation. No release
+is authorized. Historical gate results below retain their original scope.
 
 The [inline-frame continuation](g1/INLINE_FRAME_COMPLETENESS_2026-11-13.md)
 adds native inspection-completeness evidence and bounded same-origin field entry,

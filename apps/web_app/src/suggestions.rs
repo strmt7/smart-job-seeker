@@ -42,6 +42,26 @@ fn contact_key(key: &str) -> bool {
     CONTACT_FACTS.iter().any(|(known, _)| *known == key)
 }
 
+/// Contact-only projection shared by offline snapshots and the existing mapper.
+/// Settings, eligibility, third-party contacts and arbitrary facts stay excluded.
+pub(crate) fn contact_profile_snapshot(profile: &Value) -> Result<Value, String> {
+    let object = profile.as_object().ok_or("Profile must be an object")?;
+    let contacts = object
+        .iter()
+        .filter(|(key, value)| {
+            contact_key(key)
+                && value
+                    .as_str()
+                    .is_some_and(|text| !text.trim().is_empty() && text.len() <= MAX_PROFILE_VALUE)
+        })
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect::<serde_json::Map<_, _>>();
+    if contacts.is_empty() {
+        return Err("Add saved contact details before using this rehearsal option".into());
+    }
+    Ok(Value::Object(contacts))
+}
+
 type SuggestionsWithReview = (Vec<ProposedMapping>, Vec<String>, HashSet<String>);
 
 // Internal frame paths can be long and are not meaningful to a language model.

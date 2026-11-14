@@ -97,7 +97,7 @@
   }
   function previewView(preview, el, options) {
     const section = el(options.inline ? 'div' : 'details', '', 'source-copy-result');
-    const rehearsal = ['fictional_text_only', 'fictional_saved_form'].includes(preview?.rehearsal?.scope) ? preview.rehearsal : null;
+    const rehearsal = ['fictional_text_only', 'fictional_saved_form', 'saved_candidate_contacts'].includes(preview?.rehearsal?.scope) ? preview.rehearsal : null;
     if (!options.inline) section.append(el('summary', rehearsal ? 'Saved-page autofill rehearsal' : 'Recorded page preview'));
     if (rehearsal) {
       for (const note of (Array.isArray(rehearsal.public_research) ? rehearsal.public_research : []).slice(0, 1)) {
@@ -132,6 +132,15 @@
         section.append(research);
       }
     }
+    if (rehearsal) {
+      section.append(el('p', rehearsal.scope === 'saved_candidate_contacts'
+        ? 'This saved copy uses a snapshot of your contact details. Candidate documents have not been selected. Later steps and server validation still need review.'
+        : 'Rehearsal uses fictional details in the saved copy. Other fields, later steps and server validation still need review.', 'footnote'));
+      if (rehearsal.halted) section.append(el('p', 'The rehearsal stopped for review.', 'review-label'));
+      if (rehearsal.visual_gate?.required && !rehearsal.visual_gate.available) {
+        section.append(el('p', 'A loaded local vision model is required before autofill. Check the model settings.', 'review-label'));
+      }
+    }
     const captures = Array.isArray(preview?.views) ? preview.views.filter(view => view && ['page','frame'].includes(view.kind)).slice(0, 7) : [];
     if (!captures.length) {
       section.append(el('p', 'No view could be saved. Check this record’s screenshots and status.', 'review-label'));
@@ -161,13 +170,6 @@
     }
     for (const notice of (Array.isArray(preview.notices) ? preview.notices.slice(0, 5) : [])) {
       if (typeof notice === 'string') section.append(el('p', notice, 'footnote'));
-    }
-    if (rehearsal) {
-      section.append(el('p', 'Rehearsal uses fictional details in the saved copy. Other fields, later steps and server validation still need review.', 'footnote'));
-      if (rehearsal.halted) section.append(el('p', 'The rehearsal stopped for review.', 'review-label'));
-      if (rehearsal.visual_gate?.required && !rehearsal.visual_gate.available) {
-        section.append(el('p', 'A loaded local vision model is required before autofill. Check the model settings.', 'review-label'));
-      }
     }
     section.append(label, details, show, imageArea);
     let revision = 0;
@@ -226,7 +228,7 @@
         const dialogs = Array.isArray(rehearsal.dialogs) ? rehearsal.dialogs.slice(0,2).filter(action=>action?.view===viewNumber) : [];
         const dialogReasons = {form_changed:'The form changed during dialog review.',interaction_unverified:'The dialog interaction could not be verified.',dialog_changed:'The dialog changed during review.',replay_gap:'The saved page requested an unrecorded response.',document_changed:'The page changed during review.',dialog_remains:'A dialog still needs review.',field_changed:'Page values changed during the dialog check.'};
         for(const action of dialogs){
-          const closed = action.scope==='fictional_saved_copy_only' && action.status==='closed_in_saved_copy' && action.native_closed===true && action.closure_reverified===true
+          const closed = ['fictional_saved_copy_only','offline_saved_copy_only'].includes(action.scope) && action.status==='closed_in_saved_copy' && action.native_closed===true && action.closure_reverified===true
             && action.post_visual?.inspection==='complete' && Array.isArray(action.post_visual.blocking_dialogs) && action.post_visual.blocking_dialogs.length===0;
           details.append(el('p',closed?'Dialog closed in saved copy.':'Dialog needs review.',closed?'footnote':'review-label'));
           if(typeof action.proposal?.reason==='string')details.append(el('p',`Suggested action: ${action.proposal.reason.slice(0,500)}`,'footnote'));
@@ -371,11 +373,15 @@
     researchOption.type = 'checkbox';
     researchLabel.append(researchOption, dependencies.element('span', 'Research technical issues online', ''));
     researchLabel.title = 'Use anonymous technical context for public research after a failed check. The saved form keeps its network isolation.';
-    root.append(researchLabel);
+    const contactLabel = dependencies.element('label', '', 'check-control footnote');
+    const contactOption = dependencies.element('input', '', ''); contactOption.type = 'checkbox';
+    contactLabel.append(contactOption, dependencies.element('span', 'Use saved contact details', ''));
+    contactLabel.title = 'Use a snapshot of your saved contact profile in the offline copy. Candidate documents are not selected by this option.';
+    root.append(contactLabel, researchLabel);
     for (const [label, rehearse] of [['Create recorded preview', false], ['Rehearse autofill', true]]) {
       const button = dependencies.element('button', label, 'button-secondary');
       button.type = 'button';
-      if (rehearse) button.title = 'Use fictional details to check supported fields in the saved copy';
+      if (rehearse) button.title = 'Check supported fields in the offline saved copy using the chosen contact source';
       root.append(button);
       button.addEventListener('click', async () => {
         if (state.active) {
@@ -387,7 +393,7 @@
         button.disabled = true;
         status.textContent = '';
         try {
-          await start(jobId, attemptId, rehearse, rehearse && researchOption.checked);
+          await start(jobId, attemptId, rehearse, rehearse && researchOption.checked, rehearse && contactOption.checked);
           if (state.job === jobId && state.error) status.textContent = state.error;
         } finally {
           button.disabled = false;
@@ -397,7 +403,7 @@
     root.append(status);
     return root;
   }
-  async function start(job, attempt = null, rehearse = false, publicResearch = false) {
+  async function start(job, attempt = null, rehearse = false, publicResearch = false, useSavedContacts = false) {
     if (state.active) return;
     Object.assign(state, { task: null, job, preview: Boolean(attempt), active: true, cancelling: false, phase: 'starting', result: null, error: null });
     publish();
@@ -405,7 +411,7 @@
       const pending = await client('/api/job-source/pending', {});
       if (pending.active) { await follow(pending.task_id, pending.job_id, pending.preview === true); return; }
       const route = attempt ? '/api/job-source/preview-start' : '/api/job-source/start';
-      const value = await client(route, attempt ? { id: job, attempt_id: attempt, ...(rehearse ? { rehearse } : {}), ...(publicResearch ? { public_research: true } : {}) } : { id: job });
+      const value = await client(route, attempt ? { id: job, attempt_id: attempt, ...(rehearse ? { rehearse } : {}), ...(publicResearch ? { public_research: true } : {}), ...(useSavedContacts ? { use_saved_contacts: true } : {}) } : { id: job });
       await follow(value.task_id, job, Boolean(attempt));
     } catch (error) {
       state.active = false;
@@ -420,7 +426,11 @@
     if (value.kind === 'recorded_preview') {
       if (!value.record_saved) return 'Check the application record folder for available images.';
       const name = value.result?.preview?.rehearsal ? 'Saved-page autofill rehearsal' : 'Recorded preview';
-      return value.current_source === false ? `${name} saved for the earlier job link.` : `${name} saved in application records.`;
+      const result = value.current_source === false ? `${name} saved for the earlier job link.` : `${name} saved in application records.`;
+      const candidate = value.result?.preview?.rehearsal?.candidate_source?.scope === 'saved_candidate_contacts';
+      return candidate && value.current_candidate_profile !== true
+        ? `${result} ${value.current_candidate_profile === false ? 'Your saved contact profile has changed since this rehearsal.' : 'The current contact profile could not be verified.'}`
+        : result;
     }
     const report = value.result?.report, resources = count(report?.recorded_resources), requests = count(report?.requests);
     const counts = resources === null || requests === null ? 'Check the saved record for capture details.' : `${resources} resource${resources === 1 ? '' : 's'} saved from ${requests} request${requests === 1 ? '' : 's'}.`;

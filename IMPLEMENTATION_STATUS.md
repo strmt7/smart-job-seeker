@@ -1,3 +1,21 @@
+## Saved contacts and browser readiness - 2026-11-14
+
+Saved-page rehearsals can now use a bound snapshot of saved contact details,
+without placing candidate values in public worker requests or substituting demo
+PDFs. Two frozen fictional profiles each verify 3/3 contact fields with native
+readback and independent visual checks; their unresolved upload stays untouched.
+This is field evidence, not a complete candidate/document/history workflow.
+[Scope and limitations](docs/g1/SAVED_CONTACT_SNAPSHOTS_2026-11-14.md).
+
+A reproduced hosted browser failure is corrected with session/document/loader
+readiness and a controlled fixture. The complete local browser selection passes
+139 cases. Final workspace: 1,414 passed / 616 ignored; Clippy, build and formatting
+pass. All 171 UI scripts and 29 rendered cases pass at their recorded sources.
+[Browser evidence](docs/g1/MULTI_SESSION_FIXTURE_READINESS_2026-11-14.md).
+Research reaches direct documentation but its measured attachment runs still stop
+in review. Broader semantic advice and autonomous useful repairs remain unqualified.
+No release or real application was sent.
+
 ## Focused research and native local-model decisions - 2026-11-14
 
 Anonymous research now has free-provider fallback, HTML5 section/focus extraction,
