@@ -267,6 +267,14 @@ used by development tools and tests. Do not add WSL or Docker as product require
 
 ## Real pitfalls already hit (don't rediscover these)
 
+- A top-level open does not independently prove that a cross-origin fixture's
+  child form has parsed/rendered. Require an origin/source-bound owned fixture
+  checkpoint and fresh native inspection, retaining the first observations and
+  zero-field exposure checks. A fixture signal never clears a product barrier.
+  Preserve failed CI source/results; do not replace a required specific native
+  classification with a generic wall just to make a test pass. See
+  `docs/g1/SAME_SITE_FRAME_FIXTURE_READINESS_2026-11-14.md`.
+
 - A block file label can span the viewport while its rendered text and chooser
   fit in a small region. File-only detail capture uses bounded native text-range
   geometry, preserving existing text/select and original upload-feedback images.

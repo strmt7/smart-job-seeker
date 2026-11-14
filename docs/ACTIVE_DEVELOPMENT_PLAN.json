@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "reviewed_on": "2026-11-14",
-  "reviewed_source": "4ea8a3959c6f0e0b373336f33ef384affe5a4625",
+  "reviewed_source": "b09ea6455c4757aa984bc8cddf0dab9ec778bb99",
   "goal": "Continue the existing active Smart Jobseeker product-development goal",
   "plan": "docs/COMPLETION_PLAN_2026-11-11.md",
   "assessment": "docs/REPO_STATE_REVIEW_2026-11-11.md",
@@ -116,7 +116,8 @@
         "docs/g1/SELECTED_CANDIDATE_PDFS_2026-11-14.md",
         "docs/g1/NATIVE_FILE_LABEL_DETAILS_2026-11-14.md",
         "docs/g1/CHECKED_HISTORY_REHEARSAL_2026-11-14.md",
-        "docs/g1/REVIEWED_QUALIFICATION_ANSWERS_2026-11-14.md"
+        "docs/g1/REVIEWED_QUALIFICATION_ANSWERS_2026-11-14.md",
+        "docs/g1/SAME_SITE_FRAME_FIXTURE_READINESS_2026-11-14.md"
       ],
       "execution_batch": "B",
       "steps": [
@@ -197,7 +198,8 @@
         "docs/g1/CHOICE_CONTEXT_AND_RADIO_CAPTURE_2026-11-13.md",
         "docs/g1/NATIVE_FRAME_IDENTITY_2026-11-13.md",
         "docs/g1/INLINE_FRAME_COMPLETENESS_2026-11-13.md",
-        "docs/g1/FRAME_VIEWPORT_AVAILABILITY_2026-11-13.md"
+        "docs/g1/FRAME_VIEWPORT_AVAILABILITY_2026-11-13.md",
+        "docs/g1/SAME_SITE_FRAME_FIXTURE_READINESS_2026-11-14.md"
       ],
       "execution_batch": "B",
       "steps": [
@@ -224,7 +226,8 @@
         "2026-11-13: root radio crop previously clipped a centered question at400x240, causing real12B blind transcription refusal. Shared720CSS-pixel/400height bounded root/child context now retains full question/options. Native matrix: root and independently targeted cross-site selections verified with0replayrefusals; same-origin uninspected scope and target-less same-site child remain2explicit no-entry review outcomes. Images inspected. Initial crop/model retest attempt was held; later two development passes are recorded in the following checkpoint. Workspace1361/610ignored, final mapper54/22ignored, Clippy/build/fmt pass.",
         "2026-11-13: bounded native frame/owner/document/loader/ancestry identity observed before/after inline traversal and carried privately in LiveForm equality; original barriers retained. Native mutation checks detect hidden/replaced same-origin owner snapshots. Cross-site parent census remains unavailable in this engine, with existing separately leased child path preserved after a caught regression. Identity is not inspection completeness or additional entry permission.",
         "2026-11-13: source-bound before/after owner/document/loader/rendering/origin graph plus exact successful inspection ledger now certifies accessible inline frames. HTTP requires genuine current-frame/loader status; inherited srcdoc/about:blank uses verified ancestor/source attributes and positive observed origin, retaining raw protocol ://. No warning-string filtering. Final15-case matrix10native field readbacks/7review outcomes, all15closed; root/inline/cross-site radios verify with target-less review. Reload/replacement/state-preserving reparent refuse stale entry before callback, including equal-schema/walls case.",
-        "2026-11-13: native owner availability uses a common ancestor-viewport hit point; clipped/transparent scopes preserve review even with0inspected fields. Final24native cases:13entrycases/16exact readbacks/11review-only/allclosed. Compiled clipped preview confirms0fields/blocked/review/no model. One independent frozen tall-frame development local12B case2/2verified,unknown0/6,zero critical/unbound entries. No whole-workflow/held-out/promotion credit; prior failures retained."
+        "2026-11-13: native owner availability uses a common ancestor-viewport hit point; clipped/transparent scopes preserve review even with0inspected fields. Final24native cases:13entrycases/16exact readbacks/11review-only/allclosed. Compiled clipped preview confirms0fields/blocked/review/no model. One independent frozen tall-frame development local12B case2/2verified,unknown0/6,zero critical/unbound entries. No whole-workflow/held-out/promotion credit; prior failures retained.",
+        "2026-11-14: b09 hosted browser selection138passed/1failed; generic frame review retained and no fields exposed, but specific inaccessible-form classification absent. Exact cause unproven without earlier readiness observations. Owned fixture now has independent origin/source-bound child readiness, fresh native inspection, initial/final zero-field assertions and retained diagnostics. Local139selection and final1target pass; hosted follow-up still required. No production barrier relaxed or R03 completion."
       ],
       "start_requirements": [
         "R02 input-binding protocol exists; full representative/held-out collection is not required to begin this rendering repair.",
@@ -352,7 +355,8 @@
         "docs/g1/SAVED_CONTACT_SNAPSHOTS_2026-11-14.md",
         "docs/g1/MULTI_SESSION_FIXTURE_READINESS_2026-11-14.md",
         "docs/g1/SELECTED_CANDIDATE_PDFS_2026-11-14.md",
-        "docs/g1/NATIVE_FILE_LABEL_DETAILS_2026-11-14.md"
+        "docs/g1/NATIVE_FILE_LABEL_DETAILS_2026-11-14.md",
+        "docs/g1/SAME_SITE_FRAME_FIXTURE_READINESS_2026-11-14.md"
       ],
       "execution_batch": "C",
       "steps": [
@@ -618,7 +622,8 @@
       ],
       "evidence": [
         "docs/g1/NATIVE_FRAME_IDENTITY_2026-11-13.md",
-        "docs/g1/REVIEWED_QUALIFICATION_ANSWERS_2026-11-14.md"
+        "docs/g1/REVIEWED_QUALIFICATION_ANSWERS_2026-11-14.md",
+        "docs/g1/SAME_SITE_FRAME_FIXTURE_READINESS_2026-11-14.md"
       ],
       "execution_batch": "F",
       "steps": [
@@ -665,7 +670,8 @@
       ],
       "evidence": [
         "docs/g1/REVIEWED_QUALIFICATION_ANSWERS_2026-11-14.md",
-        "docs/RELEASE_READINESS_AND_NEXT_PLAN_2026-11-14.md"
+        "docs/RELEASE_READINESS_AND_NEXT_PLAN_2026-11-14.md",
+        "docs/g1/SAME_SITE_FRAME_FIXTURE_READINESS_2026-11-14.md"
       ],
       "execution_batch": "G",
       "steps": [

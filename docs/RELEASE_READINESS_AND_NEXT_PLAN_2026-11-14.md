@@ -189,3 +189,21 @@ Run full required checks once per coherent batch, then repeat only for changed
 behavior, new failures or unresolved evidence. Batch substantial main commits and
 pushes. Keep private evidence and a short handoff; avoid reconstructing this
 roadmap on every turn or spending most effort on isolated geometry fixtures.
+
+
+## Hosted feedback after the initial checkpoint
+
+The `b09ea645` checkpoint's workspace/build/layout, coverage, supply-chain, PDF,
+tool-contract and code-scanning jobs pass. Its browser selection passes 138 and fails one of 139 cases
+because the same-site cross-origin fixture receives the generic review barrier
+instead of the specific form classification. The [fixture-readiness follow-up](g1/SAME_SITE_FRAME_FIXTURE_READINESS_2026-11-14.md)
+retains that failure, adds independent child readiness and fresh native evidence,
+and passes the local 139-case selection plus the final strengthened targeted
+case. A local pass does not establish the earlier CI cause; exact-source hosted
+acceptance is still required. R03/R05 and the overall release assessment remain
+open. The field/numeric and complete-journey priorities above are unchanged.
+
+CodeQL automatically marks alert #12 fixed after this checkpoint's stronger URL
+assertions; its native state is fixed with no dismissal, and the open-code-scanning
+inventory is zero. No finding state was changed manually. This does not establish
+the security state of uninventoried providers or make the product release-ready.

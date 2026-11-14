@@ -4604,11 +4604,26 @@ fn inaccessible_same_site_cross_origin_form_is_detected_without_fields() {
     let parent_port = parent.local_addr().unwrap().port();
     let stop = Arc::new(AtomicBool::new(false));
     let mut threads = vec![];
-    for (listener, body) in [(child, "<form><label>Name <input name='name'></label></form>".to_owned()), (parent, format!("<iframe id='frame' src='http://127.0.0.1:{child_port}/'></iframe><button id='hide' type='button' onclick=\"document.getElementById('frame').style.display='none'\">Hide</button>"))] {
+    // A top-page navigation is not independent evidence that the child form
+    // has parsed/rendered. Only this origin/source-bound fixture message marks it.
+    let child_body = format!(
+        r#"<link rel=icon href=data:,><form><label>Name <input name='name'></label></form><script>
+      function ready(){{requestAnimationFrame(()=>requestAnimationFrame(()=>parent.postMessage('fictional-child-form-ready','http://127.0.0.1:{parent_port}')));}}
+      if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',ready,{{once:true}});else ready();
+    </script>"#
+    );
+    let parent_body = format!(
+        r#"<link rel=icon href=data:,><p id='ready'>Child loading</p><script>
+      addEventListener('message',event=>{{const frame=document.getElementById('frame');if(event.origin==='http://127.0.0.1:{child_port}'&&frame&&event.source===frame.contentWindow&&event.data==='fictional-child-form-ready')document.getElementById('ready').textContent='FICTIONAL-CHILD-FORM-READY';}});
+    </script><iframe id='frame' src='http://127.0.0.1:{child_port}/'></iframe><button id='hide' type='button' onclick="document.getElementById('frame').style.display='none'">Hide</button>"#
+    );
+    for (listener, body) in [(child, child_body), (parent, parent_body)] {
         listener.set_nonblocking(true).unwrap();
         let stop = stop.clone();
         threads.push(std::thread::spawn(move || {
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            // Cover browser launch/navigation, the independent readiness wait,
+            // hidden-frame check and teardown; the test still stops/joins both servers.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
             while !stop.load(Ordering::Relaxed) && std::time::Instant::now() < deadline {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
@@ -4625,9 +4640,54 @@ fn inaccessible_same_site_cross_origin_form_is_detected_without_fields() {
     }
     let outcome = std::panic::catch_unwind(|| {
         let mut driver = CdpDriver::launch(vec![]).unwrap();
-        let page = driver
+        let initial = driver
             .open(&format!("http://127.0.0.1:{parent_port}/"))
             .unwrap();
+        assert!(
+            initial.schema.fields.is_empty(),
+            "An initial inspection must not expose cross-origin controls"
+        );
+        let started = std::time::Instant::now();
+        let initial_ready = driver
+            .page_text_bounded(2000)
+            .unwrap()
+            .0
+            .contains("FICTIONAL-CHILD-FORM-READY");
+        let mut ready = initial_ready;
+        while !ready && started.elapsed() < std::time::Duration::from_secs(5) {
+            std::thread::sleep(std::time::Duration::from_millis(25));
+            ready = driver
+                .page_text_bounded(2000)
+                .unwrap()
+                .0
+                .contains("FICTIONAL-CHILD-FORM-READY");
+        }
+        // This fresh native inspection must establish the original classification;
+        // the fixture message cannot substitute for native form-control evidence.
+        let inspected = driver.inspect_current();
+        let folder = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/browser-qualification");
+        std::fs::create_dir_all(&folder).unwrap();
+        let name = format!(
+            "same-site-frame-readiness-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        use std::io::Write;
+        let mut evidence = std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(folder.join(name))
+            .unwrap();
+        evidence.write_all(serde_json::to_vec_pretty(&serde_json::json!({"source_kind":"two_fictional_loopback_origins","initial_ready":initial_ready,"ready":ready,"wait_ms":started.elapsed().as_millis(),"initial_walls":initial.walls,"initial_field_count":initial.schema.fields.len(),"final_walls":inspected.as_ref().ok().map(|page|&page.walls),"final_field_count":inspected.as_ref().ok().map(|page|page.schema.fields.len()),"inspection_error":inspected.as_ref().err().map(ToString::to_string),"premise":"origin/source-bound child DOMContentLoaded plus two animation frames; classification still needs native evidence"})).unwrap().as_slice()).unwrap();
+        let page = inspected.unwrap();
+        assert!(
+            ready,
+            "The owned child form did not reach its independent fixture readiness checkpoint"
+        );
         assert!(page.schema.fields.is_empty());
         assert!(
             page.walls
