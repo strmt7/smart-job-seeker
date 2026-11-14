@@ -312,3 +312,16 @@ button.secondary-button { background: var(--surface); color: var(--accent); bord
 #form-inspection-progress:empty { display: none; }
 #form-inspection-progress:not(:empty) { margin-bottom: 16px; padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
 #form-inspection-progress p { margin: 0 0 10px; }
+
+.source-document-picker { flex: 1 1 100%; min-width: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; }
+.source-document-picker summary { cursor: pointer; font-weight: 600; }
+.source-document-picker label { display: grid; gap: 5px; min-width: 0; font-size: 12px; }
+.source-document-picker input, .source-document-picker select { box-sizing: border-box; width: 100%; min-width: 0; max-width: 100%; }
+.source-document-picker > label { margin-top: 12px; }
+.source-document-list { display: grid; gap: 10px; margin: 12px 0; }
+.source-document-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; padding: 10px; border: 1px solid var(--line); border-radius: 6px; }
+.source-document-row > label { flex: 1 1 140px; max-width: 100%; }
+.source-document-row > label:nth-child(2) { flex: 2 1 200px; }
+.source-document-row > label:nth-child(3) { flex: 1 1 100%; order: 4; }
+.source-document-row > label[hidden] { display: none; }
+.source-document-row > button { max-width: 100%; overflow-wrap: anywhere; white-space: normal; }

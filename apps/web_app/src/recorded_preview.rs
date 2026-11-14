@@ -181,6 +181,8 @@ fn render_at(
         .transpose()?;
     config.attachments = if source.rehearse && candidate.is_none() {
         Some(stage_sample_attachments(screenshots)?)
+    } else if let Some((snapshot, _)) = &candidate {
+        snapshot.attachments(screenshots, &source.job_id)?
     } else {
         None
     };
@@ -564,25 +566,11 @@ impl RehearsalVision {
     fn plan_attachments(
         &mut self,
         schema: &waypoint_applications::form_mapping::FormSchema,
+        documents: &[crate::attachment_mapping::DocumentOption<'_>],
     ) -> Result<crate::attachment_mapping::Plan, String> {
-        use crate::attachment_mapping::DocumentOption;
         crate::check_inference_memory()?;
         let model = self.model.as_mut().ok_or("The local model needs review")?;
-        crate::visual_review::propose_recorded_attachments(
-            model,
-            self.addr,
-            schema,
-            &[
-                DocumentOption {
-                    id: "resume",
-                    description: "The fictional candidate's resume/CV PDF",
-                },
-                DocumentOption {
-                    id: "cover_letter",
-                    description: "The fictional candidate's cover letter PDF",
-                },
-            ],
-        )
+        crate::visual_review::propose_recorded_attachments(model, self.addr, schema, documents)
     }
 
     fn new(
@@ -751,6 +739,8 @@ struct Rehearsal {
     conditionals: usize,
     profile: Result<Value, String>,
     candidate_metadata: Value,
+    candidate_documents: Vec<crate::rehearsal_candidate::SnapshotDocument>,
+    candidate_selected: bool,
     attachment_plans: Vec<Value>,
     fact_plans: Vec<Value>,
     public_research: bool,
@@ -768,6 +758,11 @@ impl Rehearsal {
     ) -> Self {
         let vision = RehearsalVision::new(addr, choice, guard);
         let candidate_metadata = candidate.as_ref().map(|(snapshot,binding)|snapshot.metadata(binding)).unwrap_or_else(||json!({"scope":"bundled_fictional_contact_profile","profile_sha256":waypoint_domain::sha256_hex(include_bytes!("../data/rehearsal-profile.json")),"documents":"bundled_fictional_pdfs"}));
+        let candidate_selected = candidate.is_some();
+        let candidate_documents = candidate
+            .as_ref()
+            .map(|(snapshot, _)| snapshot.documents.clone())
+            .unwrap_or_default();
         let profile = match candidate {
             Some((snapshot, _)) => Ok(snapshot.contacts),
             None => serde_json::from_str(include_str!("../data/rehearsal-profile.json"))
@@ -785,6 +780,8 @@ impl Rehearsal {
             conditionals: 0,
             profile,
             candidate_metadata,
+            candidate_documents,
+            candidate_selected,
             attachment_plans: Vec::new(),
             fact_plans: Vec::new(),
             public_research,
@@ -858,20 +855,53 @@ impl Rehearsal {
             .iter()
             .any(|field| field.field_type == FormFieldType::File)
         {
-            let plan = if self.candidate_metadata["scope"] == "saved_candidate_contacts" {
-                Err("Candidate documents have not been selected; demonstration files will not be attached".into())
+            let descriptions: Vec<_> = self
+                .candidate_documents
+                .iter()
+                .map(|doc| doc.description())
+                .collect();
+            let documents: Vec<_> = if self.candidate_selected {
+                self.candidate_documents
+                    .iter()
+                    .zip(&descriptions)
+                    .map(
+                        |(doc, description)| crate::attachment_mapping::DocumentOption {
+                            id: &doc.id,
+                            description,
+                        },
+                    )
+                    .collect()
             } else {
-                self.vision.plan_attachments(&form.schema)
+                vec![
+                    crate::attachment_mapping::DocumentOption {
+                        id: "resume",
+                        description: "The fictional candidate's resume/CV PDF",
+                    },
+                    crate::attachment_mapping::DocumentOption {
+                        id: "cover_letter",
+                        description: "The fictional candidate's cover letter PDF",
+                    },
+                ]
             };
+            let plan = self.vision.plan_attachments(&form.schema, &documents);
             match plan {
                 Ok(plan) => {
                     self.attachment_plans
                         .push(json!({"view":view,"status":"proposed","decisions":plan.decisions}));
                     for decision in plan.decisions {
-                        let name = match decision.document_id.as_deref() {
-                            Some("resume") => Some(SAMPLE_RESUME),
-                            Some("cover_letter") => Some(SAMPLE_COVER),
-                            _ => None,
+                        let name = if self.candidate_selected {
+                            self.candidate_documents
+                                .iter()
+                                .find(|doc| {
+                                    Some(doc.id.as_str()) == decision.document_id.as_deref()
+                                })
+                                .map(|doc| doc.filename.as_str())
+                        } else {
+                            match decision.document_id.as_deref() {
+                                Some("resume") => Some(SAMPLE_RESUME),
+                                Some("cover_letter") => Some(SAMPLE_COVER),
+                                _ => None,
+                            }
                         };
                         if let Some(name) = name {
                             attachments.insert(decision.selector, name);
@@ -899,7 +929,8 @@ impl Rehearsal {
             }
             if field.sensitive
                 || crate::suggestions::credential_autocomplete(field)
-                || review_selectors.contains(&field.selector)
+                || (field.field_type != FormFieldType::File
+                    && review_selectors.contains(&field.selector))
             {
                 continue;
             }
@@ -935,6 +966,13 @@ impl Rehearsal {
             if field.field_type != FormFieldType::File {
                 result["candidate_source"] = json!({"scope":self.candidate_metadata["scope"],
                     "profile_sha256":profile_sha,"snapshot_sha256":self.candidate_metadata["snapshot_sha256"],"schema_sha256":schema_sha});
+            }
+            if field.field_type == FormFieldType::File && self.candidate_selected {
+                let document = self
+                    .candidate_documents
+                    .iter()
+                    .find(|doc| doc.filename == value)?;
+                result["candidate_document"] = json!({"snapshot_sha256":self.candidate_metadata["snapshot_sha256"],"document":document,"schema_sha256":schema_sha});
             }
             let mut target_refused = false;
             let mut witness = None;
@@ -1085,15 +1123,23 @@ impl Rehearsal {
                     self.fields[index]["intended_value"] = json!(capture.value());
                     self.fields[index]["value_comparison"] = json!(capture.value_comparison());
                     if matches!(capture.kind(), waypoint_browser::RecordedFieldKind::File) {
-                        let Some(bytes) = sample_attachment_bytes(capture.value()) else {
+                        let sha256 = if self.candidate_selected {
+                            self.candidate_documents
+                                .iter()
+                                .find(|doc| doc.filename == capture.value())
+                                .map(|doc| doc.sha256.clone())
+                        } else {
+                            sample_attachment_bytes(capture.value())
+                                .map(waypoint_domain::sha256_hex)
+                        };
+                        let Some(sha256) = sha256 else {
                             self.fields[index]["status"] = json!("changed_after_entry");
                             self.fields[index]["native_verified"] = json!(false);
                             self.halted = true;
                             continue;
                         };
-                        self.fields[index]["attachment"] = json!({
-                            "name":capture.value(), "sha256":waypoint_domain::sha256_hex(bytes),
-                        });
+                        self.fields[index]["attachment"] =
+                            json!({"name":capture.value(), "sha256":sha256});
                     }
                     self.captures.push((index, capture, image_saved));
                 } else {
@@ -1130,7 +1176,7 @@ impl Rehearsal {
                 return None;
             }
         };
-        let mut record = json!({"view":view,"status":"needs_review","scope":if self.candidate_metadata["scope"]=="saved_candidate_contacts"{"offline_saved_copy_only"}else{"fictional_saved_copy_only"},"description":dialog.description()});
+        let mut record = json!({"view":view,"status":"needs_review","scope":if self.candidate_selected{"offline_saved_copy_only"}else{"fictional_saved_copy_only"},"description":dialog.description()});
         let outcome = (|| -> Result<Option<waypoint_applications::driver::LiveForm>, String> {
             crate::check_inference_memory()?;
             let model = self
@@ -1215,7 +1261,7 @@ impl Rehearsal {
     }
 
     fn finish(self) -> Value {
-        json!({"scope":if self.candidate_metadata["scope"]=="saved_candidate_contacts"{"saved_candidate_contacts"}else{"fictional_saved_form"},"candidate_source":self.candidate_metadata,"profile_sha256":self.candidate_metadata["profile_sha256"],"profile_error":self.profile.as_ref().err(),"field_limit":REHEARSAL_LIMIT,"section_advance_limit":SECTION_ADVANCE_LIMIT,"halted":self.halted,"fields":self.fields,"fact_plans":self.fact_plans,"attachment_plans":self.attachment_plans,"sections":self.sections,"dialogs":self.dialogs,"dialog_action_limit":DIALOG_ACTION_LIMIT,"vision_model":self.vision.identity,
+        json!({"scope":if self.candidate_selected{self.candidate_metadata["scope"].as_str().unwrap_or("saved_candidate_materials")}else{"fictional_saved_form"},"candidate_source":self.candidate_metadata,"profile_sha256":self.candidate_metadata["profile_sha256"],"profile_error":self.profile.as_ref().err(),"field_limit":REHEARSAL_LIMIT,"section_advance_limit":SECTION_ADVANCE_LIMIT,"halted":self.halted,"fields":self.fields,"fact_plans":self.fact_plans,"attachment_plans":self.attachment_plans,"sections":self.sections,"dialogs":self.dialogs,"dialog_action_limit":DIALOG_ACTION_LIMIT,"vision_model":self.vision.identity,
             "conditional_replans":self.conditionals,"conditional_replan_limit":CONDITIONAL_REPLAN_LIMIT,
             "public_research_enabled":self.public_research,"public_research":self.research_notes,
             "visual_gate":{"required":true,"available":self.vision.model.is_some(),"targets":self.vision.targets}})

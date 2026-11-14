@@ -75,7 +75,7 @@ fn public_url(raw: &str, profile: &Value) -> Result<(String, String), String> {
     Ok((url.to_string(), source))
 }
 pub fn start(ws: &Workspace, job: &JobIdentityId, id: String) -> Result<(), String> {
-    start_task(ws, job, id, None, false)
+    start_task(ws, job, id, None, false, &[])
 }
 pub fn start_preview(
     ws: &Workspace,
@@ -106,8 +106,44 @@ pub fn start_preview_options(
     public_research: bool,
     use_saved_contacts: bool,
 ) -> Result<(), String> {
-    if (public_research || use_saved_contacts) && !rehearse {
-        return Err("Research and saved contacts are offline autofill rehearsal options".into());
+    start_selected_preview(
+        ws,
+        job,
+        id,
+        attempt,
+        PreviewOptions {
+            rehearse,
+            public_research,
+            use_saved_contacts,
+            documents: Vec::new(),
+        },
+    )
+}
+pub(crate) struct PreviewOptions {
+    pub(crate) rehearse: bool,
+    pub(crate) public_research: bool,
+    pub(crate) use_saved_contacts: bool,
+    pub(crate) documents: Vec<crate::rehearsal_candidate::DocumentSelection>,
+}
+pub(crate) fn start_selected_preview(
+    ws: &Workspace,
+    job: &JobIdentityId,
+    id: String,
+    attempt: &str,
+    options: PreviewOptions,
+) -> Result<(), String> {
+    let PreviewOptions {
+        rehearse,
+        public_research,
+        use_saved_contacts,
+        documents,
+    } = options;
+    crate::rehearsal_candidate::validate_selections(&documents)?;
+    if (public_research || use_saved_contacts || !documents.is_empty()) && !rehearse {
+        return Err(
+            "Research, saved contacts and selected PDFs are offline autofill rehearsal options"
+                .into(),
+        );
     }
     let directory = crate::attempt_record::attempt_directory(ws, job, attempt)?;
     start_task(
@@ -123,6 +159,7 @@ pub fn start_preview_options(
             candidate_snapshot_sha256: None,
         }),
         use_saved_contacts,
+        &documents,
     )
 }
 fn start_task(
@@ -131,6 +168,7 @@ fn start_task(
     id: String,
     mut replay: Option<crate::recorded_preview::Source>,
     use_saved_contacts: bool,
+    documents: &[crate::rehearsal_candidate::DocumentSelection],
 ) -> Result<(), String> {
     if !checked_id(&id) {
         return Err("Invalid page-copy identity".into());
@@ -212,20 +250,38 @@ fn start_task(
     .ok_or("Page copies require a saved workspace")?;
     let root = record.source_capture_directory();
     std::fs::create_dir(&root).map_err(|_| "Cannot create page-copy folder")?;
-    if use_saved_contacts {
+    if use_saved_contacts || !documents.is_empty() {
         let source = replay
             .as_mut()
             .filter(|source| source.rehearse)
             .ok_or("Saved contacts require an offline rehearsal")?;
-        let raw = raw_profile
-            .as_deref()
-            .ok_or("Add saved contact details before using this rehearsal option")?;
+        let raw = if use_saved_contacts {
+            Some(
+                raw_profile
+                    .as_deref()
+                    .ok_or("Add saved contact details before using this rehearsal option")?,
+            )
+        } else {
+            None
+        };
         let snapshots = root
             .parent()
             .ok_or("Candidate record is unavailable")?
             .join("screenshots");
-        source.candidate_snapshot_sha256 =
-            Some(crate::rehearsal_candidate::stage(&snapshots, raw)?);
+        source.candidate_snapshot_sha256 = Some(if documents.is_empty() {
+            crate::rehearsal_candidate::stage(
+                &snapshots,
+                raw.ok_or("Saved contacts were not selected")?,
+            )?
+        } else {
+            crate::rehearsal_candidate::stage_selected(
+                ws,
+                &snapshots,
+                job.as_str(),
+                raw,
+                documents,
+            )?
+        });
     }
     let scope = match &replay {
         Some(source) if source.rehearse => "recorded_autofill_rehearsal",
@@ -415,7 +471,9 @@ fn with_current_source(ws: &Workspace, mut value: Value) -> Value {
 }
 fn with_current_candidate(ws: &Workspace, mut value: Value) -> Value {
     let source = &value["result"]["preview"]["rehearsal"]["candidate_source"];
-    if source["scope"] == "saved_candidate_contacts" {
+    if source["scope"] == "saved_candidate_contacts"
+        || (source["scope"] == "saved_candidate_materials" && source["contacts_selected"] == true)
+    {
         let current = source["source_profile_sha256"]
             .as_str()
             .and_then(|expected| {

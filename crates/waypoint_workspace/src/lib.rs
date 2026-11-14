@@ -489,6 +489,13 @@ impl Workspace {
         Ok(self.store.document_content(id)?)
     }
 
+    pub fn document_info(
+        &self,
+        id: &str,
+    ) -> Result<Option<waypoint_store::documents::DocumentInfo>, WorkspaceError> {
+        Ok(self.store.document_info(id)?)
+    }
+
     pub fn add_documents_atomic(
         &self,
         documents: &[(&str, &str, &[u8], i64)],

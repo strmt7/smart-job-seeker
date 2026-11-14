@@ -97,7 +97,7 @@
   }
   function previewView(preview, el, options) {
     const section = el(options.inline ? 'div' : 'details', '', 'source-copy-result');
-    const rehearsal = ['fictional_text_only', 'fictional_saved_form', 'saved_candidate_contacts'].includes(preview?.rehearsal?.scope) ? preview.rehearsal : null;
+    const rehearsal = ['fictional_text_only', 'fictional_saved_form', 'saved_candidate_contacts', 'saved_candidate_materials'].includes(preview?.rehearsal?.scope) ? preview.rehearsal : null;
     if (!options.inline) section.append(el('summary', rehearsal ? 'Saved-page autofill rehearsal' : 'Recorded page preview'));
     if (rehearsal) {
       for (const note of (Array.isArray(rehearsal.public_research) ? rehearsal.public_research : []).slice(0, 1)) {
@@ -133,9 +133,14 @@
       }
     }
     if (rehearsal) {
-      section.append(el('p', rehearsal.scope === 'saved_candidate_contacts'
+      section.append(el('p', rehearsal.scope === 'saved_candidate_materials'
+        ? `This saved copy uses ${rehearsal.candidate_source?.contacts_selected === true ? 'your saved contact details and ' : ''}explicitly selected PDFs. Document content, layout, later steps and server validation still need review.`
+        : rehearsal.scope === 'saved_candidate_contacts'
         ? 'This saved copy uses a snapshot of your contact details. Candidate documents have not been selected. Later steps and server validation still need review.'
         : 'Rehearsal uses fictional details in the saved copy. Other fields, later steps and server validation still need review.', 'footnote'));
+      for(const doc of (Array.isArray(rehearsal.candidate_source?.documents)?rehearsal.candidate_source.documents:[]).slice(0,16)) {
+        if(typeof doc.filename==='string')section.append(el('p',`${doc.selection?.role === 'cv' ? 'CV' : doc.selection?.role === 'cover_letter' ? 'Cover letter' : 'Supporting document'} · ${doc.filename}`, 'footnote'));
+      }
       if (rehearsal.halted) section.append(el('p', 'The rehearsal stopped for review.', 'review-label'));
       if (rehearsal.visual_gate?.required && !rehearsal.visual_gate.available) {
         section.append(el('p', 'A loaded local vision model is required before autofill. Check the model settings.', 'review-label'));
@@ -364,6 +369,59 @@
     describeSelection();
     return section;
   }
+  function documentPicker(el, getDocuments) {
+    const panel=el('details','','source-document-picker'), summary=el('summary','Candidate PDFs'),
+      searchLabel=el('label','Find a saved PDF'), search=el('input'), list=el('div','','source-document-list'),
+      add=el('button','Add PDF','button-secondary'), notice=el('p','','footnote');
+    search.type='search'; search.placeholder='Search documents'; search.setAttribute('aria-label','Find a saved PDF'); searchLabel.append(search);
+    add.type='button'; const rows=[];
+    const catalog=()=>{const values=typeof getDocuments==='function'?getDocuments():[];return Array.isArray(values)?values.filter(doc=>doc&&typeof doc.id==='string'&&typeof doc.name==='string'&&/\.pdf$/i.test(doc.name)):[];};
+    function update(){
+      const documents=catalog(), query=String(search.value||'').trim().toLocaleLowerCase();
+      const matches=documents.filter(doc=>!query||doc.name.toLocaleLowerCase().includes(query));
+      notice.textContent=documents.length ? `${matches.length} matching PDFs. Each list shows up to 200 results; search to narrow it down.` : 'Save or export PDFs in Documents first. No PDFs are selected automatically.';
+      for(const row of rows){
+        const selected=row.file.value||'', options=matches.slice(0,200);
+        const pinned=documents.find(doc=>doc.id===selected);if(pinned&&!options.some(doc=>doc.id===selected))options.unshift(pinned);
+        row.file.replaceChildren();const empty=el('option','Choose a saved PDF');empty.value='';row.file.append(empty);
+        for(const doc of options){const option=el('option',doc.name);option.value=doc.id;row.file.append(option);}
+        row.file.value=pinned?selected:'';
+      }
+      add.disabled=rows.length>=16;summary.textContent=rows.length?`Candidate PDFs (${rows.length})`:'Candidate PDFs';
+      list.replaceChildren(...rows.map(row=>row.root));
+    }
+    add.addEventListener('click',()=>{
+      if(rows.length>=16)return;
+      const root=el('div','','source-document-row'), roleLabel=el('label','Purpose'), role=el('select'), fileLabel=el('label','PDF'), file=el('select'),
+        purposeLabel=el('label','Supporting document purpose'), purpose=el('input'), remove=el('button','Remove','button-secondary');
+      for(const [value,caption] of [['cv','CV / résumé'],['cover_letter','Cover letter'],['supporting','Supporting document']]){const option=el('option',caption);option.value=value;role.append(option);}
+      role.value='cv';role.setAttribute('aria-label','Document purpose');file.setAttribute('aria-label','Selected PDF');
+      purpose.type='text';purpose.maxLength=64;purpose.placeholder='For example, professional registration';purposeLabel.hidden=true;
+      roleLabel.append(role);fileLabel.append(file);purposeLabel.append(purpose);remove.type='button';root.append(roleLabel,fileLabel,purposeLabel,remove);
+      const row={root,role,file,purpose,purposeLabel};rows.push(row);
+      role.addEventListener('change',()=>{purposeLabel.hidden=role.value!=='supporting';});
+      remove.addEventListener('click',()=>{rows.splice(rows.indexOf(row),1);update();});
+      update();
+    });
+    search.addEventListener('input',update);
+    panel.append(summary,el('p','For offline rehearsal only. Selected files are copied into the application record; selection does not approve their content or layout.','footnote'),
+      searchLabel,notice,list,add,el('p','Upload names: resume.pdf, cover-letter.pdf or supporting-N.pdf. Up to 16 PDFs, 10 MiB each and 64 MiB total. With PDFs selected, contacts stay empty unless you enable saved contact details.','footnote'));
+    update();
+    return {panel,selection(){
+      const result=rows.map(row=>({document_id:row.file.value,role:row.role.value,purpose:row.role.value==='supporting'?String(row.purpose.value||'').trim():''}));
+      const ids=new Set(), roles=new Set(), documents=catalog();let total=0;
+      for(const item of result){
+        const doc=documents.find(doc=>doc.id===item.document_id);
+        if(!doc)throw Error('Choose a saved PDF for every row, or remove the empty row.');
+        if(ids.has(item.document_id))throw Error('Choose each PDF only once.');ids.add(item.document_id);
+        if(item.role!=='supporting'&&roles.has(item.role))throw Error('Choose only one CV and one cover letter.');roles.add(item.role);
+        if(item.role==='supporting'&&(!item.purpose||item.purpose.length>64||/[\u0000-\u001f\u007f]/.test(item.purpose)))throw Error('Describe the supporting document purpose in up to 64 characters.');
+        if(!Number.isSafeInteger(doc.size)||doc.size<=0||doc.size>10*1024*1024)throw Error('Each PDF must be no larger than 10 MiB.');total+=doc.size;
+      }
+      if(total>64*1024*1024)throw Error('Selected PDFs exceed the 64 MiB total limit.');
+      return result;
+    }};
+  }
   function previewAction(jobId, attemptId, dependencies) {
     const root = dependencies.element('div', '', 'source-copy-actions');
     const status = dependencies.element('span', '', 'footnote');
@@ -377,7 +435,8 @@
     const contactOption = dependencies.element('input', '', ''); contactOption.type = 'checkbox';
     contactLabel.append(contactOption, dependencies.element('span', 'Use saved contact details', ''));
     contactLabel.title = 'Use a snapshot of your saved contact profile in the offline copy. Candidate documents are not selected by this option.';
-    root.append(contactLabel, researchLabel);
+    const documents=documentPicker(dependencies.element,dependencies.documents);
+    root.append(contactLabel, documents.panel, researchLabel);
     for (const [label, rehearse] of [['Create recorded preview', false], ['Rehearse autofill', true]]) {
       const button = dependencies.element('button', label, 'button-secondary');
       button.type = 'button';
@@ -393,9 +452,10 @@
         button.disabled = true;
         status.textContent = '';
         try {
-          await start(jobId, attemptId, rehearse, rehearse && researchOption.checked, rehearse && contactOption.checked);
+          await start(jobId, attemptId, rehearse, rehearse && researchOption.checked, rehearse && contactOption.checked, rehearse ? documents.selection() : []);
           if (state.job === jobId && state.error) status.textContent = state.error;
-        } finally {
+        } catch(error) { status.textContent=error.message; }
+        finally {
           button.disabled = false;
         }
       });
@@ -403,7 +463,7 @@
     root.append(status);
     return root;
   }
-  async function start(job, attempt = null, rehearse = false, publicResearch = false, useSavedContacts = false) {
+  async function start(job, attempt = null, rehearse = false, publicResearch = false, useSavedContacts = false, selectedDocuments = []) {
     if (state.active) return;
     Object.assign(state, { task: null, job, preview: Boolean(attempt), active: true, cancelling: false, phase: 'starting', result: null, error: null });
     publish();
@@ -411,7 +471,7 @@
       const pending = await client('/api/job-source/pending', {});
       if (pending.active) { await follow(pending.task_id, pending.job_id, pending.preview === true); return; }
       const route = attempt ? '/api/job-source/preview-start' : '/api/job-source/start';
-      const value = await client(route, attempt ? { id: job, attempt_id: attempt, ...(rehearse ? { rehearse } : {}), ...(publicResearch ? { public_research: true } : {}), ...(useSavedContacts ? { use_saved_contacts: true } : {}) } : { id: job });
+      const value = await client(route, attempt ? { id: job, attempt_id: attempt, ...(rehearse ? { rehearse } : {}), ...(publicResearch ? { public_research: true } : {}), ...(useSavedContacts ? { use_saved_contacts: true } : {}), ...(selectedDocuments.length ? { selected_documents: selectedDocuments } : {}) } : { id: job });
       await follow(value.task_id, job, Boolean(attempt));
     } catch (error) {
       state.active = false;

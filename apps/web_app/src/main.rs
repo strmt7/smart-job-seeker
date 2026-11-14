@@ -3329,7 +3329,26 @@ fn serve_request(
                 let attempt = body["attempt_id"]
                     .as_str()
                     .ok_or("Missing saved page identity")?;
-                if use_saved_contacts {
+                let documents: Vec<rehearsal_candidate::DocumentSelection> =
+                    match body.get("selected_documents") {
+                        None => Vec::new(),
+                        Some(value) => serde_json::from_value(value.clone())
+                            .map_err(|_| "Invalid candidate PDF selection")?,
+                    };
+                if !documents.is_empty() {
+                    job_capture::start_selected_preview(
+                        ws,
+                        &job,
+                        id.clone(),
+                        attempt,
+                        job_capture::PreviewOptions {
+                            rehearse,
+                            public_research,
+                            use_saved_contacts,
+                            documents,
+                        },
+                    )?;
+                } else if use_saved_contacts {
                     job_capture::start_preview_options(
                         ws,
                         &job,

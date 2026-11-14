@@ -22,6 +22,7 @@ async function bounded(promise,label,ms=15000){let timer;try{return await Promis
  const page=await context.newPage();page.setDefaultTimeout(12000);page.on('pageerror',e=>evidence.errors.push(e.message));await page.goto(address);await page.waitForFunction(()=>typeof visualAutoRetryCandidates==='function');
  const served=await page.evaluate(async()=>{const response=await fetch('/app.js');return {status:response.status,body:await response.text()};});assert.equal(served.status,200);assert.equal(crypto.createHash('sha256').update(served.body).digest('hex'),digest(path.join(repo,'apps/web_app/web/app.js')),options['source-assets']?'explicit source app.js is served':'compiled app serves current UI source');
  async function captureViewport(name){
+  await page.bringToFront();await bounded(page.evaluate(async()=>{await document.fonts.ready;await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));}),'Screenshot paint');
   const session=await context.newCDPSession(page);let capture,metrics;try{metrics=await session.send('Page.getLayoutMetrics');capture=await session.send('Page.captureScreenshot',{format:'png',fromSurface:true,captureBeyondViewport:false});}finally{await session.detach();}
   const pixels=await bounded(page.evaluate(data=>new Promise((resolve,reject)=>{const image=new Image();image.onerror=()=>reject(Error('Native screenshot could not be decoded'));image.onload=()=>{if(image.width<1||image.height<1||image.width>4096||image.height>4096)return reject(Error('Native screenshot dimensions exceed the fixture budget'));const canvas=document.createElement('canvas');canvas.width=image.width;canvas.height=image.height;const context=canvas.getContext('2d');context.drawImage(image,0,0);const pixels=context.getImageData(0,0,image.width,image.height).data,colors=new Set();for(let i=0;i<pixels.length&&colors.size<4;i+=4)colors.add((pixels[i]<<16)|(pixels[i+1]<<8)|pixels[i+2]);resolve({width:image.width,height:image.height,distinct_colors_at_least:colors.size});};image.src='data:image/png;base64,'+data;}),capture.data),'Native screenshot pixels');
   assert.ok(pixels.distinct_colors_at_least>=4,'Native zoom screenshot is blank or lacks rendered content');const bytes=Buffer.from(capture.data,'base64');fs.writeFileSync(path.join(folder,name),bytes);(evidence.viewport_captures??=[]).push({name,method:'Page.captureScreenshot',fromSurface:true,captureBeyondViewport:false,clip:'omitted_native_viewport',sha256:crypto.createHash('sha256').update(bytes).digest('hex'),pixels,metrics});
@@ -50,7 +51,7 @@ async function bounded(promise,label,ms=15000){let timer;try{return await Promis
  const servedSource=await page.evaluate(async()=>{const r=await fetch('/source-copy.js');return {status:r.status,body:await r.text()};});assert.equal(servedSource.status,200);assert.equal(crypto.createHash('sha256').update(servedSource.body).digest('hex'),digest(path.join(repo,'apps/web_app/web/source-copy.js')));
  await page.evaluate(()=>{
   const host=element('section','','answer-draft');host.id='public-research-qualification';host.style.padding='20px';host.append(element('h2','Saved application page'));
-  host.append(window.WaypointSourceCopies.previewAction('fictional-job','fictional-record',{element,api:async()=>{throw Error('No request is expected in this visual fixture');}}));
+  host.append(window.WaypointSourceCopies.previewAction('fictional-job','fictional-record',{element,documents:()=>[{id:'fixture-cv',name:'Fictional candidate CV with a deliberately long descriptive filename for resizing.pdf',size:1024},{id:'fixture-letter',name:'Fictional cover letter.pdf',size:2048},{id:'fixture-cert',name:'Fictional professional registration.pdf',size:512}],api:async()=>{throw Error('No request is expected in this visual fixture');}}));
   const view=window.WaypointSourceCopies.previewView({views:[],rehearsal:{scope:'saved_candidate_contacts',halted:true,candidate_source:{scope:'saved_candidate_contacts'},public_research:[{form_actions_authorized:false,source_status:{degraded:true},result:{status:'advice_available',advice:'Check the documented input type and the page validation message before making another change.',evidence:[{url:'https://developer.mozilla.org/en-US/docs/Web/HTML/Element/input'}]}}]}},element,{inline:true});host.append(view);view.querySelector('details').open=true;document.querySelector('#workspace-pane').append(host);
  });
  const researchHost=page.locator('#public-research-qualification'),checkbox=researchHost.getByRole('checkbox',{name:'Research technical issues online'}),contacts=researchHost.getByRole('checkbox',{name:'Use saved contact details'});
@@ -62,6 +63,40 @@ async function bounded(promise,label,ms=15000){let timer;try{return await Promis
  evidence.research_styles=await researchHost.evaluate(el=>[el,el.querySelector('.source-research'),...el.querySelectorAll('.source-research>p')].map(node=>{const s=getComputedStyle(node);return {tag:node.tagName,font:s.font,display:s.display,gap:s.gap,padding:s.padding,margin:s.margin,height:node.getBoundingClientRect().height};}));
  for(const width of [320,390,768,1440,1920]){await resizeViewport({width,height:1000});assert.equal(await page.evaluate(()=>innerWidth),width);await researchHost.scrollIntoViewIfNeeded();assert.equal(await researchHost.evaluate(el=>el.scrollWidth>el.clientWidth+1||document.documentElement.scrollWidth>innerWidth+1),false,`research overflow at ${width}`);await checkbox.check();await checkbox.uncheck();await contacts.check();assert.equal(await contacts.isChecked(),true);await contacts.uncheck();evidence.cases.push(`technical research controls and advice at ${width}px`);if(width===390||width===1440)await page.screenshot({path:path.join(folder,`research-${width}.png`)});}
  for(const factor of [0.8,1,1.25,1.5,2,4]){await resizeViewport({width:1440,height:1000});await controller.evaluate(async({origin,factor})=>{const tabs=await chrome.tabs.query({url:origin+'/*'});await chrome.tabs.setZoom(tabs[0].id,factor);},{origin,factor});await page.bringToFront();await bounded(page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))),'Research zoom paint');assert.equal(await page.evaluate(()=>document.visibilityState),'visible');await checkbox.scrollIntoViewIfNeeded();await checkbox.check();assert.equal(await checkbox.isChecked(),true);await checkbox.uncheck();await contacts.check();assert.equal(await contacts.isChecked(),true);await contacts.uncheck();assert.equal(await researchHost.evaluate(el=>el.scrollWidth>el.clientWidth+1||document.documentElement.scrollWidth>innerWidth+1),false,`research overflow at zoom ${factor}`);evidence.cases.push(`technical research mouse toggle at zoom ${factor}`);if(factor===2)await captureViewport('research-zoom-2.png');}
+ // Real rendered document picker; only fictional metadata, no model calls or delivery.
+ await controller.evaluate(async({origin})=>{const tabs=await chrome.tabs.query({url:origin+'/*'});await chrome.tabs.setZoom(tabs[0].id,1);},{origin});
+ const picker=researchHost.locator('.source-document-picker');await picker.locator('summary').click();
+ const addPdf=picker.getByRole('button',{name:'Add PDF',exact:true});
+ await addPdf.click();await picker.getByLabel('Selected PDF',{exact:true}).nth(0).selectOption('fixture-cv');
+ await addPdf.click();await picker.getByLabel('Document purpose',{exact:true}).nth(1).selectOption('cover_letter');await picker.getByLabel('Selected PDF',{exact:true}).nth(1).selectOption('fixture-letter');
+ await addPdf.click();await picker.getByLabel('Document purpose',{exact:true}).nth(2).selectOption('supporting');await picker.getByLabel('Selected PDF',{exact:true}).nth(2).selectOption('fixture-cert');
+ await picker.locator('.source-document-row').nth(2).getByLabel('Supporting document purpose',{exact:true}).fill('Professional registration');
+ for(const width of [320,390,768,1440,1920]){
+  await resizeViewport({width,height:1000});await picker.scrollIntoViewIfNeeded();
+  assert.equal(await picker.evaluate(el=>el.scrollWidth>el.clientWidth+1||document.documentElement.scrollWidth>innerWidth+1),false,`PDF picker overflow at ${width}`);
+  await picker.getByRole('searchbox',{name:'Find a saved PDF'}).fill('cover');
+  assert.equal(await picker.getByLabel('Selected PDF',{exact:true}).nth(0).inputValue(),'fixture-cv');
+  await picker.getByRole('searchbox',{name:'Find a saved PDF'}).fill('');
+  evidence.cases.push(`selected candidate PDFs at ${width}px`);
+  if(width===390||width===1440)await captureViewport(`candidate-pdfs-${width}.png`);
+ }
+ // A dragged pane can be narrow at a wide viewport; test content width independently.
+ await resizeViewport({width:1440,height:1000});
+ for(const width of [240,280,360,520]){
+  await picker.evaluate((el,width)=>{el.style.boxSizing='border-box';el.style.width=width+'px';el.style.maxWidth='100%';},width);
+  assert.equal(await picker.evaluate(el=>el.scrollWidth>el.clientWidth+1),false,`PDF picker content overflow at ${width}`);
+  evidence.cases.push(`selected candidate PDFs in ${width}px pane`);
+ }
+ await picker.evaluate(el=>{el.style.width='';el.style.maxWidth='';el.style.boxSizing='';});
+ for(const factor of [0.8,1,1.25,1.5,2,4]){
+  await resizeViewport({width:1440,height:1000});await controller.evaluate(async({origin,factor})=>{const tabs=await chrome.tabs.query({url:origin+'/*'});await chrome.tabs.setZoom(tabs[0].id,factor);},{origin,factor});
+  await picker.getByRole('button',{name:'Remove',exact:true}).nth(2).scrollIntoViewIfNeeded();
+  await bounded(page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))),'PDF picker zoom paint');
+  assert.equal(await picker.evaluate(el=>el.scrollWidth>el.clientWidth+1||document.documentElement.scrollWidth>innerWidth+1),false,`PDF picker overflow at zoom ${factor}`);
+  evidence.cases.push(`selected candidate PDFs at zoom ${factor}`);
+  if(factor===2)await captureViewport('candidate-pdfs-zoom-2.png');
+ }
+ await picker.getByRole('button',{name:'Remove',exact:true}).nth(2).click();assert.equal(await picker.locator('.source-document-row').count(),2);
  assert.deepEqual(evidence.errors,[]);evidence.complete=true;console.log('Headless visual follow-up qualification passed: '+folder);
  }catch(error){evidence.error=error.stack;console.error(error);process.exitCode=1;}finally{
   try{if(context)await bounded(context.close(),'Browser context close',10000);evidence.cleanup.contextClosed=true;}catch(error){evidence.cleanup.errors.push(error.message);}

@@ -1,10 +1,23 @@
 # Known limitations register (T050)
 
+The [selected-PDF continuation](docs/g1/SELECTED_CANDIDATE_PDFS_2026-11-14.md)
+connects candidate document IDs/purposes to immutable job/hash-bound offline
+snapshots. The local12B contact+PDF case verifies 5/5 supplied fields; the PDF-only
+case still selects native CV bytes without a visual filename observation and
+stops. Final development field cases 1/2; no workflow or held-out qualification.
+Unknown inputs remain untouched. Selection/signature checks do not establish
+valid PDF parsing, candidate truth, per-page layout, ATS quality or document
+approval. All earlier native failures remain retained. Generic file-only visual
+robustness, reviewed history/facts and complete journeys are priorities. An early
+startup refusal preserves the RAM guard; later owned sessions close and the tree
+drains. Neither observations nor a clean snapshot prove sustained leak freedom.
+
 The [saved-contact continuation](docs/g1/SAVED_CONTACT_SNAPSHOTS_2026-11-14.md)
 verifies two development profiles through the compiled offline route, each with
-3/3 contact fields and an unresolved required upload left untouched. Candidate PDF
-selection, reviewed history/facts, complete journeys, final review and held-out
-coverage remain open. Its temporary fixture profile failed exact restoration
+3/3 contact fields and an unresolved required upload left untouched. At that
+checkpoint, candidate PDF selection, reviewed history/facts, complete journeys,
+final review and held-out coverage remained open; the continuation above records
+the current PDF selection scope. Its temporary fixture profile failed exact restoration
 comparison after a normal profile save; process cleanup is verified separately.
 Four anonymous attachment investigations still stop in review, despite actual
 public reads and corrected context/citation contracts. Effective structured-schema

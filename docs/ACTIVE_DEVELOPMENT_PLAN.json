@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "reviewed_on": "2026-11-14",
-  "reviewed_source": "1caae44923405973ade2567112195880a553d5cc",
+  "reviewed_source": "e94eb8e9919bd22295692456f39d1ffb4d115701",
   "goal": "Continue the existing active Smart Jobseeker product-development goal",
   "plan": "docs/COMPLETION_PLAN_2026-11-11.md",
   "assessment": "docs/REPO_STATE_REVIEW_2026-11-11.md",
@@ -47,7 +47,8 @@
         "docs/g1/VISIBLE_VIEWPORT_CAPTURE_2026-11-13.md",
         "docs/g1/CHOICE_CONTEXT_AND_RADIO_CAPTURE_2026-11-13.md",
         "docs/g1/NATIVE_FRAME_IDENTITY_2026-11-13.md",
-        "docs/g1/INLINE_FRAME_COMPLETENESS_2026-11-13.md"
+        "docs/g1/INLINE_FRAME_COMPLETENESS_2026-11-13.md",
+        "docs/g1/SELECTED_CANDIDATE_PDFS_2026-11-14.md"
       ],
       "next_action": "Prepare and qualify lazy private model/cache admission after native eligibility and efficient verified qualification-cache reuse. Retain native worker failure diagnostics and sufficient RAM-admitted aggregate job capacity measured with model/browser/helpers. Native-call interruption, cleanup latency and uncollected-session idle expiry remain open.",
       "execution_batch": "A",
@@ -107,7 +108,8 @@
         "docs/g1/STRUCTURAL_CONTROL_EVALUATION_2026-11-13.md",
         "docs/g1/FRAME_VIEWPORT_AVAILABILITY_2026-11-13.md",
         "docs/RELEASE_DIRECTION_REVIEW_2026-11-14.md",
-        "docs/g1/CONDITIONAL_FORM_CONTINUATION_2026-11-14.md"
+        "docs/g1/CONDITIONAL_FORM_CONTINUATION_2026-11-14.md",
+        "docs/g1/SELECTED_CANDIDATE_PDFS_2026-11-14.md"
       ],
       "execution_batch": "B",
       "steps": [
@@ -116,7 +118,7 @@
         "Freeze employer/layout-family held-out partition before tuning.",
         "Report field, workflow, abstention, error, elapsed and resource denominators; repeat model-sensitive promotion candidates."
       ],
-      "next_action": "Freeze complete repeated-section/final-review truth and expand varied candidate profiles/held-out layouts. Retain the unchanged conditional development2/2 run with reached unknown0/1, all five earlier failures, French6/7 and original partitions. No promotion or workflow credit from one case; preserve independent value/image/native proofs.",
+      "next_action": "Freeze complete repeated-section/final-review truth and expand varied candidate/document profiles and held-out layouts. Retain selected-PDF development field cases1/2, the earlier conditional2/2 and all failures/partitions. Native selected bytes and a matching filename alone are not visual/widget acceptance. Preserve independent value/image/native proofs and whole-workflow denominators.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "completed_scopes": [
         "Bounded corpus identity/partition/input protocol and explicit field gate; two development cases, no held-out coverage.",
@@ -270,7 +272,8 @@
         "docs/g1/CONDITIONAL_FORM_CONTINUATION_2026-11-14.md",
         "docs/g1/PUBLIC_TECHNICAL_RESEARCH_2026-11-14.md",
         "docs/g1/PUBLIC_RESEARCH_DECISIONS_2026-11-14.md",
-        "docs/g1/SAVED_CONTACT_SNAPSHOTS_2026-11-14.md"
+        "docs/g1/SAVED_CONTACT_SNAPSHOTS_2026-11-14.md",
+        "docs/g1/SELECTED_CANDIDATE_PDFS_2026-11-14.md"
       ],
       "execution_batch": "C",
       "steps": [
@@ -282,7 +285,7 @@
         "After every action, read back native state and perform local-model visual review; detect stale state and no progress.",
         "Measure the local model on the frozen corpus; provide actionable review records rather than invented answers."
       ],
-      "next_action": "Prioritize selected final candidate PDFs and reviewed history/facts in the bound offline actor, then complete varied conditional/repeated/section journeys with final native/visual review and full archives. Investigate native research schema/finalization separately on frozen technical cases; do not repeat unchanged browser stages to tune prose. Preserve independent truth, unknowns and no-send/approval gates.",
+      "next_action": "Qualify generic upload visual coverage on varied native-bound contexts, including the retained PDF-only failure; never supply expected values to observation prompts or discard prior failures. Then connect reviewed candidate facts/history and complete conditional/repeated/section journeys with final native/visual review and full archives. Selected PDF snapshots are connected: local12B contact+PDFs 5/5, PDF-only 0/2; final development field cases1/2, not whole-workflow success. Investigate native research schema/finalization independently without repeating unchanged browser stages to tune prose.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "start_requirements": [
         "The frozen schema2 known-source initial-control case and native mutation fixture admit investigation of the observed actuator failure. This does not admit broad planner promotion; that still requires the varied held-out tranche and full workflow truth.",
@@ -335,7 +338,8 @@
       ],
       "evidence": [
         "docs/g1/SAVED_CONTACT_SNAPSHOTS_2026-11-14.md",
-        "docs/g1/MULTI_SESSION_FIXTURE_READINESS_2026-11-14.md"
+        "docs/g1/MULTI_SESSION_FIXTURE_READINESS_2026-11-14.md",
+        "docs/g1/SELECTED_CANDIDATE_PDFS_2026-11-14.md"
       ],
       "execution_batch": "C",
       "steps": [
@@ -370,7 +374,9 @@
         "Every final attachment PDF; independent text and per-page visual review",
         "Factual provenance, bounded repairs, exact exported attachment hashes"
       ],
-      "evidence": [],
+      "evidence": [
+        "docs/g1/SELECTED_CANDIDATE_PDFS_2026-11-14.md"
+      ],
       "execution_batch": "D",
       "steps": [
         "Import varied private authorized and fictional PDF/DOCX/scanned/multilingual histories and templates.",

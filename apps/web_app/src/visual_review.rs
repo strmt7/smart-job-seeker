@@ -1136,7 +1136,7 @@ const CONTROL_COVERAGE_GUIDANCE: &str = " Inspect the entire image systematicall
 
 #[cfg(any(windows, test))]
 fn blind_value_coverage_prompt() -> String {
-    format!("{VALUE_TRANSCRIPTION_PROMPT}{CONTROL_COVERAGE_GUIDANCE}")
+    format!("{VALUE_TRANSCRIPTION_PROMPT}{CONTROL_COVERAGE_GUIDANCE} For a file chooser, copy the visible attached filename including its extension. A button caption or an empty-selection message is not an attached filename.")
 }
 
 #[cfg(any(windows, test))]
@@ -1452,12 +1452,18 @@ pub(crate) fn review_recorded_field(
         },
     ) {
         Ok(Ok(review)) => {
-            let Some(detail) = capture.detail_image() else {
-                return (recorded_outcome(&review), Some(review));
-            };
+            // Keep the original observation. A genuinely absent target admits
+            // one blind whole-image pass even without supplementary geometry.
+            // The shared gate still refuses mismatches, duplicate observations,
+            // exhausted coverage and contradictory overlapping observations.
+            let detail = capture.detail_image().unwrap_or(capture.image());
             finish_detail_review_with(
                 review,
-                "same_native_field_detail",
+                if capture.detail_image().is_some() {
+                    "same_native_field_detail"
+                } else {
+                    "same_immutable_image"
+                },
                 capture.associated_label_detail(),
                 || {
                     model.checked_with(
@@ -2111,6 +2117,50 @@ mod tests {
             recorded_outcome(&comparison),
             RecordedVisionOutcome::Difference
         );
+    }
+
+    #[test]
+    fn missing_upload_value_recheck_keeps_the_neighbor_and_rejects_wrong_filenames() {
+        let expected = [("Upload your resume".into(), "resume.pdf".into())];
+        let compare = |observed: &Value| {
+            compare_recorded_labels(observed, &expected, false, ValueComparison::Exact, None)
+        };
+        let first = json!({"observations":[{"label":"Country","visible_value":"France"}]});
+        let prompt = blind_value_coverage_prompt();
+        assert!(!prompt.contains("Upload your resume") && !prompt.contains("resume.pdf"));
+        assert!(prompt.contains("whole image") && prompt.contains("attached filename"));
+        for (filename, country, outcome) in [
+            ("resume.pdf", "France", RecordedVisionOutcome::Matched),
+            (
+                "cover-letter.pdf",
+                "France",
+                RecordedVisionOutcome::Difference,
+            ),
+            ("resume.pdf", "Japan", RecordedVisionOutcome::Unobserved),
+        ] {
+            let initial = compare(&first);
+            let (actual, report) = finish_coverage_review_with(
+                initial,
+                "same_immutable_image",
+                || {
+                    Ok(Ok(json!({"observations":[
+                        {"label":"Country","visible_value":country}, {"label":"Upload your resume","visible_value":filename}
+                    ]})))
+                },
+                compare,
+            );
+            assert_eq!(actual, outcome);
+            let report = report.unwrap();
+            assert_eq!(
+                report["initial_review"]["observations"],
+                first["observations"]
+            );
+            assert_eq!(report["coverage_recheck"]["attempts"], 2);
+            assert_eq!(
+                report["coverage_recheck"]["overlap_conflict"],
+                country != "France"
+            );
+        }
     }
 
     #[test]

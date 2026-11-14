@@ -1,10 +1,18 @@
 # Completion plan - 11 November 2026
 
+The [selected-PDF continuation](g1/SELECTED_CANDIDATE_PDFS_2026-11-14.md)
+connects explicit candidate PDFs and preserves contact-only compatibility. Local12B
+verifies 5/5 fields in the contact+PDF case; PDF-only still stops on visual upload
+confirmation. Final field cases 1/2, no workflow or held-out promotion. Continue
+R04 with generic native/visual upload coverage, then reviewed facts/history and
+complete journeys; retain all unknowns, failures and final acceptance gates.
+Research schema/finalization remains a separate qualification task. No release.
+
 The [saved-contact continuation](g1/SAVED_CONTACT_SNAPSHOTS_2026-11-14.md)
 connects explicit candidate contact snapshots to the offline actor. Two fictional
 profiles each verify 3/3 contact fields and leave the unresolved upload untouched.
-Candidate PDFs, reviewed history/facts, complete journeys and held-out evaluation
-remain unfinished. Public research now reaches direct documents; semantic advice
+At that earlier checkpoint candidate PDFs, reviewed history/facts, complete
+journeys and held-out evaluation remained unfinished. Public research now reaches direct documents; semantic advice
 and useful repairs still require qualification. The [active queue](ACTIVE_DEVELOPMENT_PLAN.json)
 retains all acceptance criteria, including lifecycle and installation. No release
 is authorized. Historical gate results below retain their original scope.

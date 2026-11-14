@@ -17,9 +17,51 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
 function harness(api, onFinished) {
   const timers = [], window = {};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../web/source-copy.js'), 'utf8'), { window, URL, document: { createElement: tag => new Node(tag) }, setTimeout: callback => { timers.push(callback); } });
-  return { actions: (id, attempt) => window.WaypointSourceCopies.previewAction(id, attempt, {api, element:(tag,text,style)=>new Node(tag,text,style),onFinished}), preview: (preview, options) => window.WaypointSourceCopies.previewView(preview, (tag, text, style) => new Node(tag, text, style), options), create: id => window.WaypointSourceCopies.create({ id }, { api, element: (tag, text, style) => new Node(tag, text, style), onFinished }), tick: async () => { assert(timers.length, 'Expected a scheduled status poll'); timers.shift()(); await settle(); } };
+  return { actions: (id, attempt, documents=[]) => window.WaypointSourceCopies.previewAction(id, attempt, {api, documents:()=>documents, element:(tag,text,style)=>new Node(tag,text,style),onFinished}), preview: (preview, options) => window.WaypointSourceCopies.previewView(preview, (tag, text, style) => new Node(tag, text, style), options), create: id => window.WaypointSourceCopies.create({ id }, { api, element: (tag, text, style) => new Node(tag, text, style), onFinished }), tick: async () => { assert(timers.length, 'Expected a scheduled status poll'); timers.shift()(); await settle(); } };
 }
 (async () => {
+  const pdfs=[{id:'one',name:'Candidate CV.pdf',size:1024},{id:'two',name:'Letter.pdf',size:2048},{id:'three',name:'Registration.pdf',size:512},{id:'four',name:'Template.docx',size:4096}];
+  let selectedRequest;
+  const selectionHarness=harness(async(route,body)=>{
+    if(route.endsWith('/pending'))return {active:false};
+    if(route.endsWith('/preview-start')){selectedRequest=body;return {task_id:'document-task'};}
+    if(route.endsWith('/status'))return {task_id:'document-task',job_id:'document-job',status:'complete'};
+    throw Error('Unexpected document route');
+  });
+  const picker=selectionHarness.actions('document-job','source',pdfs);
+  const add=button(picker,'Add PDF');
+  add.listeners.click();
+  const rows=find(picker,node=>node.className==='source-document-list');
+  const file=row=>find(row,node=>node.attributes['aria-label']==='Selected PDF');
+  const purpose=row=>find(row,node=>node.attributes['aria-label']==='Document purpose');
+  assert.equal(file(rows.children[0]).children.length,4,'Only saved PDFs are offered');
+  assert.equal(file(rows.children[0]).value,'','No automatic candidate selection');
+  await button(picker,'Rehearse autofill').listeners.click();
+  assert.equal(selectedRequest,undefined);assert.match(status(picker).textContent,/Choose a saved PDF/);
+  file(rows.children[0]).value='one';add.listeners.click();file(rows.children[1]).value='two';
+  await button(picker,'Rehearse autofill').listeners.click();
+  assert.equal(selectedRequest,undefined);assert.match(status(picker).textContent,/only one CV/);
+  purpose(rows.children[1]).value='cover_letter';purpose(rows.children[1]).listeners.change();
+  add.listeners.click();const supporting=rows.children[2];purpose(supporting).value='supporting';purpose(supporting).listeners.change();file(supporting).value='three';
+  const description=find(supporting,node=>node.tag==='input');assert.equal(supporting.children[2].hidden,false);
+  await button(picker,'Rehearse autofill').listeners.click();assert.equal(selectedRequest,undefined);assert.match(status(picker).textContent,/Describe/);
+  description.value='Professional registration';
+  const search=find(picker,node=>node.attributes['aria-label']==='Find a saved PDF');search.value='letter';search.listeners.input();
+  assert.equal(file(rows.children[0]).value,'one','Filtering retains an explicitly selected PDF');
+  assert(file(rows.children[0]).children.some(option=>option.value==='one'));
+  await button(picker,'Rehearse autofill').listeners.click();
+  assert.deepEqual(JSON.parse(JSON.stringify(selectedRequest.selected_documents)),[
+    {document_id:'one',role:'cv',purpose:''},{document_id:'two',role:'cover_letter',purpose:''},{document_id:'three',role:'supporting',purpose:'Professional registration'}]);
+  assert.equal(selectedRequest.use_saved_contacts,undefined,'PDF-only mode never selects contacts');
+  assert.equal(Object.keys(selectedRequest).some(key=>['filename','content','path'].includes(key)),false);
+  selectedRequest=undefined;file(rows.children[1]).value='one';
+  await button(picker,'Rehearse autofill').listeners.click();assert.equal(selectedRequest,undefined);assert.match(status(picker).textContent,/only once/);
+  await button(picker,'Create recorded preview').listeners.click();assert.equal(selectedRequest.selected_documents,undefined,'Preview ignores rehearsal selection');
+  button(supporting,'Remove').listeners.click();assert.equal(rows.children.length,2);
+  const materials=harness(async()=>{}).preview({views:[],rehearsal:{scope:'saved_candidate_materials',candidate_source:{contacts_selected:false,documents:[{filename:'resume.pdf',selection:{role:'cv'}}]}}},{});
+  assert(find(materials,node=>node.textContent==='This saved copy uses explicitly selected PDFs. Document content, layout, later steps and server validation still need review.'));
+  assert(find(materials,node=>node.textContent==='CV · resume.pdf'));
+
   for (const [enabled, action, expected] of [[false,'Rehearse autofill',false],[true,'Rehearse autofill',true],[true,'Create recorded preview',false]]) {
     let request;
     const instance=harness(async(route,body)=>{

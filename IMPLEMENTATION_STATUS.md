@@ -1,3 +1,20 @@
+## Selected candidate PDFs - 2026-11-14
+
+Offline rehearsals now accept explicitly selected saved PDFs with declared
+purposes, immutable byte copies and job/hash-bound source records. Document-only
+mode keeps contacts empty. Local12B verifies 5/5 fields in the saved-contact case,
+including the CV and cover letter; the unknown certificate stays untouched.
+PDF-only still stops on visual upload confirmation: final development scope 1/2,
+not complete-workflow or held-out success. Earlier failures remain retained.
+[Evidence and remaining work](docs/g1/SELECTED_CANDIDATE_PDFS_2026-11-14.md).
+
+Windows workspace: 1,420 passed / 616 ignored; Clippy/build/fmt and 171 UI scripts
+pass. The 44-case headless rendered continuation passes after correcting a capture
+paint-timing issue; the earlier failed screenshot remains retained. Candidate document truth/layout, reviewed histories, broad native/visual
+robustness, complete journeys and release gates remain open. The preceding
+published checkpoint e94eb8e has successful hosted CI and coverage. No release,
+real application interaction or application delivery was performed.
+
 ## Saved contacts and browser readiness - 2026-11-14
 
 Saved-page rehearsals can now use a bound snapshot of saved contact details,

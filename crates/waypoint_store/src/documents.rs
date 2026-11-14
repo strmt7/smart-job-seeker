@@ -58,6 +58,34 @@ impl Store {
         String::from_utf8(raw).map_err(conversion)
     }
 
+    pub fn document_info(&self, id: &str) -> Result<Option<DocumentInfo>, StoreError> {
+        let row: Option<(String, Vec<u8>, bool, i64, i64)> = self
+            .conn
+            .query_row(
+                "SELECT id,name,sealed,size,created_at FROM documents WHERE id=?1",
+                [id],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .optional()?;
+        row.map(|(id, name, sealed, size, created_at)| {
+            Ok(DocumentInfo {
+                id,
+                name: self.document_name(&name, sealed)?,
+                size: usize::try_from(size).map_err(conversion)?,
+                created_at,
+            })
+        })
+        .transpose()
+    }
+
     pub fn documents(&self) -> Result<Vec<DocumentInfo>, StoreError> {
         let mut stmt = self.conn.prepare("SELECT id,name,sealed,size,created_at FROM documents ORDER BY created_at DESC, id DESC")?;
         let rows = stmt.query_map([], |row| {
@@ -123,6 +151,11 @@ mod tests {
             Some(contents.to_vec())
         );
         assert_eq!(store.document_content("missing").unwrap(), None);
+        assert_eq!(
+            store.document_info("one").unwrap(),
+            Some(store.documents().unwrap().remove(0))
+        );
+        assert_eq!(store.document_info("missing").unwrap(), None);
     }
 
     #[test]
@@ -169,6 +202,10 @@ mod tests {
             b"private-content"
         );
         assert_eq!(store.documents().unwrap().len(), 2);
+        assert_eq!(
+            store.document_info("new").unwrap().unwrap().name,
+            "new-private.txt"
+        );
         assert!(store.has_sealed_material().unwrap());
     }
 }
