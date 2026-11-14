@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "reviewed_on": "2026-11-14",
-  "reviewed_source": "b09ea6455c4757aa984bc8cddf0dab9ec778bb99",
+  "reviewed_source": "6559fe5935aff01cbc91c70a0829bf6c75bf1402",
   "goal": "Continue the existing active Smart Jobseeker product-development goal",
   "plan": "docs/COMPLETION_PLAN_2026-11-11.md",
   "assessment": "docs/REPO_STATE_REVIEW_2026-11-11.md",
@@ -261,7 +261,10 @@
         "apps/web_app/src/source_research_qualification.rs",
         "apps/web_app/src/rehearsal_candidate.rs",
         "apps/web_app/src/qualification_number.rs",
-        "apps/web_app/src/rehearsal_facts.rs"
+        "apps/web_app/src/rehearsal_facts.rs",
+        "crates/waypoint_browser/src/captured_frame.rs",
+        "crates/waypoint_browser/src/recorded_number_qualification.rs",
+        "tools/form_corpus.py"
       ],
       "acceptance": [
         "Typed bounded planning using supported candidate facts",
@@ -289,7 +292,8 @@
         "docs/g1/NATIVE_FILE_LABEL_DETAILS_2026-11-14.md",
         "docs/g1/CHECKED_HISTORY_REHEARSAL_2026-11-14.md",
         "docs/g1/REVIEWED_QUALIFICATION_ANSWERS_2026-11-14.md",
-        "docs/g1/TYPED_QUALIFICATION_QUANTITIES_2026-11-14.md"
+        "docs/g1/TYPED_QUALIFICATION_QUANTITIES_2026-11-14.md",
+        "docs/g1/MIXED_MATERIALS_REHEARSAL_2026-11-14.md"
       ],
       "execution_batch": "C",
       "steps": [
@@ -301,7 +305,7 @@
         "After every action, read back native state and perform local-model visual review; detect stale state and no progress.",
         "Measure the local model on the frozen corpus; provide actionable review records rather than invented answers."
       ],
-      "next_action": "Complete two mixed contacts/PDF/history/qualification journeys, including native number controls, conditional/repeated sections and final native/visual/document acceptance. The unchanged two qualification development cases now verify4/4 answerable, unknown0/4 and zero critical entries; this is not whole-workflow or held-out promotion. Keep broader quantity formats/units/conflicts/periods visible and preserve earlier wrong-format/withheld runs. Anonymous runtime research usefulness remains unqualified.",
+      "next_action": "Implement generic review-page navigation and independent final native/visual summary verification: the mixed9-known-field case stops at Review application with no_forward_control. Profile stage-level latency (final controller643.753s, includes probes) rather than merely extending limits again. Then complete the actual UI/discovery/tailored-PDF/history/qualification journeys with conditional/repeated/custom controls and frozen representative/held-out truth. Preserve first mixed timeout and all prior failures; no workflow promotion from field passes.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "start_requirements": [
         "The frozen schema2 known-source initial-control case and native mutation fixture admit investigation of the observed actuator failure. This does not admit broad planner promotion; that still requires the varied held-out tranche and full workflow truth.",
@@ -329,9 +333,10 @@
         "2026-11-14 final checkpoint: workspace 1414 passed / 616 ignored, full fixture-only browser selection 139 passed, Clippy/build/fmt pass. UI 171 scripts and 29 rendered cases pass at recorded sources. Research prompt packing preserves source excerpts/validation while omitting rejected prose with byte accounting; source IDs/counts are bound and repair state survives invalid generations. Four retained attachment investigations remain review; no model/semantic/repair promotion. Scoped host audit has no matching processes or registrations and no shared resident models; 33,963,266,048 bytes RAM available. Exact private fixture-data restoration remains unverified.",
         "2026-11-14: checked-only history snapshots, reused question/record/value planner, separate immutable plan/entry archives, exact source-component checks and correction invalidation. Local12B2/2 development text-field cases9/9 answerable, unknown0/7; live owned-model exit after profile correction and nonmutating stale archive annotation pass. Windows1431/617ignored,172JavaScript and49rendered cases pass. No whole-workflow or held-out promotion.",
         "2026-11-14: reviewed-claim snapshot/actor/archive integration, atomic source-checked correction UI/API, facts-revision cancellation and nonmutating archive freshness. Shared wording pass now receives the question; final same-input local12B2/4 fields verified,unknown0/4,0incorrect/unverified/source mismatches;0/2fieldcases passed. Numeric/unit proof remains open. Windows1442 ordinarypassed/617ignored, focused3afterinputguard,173JS and61rendered pass; older bad-format runs retained.",
-        "2026-11-14: separate field-bound exact quantity projection preserves prose guards; full staged-pool competing-quantity veto and selected-context question review. Two source-bound local12B runs of unchanged qualification truth verify4/4 answerable, unknown0/4 and zero critical/source mismatches;2/2development fieldcases. Native/visual entry, runtime-live facts cancellation and immutable stale archive pass. Windows1448passed/617ignored, Clippy/build/fmt pass. No whole-workflow/held-out/release promotion."
+        "2026-11-14: separate field-bound exact quantity projection preserves prose guards; full staged-pool competing-quantity veto and selected-context question review. Two source-bound local12B runs of unchanged qualification truth verify4/4 answerable, unknown0/4 and zero critical/source mismatches;2/2development fieldcases. Native/visual entry, runtime-live facts cancellation and immutable stale archive pass. Windows1448passed/617ignored, Clippy/build/fmt pass. No whole-workflow/held-out/release promotion.",
+        "2026-11-14: native number entry with exact source/unit and native constraints;6contained native cases pass, schema4 independent truth keeps legacy criteria. Mixed contacts/two distinct placeholder PDFs/checked employment/qualification/native-number case verifies9/9 known,unknown0/2,zero critical/qualification-source mismatches after retained300s browser-budget failure. Bounded16entries/900s, immutable per-entry progress files9/9hashes checked; stop at no_forward_control, workflow not_qualified. Windows1448passed/618ignored, Clippy/build/fmt,31corpus tests and139fixture-onlybrowser cases pass. SetupAPI-driven, not full UI/discovery/tailoring or held-out qualification; performance remains open."
       ],
-      "open_checkpoint": "Bare-number regression now passes on two development cases with exact source/unit/subject/native-field bindings and independent question/visual checks. Native number controls, broad formats/conversions/periods, representative/held-out accuracy and mixed complete candidate journeys remain open. Current qualification field passes do not establish final attachment truth/layout/ATS or full workflow completion."
+      "open_checkpoint": "One mixed development field case now verifies9/9 known with zero unknown/critical entries, including native number and both selected PDFs. First attempt failed its browser lifetime budget and remains visible. Review application is not recognized, final workflow observation is absent, and controller time643.753s needs profiling. APIs staged inputs and PDFs are placeholders: full UI/discovery/tailoring/final document/ATS/held-out acceptance remains open. Progress snapshots preserve partial historical evidence, never final/current validity."
     },
     {
       "id": "R05",

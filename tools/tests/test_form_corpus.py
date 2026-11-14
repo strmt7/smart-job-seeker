@@ -254,4 +254,31 @@ class LogicalCorpusTests(unittest.TestCase):
         workflow['final_review']['logical']['scopes'][0]['owner_selector']='iframe:nth-child(2)'
         self.assertEqual(self.evaluate(workflow=workflow)['workflow_completion'],'not_qualified')
 
+class NumberCorpusTests(unittest.TestCase):
+    def setUp(self):
+        LogicalCorpusTests.setUp(self)
+        self.data['schema']=4
+        self.field.update(label='Years of tooling',kind='number',expected={'value':'4'})
+        self.row.update(label='Years of tooling',kind='number',native_value='4')
+
+    bind=ValueCorpusTests.bind
+    evaluate=ValueCorpusTests.evaluate
+    def test_native_number_truth_is_versioned_and_exact(self):
+        self.assertTrue(self.evaluate()['field_gate_passed'])
+        self.row['native_value']='4.0'
+        self.assertEqual(self.evaluate()['fields']['incorrect_values'],1)
+        self.row['native_value']='4'
+        self.row['kind']='text'
+        self.assertFalse(self.evaluate()['field_gate_passed'])
+        self.row['kind']='number'
+        self.data['schema']=3
+        with self.assertRaises(ValueError): self.bind()
+
+    def test_native_number_cannot_drop_structural_or_image_proof(self):
+        self.row['control'].pop('logical')
+        self.assertEqual(self.evaluate()['fields']['unbound_entry_identities'],1)
+        self.row['control']['logical']=copy.deepcopy(self.logical)
+        self.row['sha256']='0'*64
+        self.assertFalse(self.evaluate()['field_gate_passed'])
+
 if __name__=='__main__':unittest.main()

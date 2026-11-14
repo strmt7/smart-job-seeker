@@ -956,7 +956,11 @@ fn worker(request: Request) -> Result<Value, String> {
             content_root: PathBuf::new(),
             content_files: Default::default(),
             entry: "index.html".into(),
-            seconds: if source.rehearse { 300 } else { 120 },
+            seconds: if source.rehearse {
+                crate::recorded_preview::REHEARSAL_SECONDS
+            } else {
+                120
+            },
             replay_manifest: None,
             attachments: None,
         };

@@ -1,3 +1,13 @@
+## Mixed materials and native numbers — 2026-11-14
+
+The [mixed-materials continuation](docs/g1/MIXED_MATERIALS_REHEARSAL_2026-11-14.md) connects native number
+controls and immutable per-entry progress records. Its final local 12B run
+verifies 9/9 known fields with both unknowns untouched, after a retained
+browser-budget timeout. It stops at an unrecognized review control and
+takes 643.753 seconds including probes. This is API-staged field integration
+with placeholder PDFs, not full UI/discovery/tailoring, final-review,
+held-out or release acceptance. Those limits remain priorities.
+
 ## Typed qualification quantities — 2026-11-14
 
 The [typed quantity follow-up](docs/g1/TYPED_QUALIFICATION_QUANTITIES_2026-11-14.md) verifies 4/4 known answers

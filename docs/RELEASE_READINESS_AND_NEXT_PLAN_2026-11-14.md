@@ -218,3 +218,15 @@ formats, units and periods remain open. The next immediate step is phase 2: two
 complete mixed candidate journeys, including native number controls. The remaining
 phases and release assessment are unchanged. A development field pass does not
 complete R04 or establish workflow, held-out, document or release acceptance.
+
+## Mixed-field continuation
+
+The [mixed-materials checkpoint](g1/MIXED_MATERIALS_REHEARSAL_2026-11-14.md)
+now verifies 9/9 known fields across contacts, two distinct placeholder PDFs,
+checked employment and qualification answers including a native number. Unknowns
+stay untouched. The initial attempt timed out and remains retained. The final
+run stops at an unrecognized review control and still has no final-workflow
+verification; 643.753 seconds including probes also exposes a latency gap.
+Immediate work is generic review navigation, final native/visual summary checks
+and stage-level profiling, then the full UI/discovery/document journeys. This
+is preparation for phase 2, not completion of it or any release package.

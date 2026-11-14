@@ -29,6 +29,8 @@ mod frame_identity;
 mod inline_frame_qualification;
 #[cfg(all(test, windows))]
 mod logical_control_qualification;
+#[cfg(all(test, windows))]
+mod recorded_number_qualification;
 pub use captured_frame::{
     CapturedFrame, CapturedFrames, RecordedControlIdentity, RecordedFieldCapture,
     RecordedFieldKind, RecordedFieldObservation, RecordedFieldWitness, RecordedTargetCapture,

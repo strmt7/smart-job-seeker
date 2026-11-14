@@ -267,6 +267,14 @@ used by development tools and tests. Do not add WSL or Docker as product require
 
 ## Real pitfalls already hit (don't rediscover these)
 
+- Mixed materials can outlive the browser worker even when native calls and
+  inference succeed. Keep field, session and outer containment budgets coherent,
+  preserve the original timeout and retain per-entry checkpoints independently
+  of the final replay report. Those checkpoints are historical observations,
+  never present/final-review or delivery proof. Field passes do not qualify
+  navigation or whole workflows; profile observed latency before inferring a
+  model/hardware cause. See `docs/g1/MIXED_MATERIALS_REHEARSAL_2026-11-14.md`.
+
 - A top-level open does not independently prove that a cross-origin fixture's
   child form has parsed/rendered. Require an origin/source-bound owned fixture
   checkpoint and fresh native inspection, retaining the first observations and

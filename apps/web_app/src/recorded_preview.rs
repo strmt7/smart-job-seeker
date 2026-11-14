@@ -324,9 +324,11 @@ fn render_at(
 }
 
 #[cfg(windows)]
-const REHEARSAL_LIMIT: usize = 8;
-const VIEW_FIELD_LIMIT: usize = 40;
+const REHEARSAL_LIMIT: usize = 16;
+/// Shared by launch and accounting; mixed materials exceed the old 300s demo budget.
 #[cfg(windows)]
+pub(crate) const REHEARSAL_SECONDS: u64 = 900;
+const VIEW_FIELD_LIMIT: usize = 40;
 #[cfg(windows)]
 const SECTION_ADVANCE_LIMIT: usize = 2;
 #[cfg(windows)]
@@ -765,7 +767,7 @@ fn archive_candidate_answers(
     value: &Value,
 ) -> Result<Value, String> {
     use std::io::Write;
-    if !matches!(category, "history" | "facts")
+    if !matches!(category, "history" | "facts" | "progress")
         || !matches!(kind, "plan" | "entries")
         || !(1..=64).contains(&index)
     {
@@ -818,6 +820,7 @@ struct Rehearsal {
     candidate_selected: bool,
     attachment_plans: Vec<Value>,
     fact_plans: Vec<Value>,
+    progress_checkpoints: Vec<Value>,
     public_research: bool,
     research_notes: Vec<Value>,
 }
@@ -886,6 +889,7 @@ impl Rehearsal {
             candidate_selected,
             attachment_plans: Vec::new(),
             fact_plans: Vec::new(),
+            progress_checkpoints: Vec::new(),
             public_research,
             research_notes: Vec::new(),
         }
@@ -1300,7 +1304,13 @@ impl Rehearsal {
                     }
                     if driver.verify_recorded_field(&capture).is_err() {
                         result["status"] = json!("changed_after_entry");
+                        result["native_verified"] = json!(false);
                         self.halted = true;
+                    } else {
+                        result["native_verified"] = json!(true);
+                        result["native_value"] = json!(capture.observed_value());
+                        result["intended_value"] = json!(capture.value());
+                        result["value_comparison"] = json!(capture.value_comparison());
                     }
                     captures.push((index, capture, image_saved));
                 }
@@ -1366,6 +1376,25 @@ impl Rehearsal {
             result["replay_activity"] =
                 observed_replay_activity(replay_before.as_ref(), replay_after.as_ref());
             self.fields.push(result);
+            // Preserve observed entries even if a later native call or the final
+            // replay report fails. These immutable snapshots never establish
+            // current/final review, continued validity or delivery.
+            let progress = json!({"schema":1,"scope":"partial_entry_checkpoint","final_review":false,"view":view,
+                "candidate_source":self.candidate_metadata,"fields":self.fields,"halted_at_capture":self.halted});
+            match archive_candidate_answers(
+                directory,
+                "progress",
+                self.fields.len(),
+                "entries",
+                &progress,
+            ) {
+                Ok(archive) => self.progress_checkpoints.push(archive),
+                Err(error) => {
+                    self.progress_checkpoints
+                        .push(json!({"status":"needs_review","archive_error":error}));
+                    self.halted = true;
+                }
+            }
             if self.halted || continuation.is_some() {
                 break;
             }
@@ -1549,7 +1578,7 @@ impl Rehearsal {
     }
 
     fn finish(self) -> Value {
-        json!({"scope":if self.candidate_selected{self.candidate_metadata["scope"].as_str().unwrap_or("saved_candidate_materials")}else{"fictional_saved_form"},"candidate_source":self.candidate_metadata,"profile_sha256":self.candidate_metadata["profile_sha256"],"profile_error":self.profile.as_ref().err(),"field_limit":REHEARSAL_LIMIT,"section_advance_limit":SECTION_ADVANCE_LIMIT,"halted":self.halted,"fields":self.fields,"fact_plans":self.fact_plans,"history_plans":self.history_plans,"qualification_plans":self.qualification_plans,"history_error":self.history.as_ref().err(),"attachment_plans":self.attachment_plans,"sections":self.sections,"dialogs":self.dialogs,"dialog_action_limit":DIALOG_ACTION_LIMIT,"vision_model":self.vision.identity,
+        json!({"scope":if self.candidate_selected{self.candidate_metadata["scope"].as_str().unwrap_or("saved_candidate_materials")}else{"fictional_saved_form"},"candidate_source":self.candidate_metadata,"profile_sha256":self.candidate_metadata["profile_sha256"],"profile_error":self.profile.as_ref().err(),"field_limit":REHEARSAL_LIMIT,"time_limit_seconds":REHEARSAL_SECONDS,"progress_checkpoints":self.progress_checkpoints,"section_advance_limit":SECTION_ADVANCE_LIMIT,"halted":self.halted,"fields":self.fields,"fact_plans":self.fact_plans,"history_plans":self.history_plans,"qualification_plans":self.qualification_plans,"history_error":self.history.as_ref().err(),"attachment_plans":self.attachment_plans,"sections":self.sections,"dialogs":self.dialogs,"dialog_action_limit":DIALOG_ACTION_LIMIT,"vision_model":self.vision.identity,
             "conditional_replans":self.conditionals,"conditional_replan_limit":CONDITIONAL_REPLAN_LIMIT,
             "public_research_enabled":self.public_research,"public_research":self.research_notes,
             "visual_gate":{"required":true,"available":self.vision.model.is_some(),"targets":self.vision.targets}})
@@ -1640,6 +1669,7 @@ fn save_view(
             use waypoint_applications::form_mapping::FormFieldType;
             let kind = match field.field_type {
                 FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea => "text",
+                FormFieldType::Number { .. } => "number",
                 FormFieldType::Select { .. } => "select",
                 FormFieldType::Radio { .. } => "radio",
                 FormFieldType::File => "file",
@@ -1712,6 +1742,29 @@ mod tests {
         .is_err());
         assert_eq!(fs::read(&path).unwrap(), bytes);
         assert!(super::archive_history(&screenshots, 1, "entries", &value).is_ok());
+        let checkpoint = serde_json::json!({"scope":"partial_entry_checkpoint","final_review":false,"fields":[value.clone()]});
+        let progress =
+            super::archive_candidate_answers(&screenshots, "progress", 1, "entries", &checkpoint)
+                .unwrap();
+        let progress_path = folder.path().join(progress["file"].as_str().unwrap());
+        let progress_bytes = fs::read(&progress_path).unwrap();
+        assert_eq!(
+            progress["sha256"],
+            waypoint_domain::sha256_hex(&progress_bytes)
+        );
+        assert!(
+            super::archive_candidate_answers(&screenshots, "progress", 1, "entries", &value)
+                .is_err()
+        );
+        assert_eq!(fs::read(progress_path).unwrap(), progress_bytes);
+        assert!(super::archive_candidate_answers(
+            &screenshots,
+            "../progress",
+            2,
+            "entries",
+            &value
+        )
+        .is_err());
         assert!(super::archive_history(&screenshots, 2, "../outside", &value).is_err());
         assert!(super::archive_history(
             &screenshots,

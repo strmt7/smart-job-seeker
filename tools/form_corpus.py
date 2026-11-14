@@ -97,7 +97,7 @@ def logical_key(logical):
 
 
 def control_key(control, version=2):
-    required = {'origin', 'sections'} | ({'logical'} if version == 3 else {'selector'})
+    required = {'origin', 'sections'} | ({'logical'} if version >= 3 else {'selector'})
     if (not isinstance(control, dict) or not required <= set(control)
             or not set(control) <= {'origin', 'selector', 'sections', 'logical', 'logical_error'}
             or not isinstance(control['origin'], str) or not 1 <= len(control['origin']) <= 512
@@ -110,7 +110,7 @@ def control_key(control, version=2):
             or 'logical' in control and 'logical_error' in control):
         raise ValueError('Missing native control identity')
     logical = logical_key(control['logical']) if 'logical' in control else None
-    selector = logical if version == 3 else control['selector']
+    selector = logical if version >= 3 else control['selector']
     return control['origin'], selector, section_key(control['sections'])
 
 
@@ -128,7 +128,7 @@ def bind_case(path, case_id, input_manifest, profile):
         return result
     corpus = json.loads(raw, object_pairs_hook=unique_pairs)
     if (not isinstance(corpus, dict) or set(corpus) != {'schema', 'corpus_id', 'revision', 'cases'}
-            or corpus['schema'] not in [1, 2, 3] or type(corpus['schema']) is not int
+            or corpus['schema'] not in [1, 2, 3, 4] or type(corpus['schema']) is not int
             or not isinstance(corpus['corpus_id'], str) or not ID.fullmatch(corpus['corpus_id'])
             or type(corpus['revision']) is not int or corpus['revision'] < 1
             or not isinstance(corpus['cases'], list) or not 1 <= len(corpus['cases']) <= 256):
@@ -168,7 +168,7 @@ def bind_case(path, case_id, input_manifest, profile):
                     or not isinstance(field['id'], str) or not ID.fullmatch(field['id']) or field['id'] in field_ids
                     or not isinstance(field['label'], str) or not 1 <= len(field['label']) <= 300
                     or any(ord(c) < 32 for c in field['label'])
-                    or field['kind'] not in ['text', 'select', 'radio', 'file']
+                    or field['kind'] not in (['text', 'select', 'radio', 'file', 'number'] if version >= 4 else ['text', 'select', 'radio', 'file'])
                     or field['answerability'] not in ['answerable', 'unknown']):
                 raise ValueError('Invalid or duplicate expected field')
             field_ids.add(field['id'])
@@ -278,7 +278,7 @@ def evaluate_values(binding, rehearsal, admission, actual, evidence_root):
     for row in actual:
         try: keys.append(control_key(row.get('control'), binding['schema']))
         except ValueError: keys.append(None)
-    if binding['schema'] == 3:
+    if binding['schema'] >= 3:
         counts['unbound_entry_identities'] = sum(key is None and row.get('status') != 'before_entry_review_required'
                                                for key, row in zip(keys, actual))
     for field in expected:

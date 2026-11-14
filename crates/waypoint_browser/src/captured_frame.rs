@@ -48,6 +48,7 @@ pub struct CapturedFrames {
 #[serde(rename_all = "snake_case")]
 pub enum RecordedFieldKind {
     Text,
+    Number,
     Select,
     Radio,
     File,
@@ -724,6 +725,13 @@ impl CdpDriver {
             return Err(review());
         }
         let (kind, command) = match &field.field_type {
+            FormFieldType::Number { .. } => (
+                RecordedFieldKind::Number,
+                BrowserCommand::Fill {
+                    selector: selector.into(),
+                    value: PacketValue::Text(value.into()),
+                },
+            ),
             FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea => (
                 RecordedFieldKind::Text,
                 BrowserCommand::Fill {
@@ -771,6 +779,9 @@ impl CdpDriver {
             Ok(())
         };
         check_scope(self, "before the field review")?;
+        if matches!(kind, RecordedFieldKind::Number) {
+            BrowserDriver::check_numeric_candidate(self, selector, value)?;
+        }
         let backend = progressive
             .then(|| self.recorded_field_backend(selector))
             .transpose()?;
@@ -802,6 +813,9 @@ impl CdpDriver {
             file_group_label: unique_file_group_label(form, field),
             kind: match kind {
                 RecordedFieldKind::Text => "text",
+                // HTML number controls can look identical to text inputs.
+                // Native schema proves the type; vision checks the editable box.
+                RecordedFieldKind::Number => "text",
                 RecordedFieldKind::Select => "select",
                 RecordedFieldKind::Radio => "radio",
                 RecordedFieldKind::File => "file",
@@ -818,9 +832,13 @@ impl CdpDriver {
             self.verify_recorded_field(capture)?;
         }
         match kind {
-            RecordedFieldKind::Text => {
+            RecordedFieldKind::Text | RecordedFieldKind::Number => {
                 self.ensure_text_replaceable(selector, value)?;
-                BrowserDriver::check_text_candidate(self, selector, value)?;
+                if matches!(kind, RecordedFieldKind::Number) {
+                    BrowserDriver::check_numeric_candidate(self, selector, value)?;
+                } else {
+                    BrowserDriver::check_text_candidate(self, selector, value)?;
+                }
                 self.execute(&command)?;
             }
             RecordedFieldKind::Select | RecordedFieldKind::Radio => {
@@ -846,7 +864,8 @@ impl CdpDriver {
         }
         self.stop_if_non_read_request_observed(network_before)?;
         self.verify_recorded_command(&command)?;
-        let observed_value = if matches!(kind, RecordedFieldKind::Text) {
+        let observed_value = if matches!(kind, RecordedFieldKind::Text | RecordedFieldKind::Number)
+        {
             self.text_value_snapshot(selector)?.value
         } else {
             value.to_owned()
@@ -867,7 +886,7 @@ impl CdpDriver {
         };
         let (detail_image, detail_error, associated_label_detail) =
             self.recorded_detail_context(selector, kind);
-        if matches!(kind, RecordedFieldKind::Text)
+        if matches!(kind, RecordedFieldKind::Text | RecordedFieldKind::Number)
             && self.text_value_snapshot(selector)?.value != observed_value
         {
             return Err(review());
@@ -935,7 +954,10 @@ impl CdpDriver {
     ) -> (Option<String>, Option<String>, bool) {
         if matches!(
             kind,
-            RecordedFieldKind::Text | RecordedFieldKind::Select | RecordedFieldKind::File
+            RecordedFieldKind::Text
+                | RecordedFieldKind::Number
+                | RecordedFieldKind::Select
+                | RecordedFieldKind::File
         ) && self.captured_scope.is_none()
         {
             let detail = if matches!(kind, RecordedFieldKind::File) {
@@ -1055,7 +1077,10 @@ impl CdpDriver {
             driver.stop_if_non_read_request_observed(witness.network_before)
         };
         check(self)?;
-        let text = matches!(witness.kind, RecordedFieldKind::Text);
+        let text = matches!(
+            witness.kind,
+            RecordedFieldKind::Text | RecordedFieldKind::Number
+        );
         let read = |driver: &mut Self| -> Result<Option<String>, DriverError> {
             if text {
                 Ok(Some(driver.text_value_snapshot(&witness.selector)?.value))
@@ -1103,7 +1128,10 @@ impl CdpDriver {
         capture: &RecordedFieldCapture,
     ) -> Result<(), DriverError> {
         self.verify_recorded_command(&capture.command)?;
-        if matches!(capture.kind, RecordedFieldKind::Text) {
+        if matches!(
+            capture.kind,
+            RecordedFieldKind::Text | RecordedFieldKind::Number
+        ) {
             let BrowserCommand::Fill { selector, .. } = &capture.command else {
                 return Err(review());
             };

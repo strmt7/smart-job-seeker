@@ -1,0 +1,29 @@
+{
+  "source_kind": "fictional",
+  "scope": "Mixed actor integration, not public discovery or tailored-document acceptance. Nine known fields, two optional unknowns, and a disabled delivery control. Exact expected values precede inference.",
+  "profile": {
+    "first_name": "Avery",
+    "last_name": "Lane",
+    "full_name": "Avery Lane",
+    "email": "avery.lane@example.invalid",
+    "auto_assess_ai": "off",
+    "document_instructions": "Keep facts unchanged. Use concise, natural wording and follow the requested answer format."
+  },
+  "history_fixture": "candidate-history-rehearsal.json",
+  "history_case": "history-1",
+  "language": "Rust",
+  "years": "4",
+  "expected": {
+    "#name": "Avery Lane",
+    "#email": "avery.lane@example.invalid",
+    "#employer": "Fictional Northstar Engineering",
+    "#title": "Quality Engineer",
+    "#start": "2021",
+    "#language": "Rust",
+    "#years": "4"
+  },
+  "file_roles": {"#cv": "cv", "#cover": "cover_letter"},
+  "expected_kinds": {"#name": "text", "#email": "text", "#cv": "file", "#cover": "file", "#employer": "text", "#title": "text", "#start": "text", "#language": "text", "#years": "number", "#optional-pilot": "text", "#optional-drilling": "text"},
+  "unknown": ["#optional-pilot", "#optional-drilling"],
+  "documents": {"cv": "rehearsal-sample.pdf", "cover_letter": "rehearsal-cover-letter.pdf"}
+}

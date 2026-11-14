@@ -120,7 +120,7 @@ pub(crate) fn eligible(field: &FormField) -> bool {
         && !crate::suggestions::credential_autocomplete(field)
         && matches!(
             field.field_type,
-            FormFieldType::Text | FormFieldType::TextArea
+            FormFieldType::Text | FormFieldType::TextArea | FormFieldType::Number { .. }
         )
         && !field.label.trim().is_empty()
         && field.label.len() <= 1000
@@ -187,6 +187,9 @@ fn checked_answer(
     let check = &answer["evidence_check"];
     let claims = check["claims"].as_array().filter(|c| !c.is_empty());
     let typed_number = answer.get("number_projection").is_some();
+    if matches!(field.field_type, FormFieldType::Number { .. }) && !typed_number {
+        return Err("A numeric qualification field requires a checked quantity projection".into());
+    }
     if typed_number {
         if answer.get("evidence_check").is_some() {
             return Err("A quantity projection cannot replace a prose review".into());
@@ -245,7 +248,7 @@ pub(crate) fn propose(
         let mut observation = json!({"selector":field.selector});
         let result = (|| {
             let input = crate::answer_task::Inputs {
-                numeric_only: false,
+                numeric_only: matches!(field.field_type, FormFieldType::Number { .. }),
                 session_id: "offline-reviewed-qualifications".into(),
                 selector: field.selector.clone(),
                 digest: snapshot.revision.clone(),
@@ -356,6 +359,23 @@ mod tests {
             "source_sha256":waypoint_domain::sha256_hex(source.as_bytes()),"field_sha256":waypoint_domain::sha256_hex(&serde_json::to_vec(&field).unwrap())}});
         let audit = json!({"verdict":"supported","reason":"The requested quantity, subject and unit agree with this applicant fact."});
         let proposal = checked_answer(&field, &snapshot, &answer, &audit).unwrap();
+        let mut numeric = field.clone();
+        numeric.field_type = FormFieldType::Number {
+            min: Some("0".into()),
+            max: Some("50".into()),
+            step: Some("1".into()),
+        };
+        assert!(eligible(&numeric));
+        let mut numeric_answer = answer.clone();
+        numeric_answer["number_projection"]["field_sha256"] = json!(waypoint_domain::sha256_hex(
+            &serde_json::to_vec(&numeric).unwrap()
+        ));
+        assert!(checked_answer(&numeric, &snapshot, &numeric_answer, &audit).is_ok());
+        numeric_answer
+            .as_object_mut()
+            .unwrap()
+            .remove("number_projection");
+        assert!(checked_answer(&numeric, &snapshot, &numeric_answer, &audit).is_err());
         let plan = json!({"proposals":[proposal]});
         assert_eq!(
             resolve(std::slice::from_ref(&field), &snapshot, &plan)
