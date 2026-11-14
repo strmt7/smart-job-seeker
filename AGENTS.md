@@ -267,6 +267,14 @@ used by development tools and tests. Do not add WSL or Docker as product require
 
 ## Real pitfalls already hit (don't rediscover these)
 
+- A block file label can span the viewport while its rendered text and chooser
+  fit in a small region. File-only detail capture uses bounded native text-range
+  geometry, preserving existing text/select and original upload-feedback images.
+  Keep native label association, clipping/visibility/generated-content refusals,
+  before/after geometry and independent visual observations. A clearer filename
+  image does not prove document truth, widget acceptance or server validation.
+  See `docs/g1/NATIVE_FILE_LABEL_DETAILS_2026-11-14.md`.
+
 - Runtime public research exposes only currently admitted tool actions in its
   native schema; stated budgets alone did not stop a local model from repeatedly
   selecting an exhausted search. Runtime checks still apply independently.

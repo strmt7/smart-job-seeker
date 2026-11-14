@@ -1,5 +1,13 @@
 # Completion plan - 11 November 2026
 
+The [native file-detail continuation](g1/NATIVE_FILE_LABEL_DETAILS_2026-11-14.md)
+recovers PDF-only visual confirmation without replacing its original image or
+omitted observation. Four development field cases pass (11/11 answerable,
+unknown 0/13); the 16-case native detail and 139-case browser selections pass. Continue
+R04 with reviewed facts/history and complete multi-step journeys. Embedded file
+details, varied widgets, final workflow/PDF acceptance and held-out gates remain
+open. The historical failures below retain their original scope. No release.
+
 The [selected-PDF continuation](g1/SELECTED_CANDIDATE_PDFS_2026-11-14.md)
 connects explicit candidate PDFs and preserves contact-only compatibility. Local12B
 verifies 5/5 fields in the contact+PDF case; PDF-only still stops on visual upload

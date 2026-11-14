@@ -2254,6 +2254,21 @@ impl CdpDriver {
         &mut self,
         selector: &str,
     ) -> Result<(String, bool), DriverError> {
+        self.screenshot_field_detail_with_labels(selector, false)
+    }
+
+    fn screenshot_file_detail_bound(
+        &mut self,
+        selector: &str,
+    ) -> Result<(String, bool), DriverError> {
+        self.screenshot_field_detail_with_labels(selector, true)
+    }
+
+    fn screenshot_field_detail_with_labels(
+        &mut self,
+        selector: &str,
+        tight_file_labels: bool,
+    ) -> Result<(String, bool), DriverError> {
         if self.captured_scope.is_some() {
             return Err(DriverError(
                 "Embedded controls keep their existing bounded context".into(),
@@ -2262,9 +2277,13 @@ impl CdpDriver {
         let node = self
             .node_id(selector)?
             .ok_or_else(|| DriverError("Field is unavailable for detail capture".into()))?;
-        if let Some(bounds) = self.field_label_context_bounds(node)? {
+        if let Some(bounds) = self.field_label_context_bounds(node, tight_file_labels)? {
             let image = self.screenshot_bounds(&bounds, false, false, false)?;
-            if self.field_label_context_bounds(node)?.as_ref() != Some(&bounds) {
+            if self
+                .field_label_context_bounds(node, tight_file_labels)?
+                .as_ref()
+                != Some(&bounds)
+            {
                 return Err(DriverError(
                     "Field label geometry changed during capture".into(),
                 ));
@@ -2284,7 +2303,11 @@ impl CdpDriver {
             .map(|image| (image, false))
     }
 
-    fn field_label_context_bounds(&mut self, node: u64) -> Result<Option<Vec<f64>>, DriverError> {
+    fn field_label_context_bounds(
+        &mut self,
+        node: u64,
+        tight_file_labels: bool,
+    ) -> Result<Option<Vec<f64>>, DriverError> {
         let resolved = self
             .cdp
             .call("DOM.resolveNode", json!({"nodeId":node}))
@@ -2296,7 +2319,7 @@ impl CdpDriver {
         let found = self.cdp.call(
             "Runtime.callFunctionOn",
             json!({"objectId":object,
-            "functionDeclaration":include_str!("field_label_context.js"),"returnByValue":true}),
+            "functionDeclaration":include_str!("field_label_context.js"),"arguments":[{"value":tight_file_labels}],"returnByValue":true}),
         );
         let released = self
             .cdp

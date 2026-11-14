@@ -1,3 +1,19 @@
+## Native upload detail views - 2026-11-14
+
+Native file-only label/control images recover the retained PDF-only visual
+failure while preserving its byte-identical original image and initial missing
+observation. Local12B passes all four authored field cases: 11/11 answerable
+fields, with 0/13 unknown inputs entered. Distinct CV/cover bytes, exact values
+and independent image/control bindings are verified. This is development field
+evidence, not whole-workflow, held-out or document-content acceptance.
+[Method and limits](docs/g1/NATIVE_FILE_LABEL_DETAILS_2026-11-14.md).
+
+The 12-case native file detail matrix, existing four-case label matrix and full
+139-case fixture-only browser regression pass. Windows workspace: 1,420 passed /
+617 opt-in tests ignored; Clippy, debug build, formatting and JavaScript syntax
+pass. Frontend behavior and dependencies are unchanged. Reviewed histories/facts,
+complete journeys and release gates remain open. No release or application sent.
+
 ## Selected candidate PDFs - 2026-11-14
 
 Offline rehearsals now accept explicitly selected saved PDFs with declared

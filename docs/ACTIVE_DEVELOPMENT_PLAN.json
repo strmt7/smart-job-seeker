@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "reviewed_on": "2026-11-14",
-  "reviewed_source": "e94eb8e9919bd22295692456f39d1ffb4d115701",
+  "reviewed_source": "42704c9d787caafba02a5ad46fc00fbfc21b8246",
   "goal": "Continue the existing active Smart Jobseeker product-development goal",
   "plan": "docs/COMPLETION_PLAN_2026-11-11.md",
   "assessment": "docs/REPO_STATE_REVIEW_2026-11-11.md",
@@ -48,7 +48,8 @@
         "docs/g1/CHOICE_CONTEXT_AND_RADIO_CAPTURE_2026-11-13.md",
         "docs/g1/NATIVE_FRAME_IDENTITY_2026-11-13.md",
         "docs/g1/INLINE_FRAME_COMPLETENESS_2026-11-13.md",
-        "docs/g1/SELECTED_CANDIDATE_PDFS_2026-11-14.md"
+        "docs/g1/SELECTED_CANDIDATE_PDFS_2026-11-14.md",
+        "docs/g1/NATIVE_FILE_LABEL_DETAILS_2026-11-14.md"
       ],
       "next_action": "Prepare and qualify lazy private model/cache admission after native eligibility and efficient verified qualification-cache reuse. Retain native worker failure diagnostics and sufficient RAM-admitted aggregate job capacity measured with model/browser/helpers. Native-call interruption, cleanup latency and uncollected-session idle expiry remain open.",
       "execution_batch": "A",
@@ -109,7 +110,8 @@
         "docs/g1/FRAME_VIEWPORT_AVAILABILITY_2026-11-13.md",
         "docs/RELEASE_DIRECTION_REVIEW_2026-11-14.md",
         "docs/g1/CONDITIONAL_FORM_CONTINUATION_2026-11-14.md",
-        "docs/g1/SELECTED_CANDIDATE_PDFS_2026-11-14.md"
+        "docs/g1/SELECTED_CANDIDATE_PDFS_2026-11-14.md",
+        "docs/g1/NATIVE_FILE_LABEL_DETAILS_2026-11-14.md"
       ],
       "execution_batch": "B",
       "steps": [
@@ -118,7 +120,7 @@
         "Freeze employer/layout-family held-out partition before tuning.",
         "Report field, workflow, abstention, error, elapsed and resource denominators; repeat model-sensitive promotion candidates."
       ],
-      "next_action": "Freeze complete repeated-section/final-review truth and expand varied candidate/document profiles and held-out layouts. Retain selected-PDF development field cases1/2, the earlier conditional2/2 and all failures/partitions. Native selected bytes and a matching filename alone are not visual/widget acceptance. Preserve independent value/image/native proofs and whole-workflow denominators.",
+      "next_action": "Freeze complete repeated-section/final-review truth and varied candidate/factual-document inputs with independent held-out partitions. Retain native file-detail development4/4 field cases (11/11 answerable, unknown0/13), earlier selected-PDF1/2 and all source-bound failures. No workflow or representative-accuracy promotion from this authored six-control corpus. Preserve exact file/value/image/native proofs.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "completed_scopes": [
         "Bounded corpus identity/partition/input protocol and explicit field gate; two development cases, no held-out coverage.",
@@ -273,7 +275,8 @@
         "docs/g1/PUBLIC_TECHNICAL_RESEARCH_2026-11-14.md",
         "docs/g1/PUBLIC_RESEARCH_DECISIONS_2026-11-14.md",
         "docs/g1/SAVED_CONTACT_SNAPSHOTS_2026-11-14.md",
-        "docs/g1/SELECTED_CANDIDATE_PDFS_2026-11-14.md"
+        "docs/g1/SELECTED_CANDIDATE_PDFS_2026-11-14.md",
+        "docs/g1/NATIVE_FILE_LABEL_DETAILS_2026-11-14.md"
       ],
       "execution_batch": "C",
       "steps": [
@@ -285,7 +288,7 @@
         "After every action, read back native state and perform local-model visual review; detect stale state and no progress.",
         "Measure the local model on the frozen corpus; provide actionable review records rather than invented answers."
       ],
-      "next_action": "Qualify generic upload visual coverage on varied native-bound contexts, including the retained PDF-only failure; never supply expected values to observation prompts or discard prior failures. Then connect reviewed candidate facts/history and complete conditional/repeated/section journeys with final native/visual review and full archives. Selected PDF snapshots are connected: local12B contact+PDFs 5/5, PDF-only 0/2; final development field cases1/2, not whole-workflow success. Investigate native research schema/finalization independently without repeating unchanged browser stages to tune prose.",
+      "next_action": "Connect reviewed candidate facts/history to the bound offline actor, with source revisions, sensitive/unknown abstention and correction invalidation; then complete varied conditional/repeated/section journeys with final native/visual workflow review and full archives. Native file-only details recover the retained PDF-only failure: four development field cases pass11/11 answerable fields with unknown0/13. Preserve the byte-identical original image, initial omission and all earlier failures. Broader widgets, embedded details and held-out workflows remain unqualified. Investigate research schema/finalization independently without repeating browser stages to tune prose.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "start_requirements": [
         "The frozen schema2 known-source initial-control case and native mutation fixture admit investigation of the observed actuator failure. This does not admit broad planner promotion; that still requires the varied held-out tranche and full workflow truth.",
@@ -339,7 +342,8 @@
       "evidence": [
         "docs/g1/SAVED_CONTACT_SNAPSHOTS_2026-11-14.md",
         "docs/g1/MULTI_SESSION_FIXTURE_READINESS_2026-11-14.md",
-        "docs/g1/SELECTED_CANDIDATE_PDFS_2026-11-14.md"
+        "docs/g1/SELECTED_CANDIDATE_PDFS_2026-11-14.md",
+        "docs/g1/NATIVE_FILE_LABEL_DETAILS_2026-11-14.md"
       ],
       "execution_batch": "C",
       "steps": [
@@ -375,7 +379,8 @@
         "Factual provenance, bounded repairs, exact exported attachment hashes"
       ],
       "evidence": [
-        "docs/g1/SELECTED_CANDIDATE_PDFS_2026-11-14.md"
+        "docs/g1/SELECTED_CANDIDATE_PDFS_2026-11-14.md",
+        "docs/g1/NATIVE_FILE_LABEL_DETAILS_2026-11-14.md"
       ],
       "execution_batch": "D",
       "steps": [

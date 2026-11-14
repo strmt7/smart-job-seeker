@@ -933,10 +933,17 @@ impl CdpDriver {
         selector: &str,
         kind: RecordedFieldKind,
     ) -> (Option<String>, Option<String>, bool) {
-        if matches!(kind, RecordedFieldKind::Text | RecordedFieldKind::Select)
-            && self.captured_scope.is_none()
+        if matches!(
+            kind,
+            RecordedFieldKind::Text | RecordedFieldKind::Select | RecordedFieldKind::File
+        ) && self.captured_scope.is_none()
         {
-            match self.screenshot_field_detail_bound(selector) {
+            let detail = if matches!(kind, RecordedFieldKind::File) {
+                self.screenshot_file_detail_bound(selector)
+            } else {
+                self.screenshot_field_detail_bound(selector)
+            };
+            match detail {
                 Ok((image, bound)) => (Some(image), None, bound),
                 Err(error) => (None, Some(error.to_string()), false),
             }
@@ -1844,6 +1851,73 @@ fn recorded_field_crop(
 mod tests {
     use super::*;
     use waypoint_applications::form_mapping::FormSchema;
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "explicit contained engine; native file-label detail images and refusal matrix"]
+    fn native_label_detail_file_context_bounds_and_refusals() {
+        use waypoint_applications::driver::BrowserDriver;
+        let (template, folder, python) =
+            crate::capture_session::qualification::qualification_config();
+        let mut cases = Vec::new();
+        for (name, markup, css, allowed) in [
+            ("wide", "<label for=upload>Upload your resume</label><input id=upload type=file>", "", true),
+            ("wrapped", "<label>Upload your resume<input id=upload type=file></label>", "", true),
+            ("referenced", "<div id=caption>Upload your resume</div><input id=upload type=file aria-labelledby=caption>", "", true),
+            ("multiline", "<label for=upload>Professional registration certificate with additional details</label><input id=upload type=file>", "label{width:190px}", true),
+            ("unicode", "<label for=upload><span>Curriculum vitæ</span> — <span>Pièces jointes</span></label><input id=upload type=file>", "", true),
+            ("hidden", "<label for=upload>Upload your resume</label><input id=upload type=file>", "label{visibility:hidden}", false),
+            ("clipped", "<div class=clip><label for=upload>Upload your resume</label></div><input id=upload type=file>", ".clip{width:30px;overflow:hidden}", false),
+            ("distant", "<label for=upload>Upload your resume</label><input id=upload type=file>", "label{margin-left:800px}", false),
+            ("generated", "<label for=upload>Upload your resume</label><input id=upload type=file>", "label::before{content:'Hidden from text ranges: '}", false),
+            ("hidden-child", "<label for=upload>Resume <span>qualification</span></label><input id=upload type=file>", "span{opacity:0}", false),
+            ("duplicate-ref", "<div id=caption>Upload your resume</div><input id=upload type=file aria-labelledby='caption caption'>", "", false),
+            ("wrong-type", "<label for=upload>Upload your resume</label><input id=upload type=text>", "", false),
+        ] {
+            let entry = "https://fixture.invalid/file-label-context";
+            let html = format!("<!doctype html><meta charset=utf-8><link rel=icon href=data:,><style>body{{font:18px Arial;margin:24px}}label,#caption{{display:block;margin:12px 0 4px}}input{{font:18px Arial;width:340px;padding:8px}}{css}</style><label for=neighbor>Country</label><select id=neighbor><option>Choose</option></select>{markup}");
+            let wire = format!("HTTP/1.1 200 Fictional\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\n\r\n{html}", html.len());
+            let response = waypoint_net::read_asset_response(&mut std::io::Cursor::new(wire.into_bytes()), "GET", 1024*1024).unwrap();
+            let mut builder = crate::rehearsal_capture::SnapshotBuilder::start(&folder.join(format!("file-{name}")), entry).unwrap();
+            builder.add(entry,response).unwrap();let snapshot=builder.finish().unwrap();
+            let mut config=template.clone();config.schema=2;config.content_root=snapshot.root;config.content_files=snapshot.files;config.entry=snapshot.entry;config.replay_manifest=Some(snapshot.manifest);
+            let (mut driver,ready)=CdpDriver::launch_rehearsal(&python,config).unwrap();
+            assert!(ready.appcontainer && ready.capabilities==0);
+            let result=(|| -> Result<Value,DriverError> {
+                let before=driver.open(entry)?;
+                let original=driver.screenshot_field_feedback("#upload")?;
+                let (image,error,associated)=driver.recorded_detail_context("#upload",crate::RecordedFieldKind::File);
+                if driver.inspect_current()? != before { return Err(DriverError("Read-only detail capture changed the form".into())); }
+                let repeated=driver.screenshot_field_feedback("#upload")?;
+                if original.get(..44) != repeated.get(..44) { return Err(DriverError("Primary context geometry changed".into())); }
+                if allowed {
+                    let image=image.ok_or_else(||DriverError(format!("File detail missing: {error:?}")))?;
+                    if !associated {return Err(DriverError("File label association was not bound".into()));}
+                    let node=driver.node_id("#upload")?.ok_or_else(||DriverError("File input disappeared".into()))?;
+                    let bounds=driver.field_label_context_bounds(node,true)?.ok_or_else(||DriverError("File label context disappeared".into()))?;
+                    let (width,height)=(bounds[2]-bounds[0],bounds[5]-bounds[1]);
+                    if !(340.0..=720.0).contains(&width) || !(40.0..=400.0).contains(&height) {return Err(DriverError("File-only bounds exceed their complete context budget".into()));}
+                    crate::rehearsal_capture::write_new(&folder,&format!("file-{name}.base64.private.txt"),image.as_bytes()).map_err(DriverError)?;
+                    if name=="wide" && driver.screenshot_field_detail_bound("#upload").is_ok() {return Err(DriverError("Wide-label fixture failed to exceed the old element-box budget".into()));}
+                    Ok(json!({"width":width,"height":height,"associated":associated,"image_sha256":waypoint_domain::sha256_hex(image.as_bytes())}))
+                } else if image.is_none() && error.is_some() && !associated {
+                    Ok(json!({"refused":true,"reason":error}))
+                } else {Err(DriverError("Incomplete/wrong-type file label context was accepted".into()))}
+            })();
+            let closed=driver.execute(&waypoint_applications::form_mapping::BrowserCommand::Close).is_ok();
+            cases.push(json!({"case":name,"allowed":allowed,"result":result.as_ref().map_err(|error|error.to_string()),"closed":closed}));
+            if result.is_err() || !closed {break;}
+        }
+        crate::rehearsal_capture::write_new(
+            &folder,
+            "file-label-context-cases.private.json",
+            &serde_json::to_vec_pretty(&cases).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(cases.len(), 12);
+        assert!(cases
+            .iter()
+            .all(|case| case["closed"] == true && case["result"].get("Ok").is_some()));
+    }
 
     #[test]
     fn file_group_labels_require_explicit_unique_native_file_context() {

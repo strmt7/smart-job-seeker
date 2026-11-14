@@ -1,10 +1,19 @@
 # Known limitations register (T050)
 
+The [native file-detail continuation](docs/g1/NATIVE_FILE_LABEL_DETAILS_2026-11-14.md)
+recovers the earlier PDF-only visual failure with separate native-bound images.
+Four authored development field cases pass (11/11 answerable fields, unknown
+0/13), preserving the original image and initial omission. That does not qualify
+complete workflows, arbitrary widgets, embedded file detail, representative
+held-out accuracy, document truth/layout/ATS acceptance or release readiness.
+Reviewed facts/history and final native/visual workflow review remain priorities.
+All earlier failed cases and their original denominators remain retained.
+
 The [selected-PDF continuation](docs/g1/SELECTED_CANDIDATE_PDFS_2026-11-14.md)
 connects candidate document IDs/purposes to immutable job/hash-bound offline
 snapshots. The local12B contact+PDF case verifies 5/5 supplied fields; the PDF-only
-case still selects native CV bytes without a visual filename observation and
-stops. Final development field cases 1/2; no workflow or held-out qualification.
+case at that checkpoint selects native CV bytes without a visual filename
+observation and stops. That earlier development scope is 1/2; no workflow or held-out qualification.
 Unknown inputs remain untouched. Selection/signature checks do not establish
 valid PDF parsing, candidate truth, per-page layout, ATS quality or document
 approval. All earlier native failures remain retained. Generic file-only visual
