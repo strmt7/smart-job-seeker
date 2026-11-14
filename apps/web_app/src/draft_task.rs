@@ -795,22 +795,24 @@ fn validate(value: &Value, facts: &[String]) -> Result<Value, String> {
     Ok(value.clone())
 }
 
+/// Unit identities shared by prose checks and field-specific quantity proofs.
+pub(crate) fn numeric_unit(word: &str) -> &'static str {
+    match word {
+        "percent" | "percentage" => "percent",
+        "second" | "seconds" | "sec" | "secs" => "second",
+        "minute" | "minutes" | "min" | "mins" => "minute",
+        "hour" | "hours" | "hr" | "hrs" => "hour",
+        "day" | "days" => "day",
+        "week" | "weeks" => "week",
+        "month" | "months" => "month",
+        "year" | "years" | "yr" | "yrs" => "year",
+        _ => "other",
+    }
+}
+
 /// Extract ASCII numeric literals and common English written durations with
 /// a small set of unit distinctions. This is not semantic verification.
-fn numeric_literals(text: &str) -> Vec<(String, &'static str)> {
-    fn unit(word: &str) -> &'static str {
-        match word {
-            "percent" | "percentage" => "percent",
-            "second" | "seconds" | "sec" | "secs" => "second",
-            "minute" | "minutes" | "min" | "mins" => "minute",
-            "hour" | "hours" | "hr" | "hrs" => "hour",
-            "day" | "days" => "day",
-            "week" | "weeks" => "week",
-            "month" | "months" => "month",
-            "year" | "years" | "yr" | "yrs" => "year",
-            _ => "other",
-        }
-    }
+pub(crate) fn numeric_literals(text: &str) -> Vec<(String, &'static str)> {
     let bytes = text.as_bytes();
     let mut out = Vec::new();
     let mut index = 0;
@@ -846,7 +848,7 @@ fn numeric_literals(text: &str) -> Vec<(String, &'static str)> {
         let unit = if suffix.starts_with('%') {
             "percent"
         } else {
-            unit(&word)
+            numeric_unit(&word)
         };
         out.push((text[start..index].to_owned(), unit));
     }
@@ -893,7 +895,7 @@ fn numeric_literals(text: &str) -> Vec<(String, &'static str)> {
                 .to_ascii_lowercase();
             if let Some((number, suffix)) = word.rsplit_once('-') {
                 if matches!(
-                    unit(suffix),
+                    numeric_unit(suffix),
                     "second" | "minute" | "hour" | "day" | "week" | "month" | "year"
                 ) {
                     return vec![number.to_owned(), suffix.to_owned()];
@@ -903,7 +905,7 @@ fn numeric_literals(text: &str) -> Vec<(String, &'static str)> {
         })
         .collect();
     for (position, pair) in words.windows(2).enumerate() {
-        let kind = unit(&pair[1]);
+        let kind = numeric_unit(&pair[1]);
         if !matches!(
             kind,
             "second" | "minute" | "hour" | "day" | "week" | "month" | "year"

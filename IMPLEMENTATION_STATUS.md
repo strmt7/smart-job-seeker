@@ -1,3 +1,14 @@
+## Typed qualification quantities — 2026-11-14
+
+The [typed quantity follow-up](docs/g1/TYPED_QUALIFICATION_QUANTITIES_2026-11-14.md) verifies 4/4 known answers
+and leaves 0/4 unknowns entered on the unchanged two development cases.
+This recovers the earlier numeric abstentions described below; those results
+remain historical evidence. Prose checks stay unchanged. Native number
+controls, broader quantity formats/units, complete mixed journeys and
+held-out/document/installation qualification remain open; no release
+readiness is claimed. Windows workspace: 1,448 passed / 617 ignored, with
+Clippy/build/fmt passing. Current hosted checks have not run for this source.
+
 ## Reviewed qualification answers and corrections — 2026-11-14
 
 Reviewed qualification snapshots now reach the offline actor with source IDs,

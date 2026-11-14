@@ -95,6 +95,7 @@ mod pdf_transcribe;
 mod private_inference;
 #[cfg(windows)]
 mod public_document;
+mod qualification_number;
 mod recorded_preview;
 mod rehearsal_candidate;
 mod rehearsal_facts;

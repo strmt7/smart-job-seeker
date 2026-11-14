@@ -1,5 +1,14 @@
 # Known limitations register (T050)
 
+The [typed quantity follow-up](docs/g1/TYPED_QUALIFICATION_QUANTITIES_2026-11-14.md) verifies 4/4 known answers
+and leaves 0/4 unknowns entered on the unchanged two development cases.
+This recovers the earlier numeric abstentions described below; those results
+remain historical evidence. Prose checks stay unchanged. Native number
+controls, broader quantity formats/units, complete mixed journeys and
+held-out/document/installation qualification remain open; no release
+readiness is claimed. Windows workspace: 1,448 passed / 617 ignored, with
+Clippy/build/fmt passing. Current hosted checks have not run for this source.
+
 The [qualification/correction checkpoint](docs/g1/REVIEWED_QUALIFICATION_ANSWERS_2026-11-14.md)
 connects reviewed facts and repairs a question-format loss in the wording pass.
 Final local 12B results are 2/4 answerable fields, unknown entries 0/4, and zero incorrect/unverified/source

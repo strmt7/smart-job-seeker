@@ -207,3 +207,14 @@ CodeQL automatically marks alert #12 fixed after this checkpoint's stronger URL
 assertions; its native state is fixed with no dismissal, and the open-code-scanning
 inventory is zero. No finding state was changed manually. This does not establish
 the security state of uninventoried providers or make the product release-ready.
+
+## Typed quantity continuation
+
+The [typed quantity follow-up](g1/TYPED_QUALIFICATION_QUANTITIES_2026-11-14.md)
+now verifies 4/4 known answers on the unchanged two development cases, with
+unknown entries 0/4 and no critical/source mismatches in two source-bound local
+12B runs. This closes the demonstrated bare-number regression; broader numeric
+formats, units and periods remain open. The next immediate step is phase 2: two
+complete mixed candidate journeys, including native number controls. The remaining
+phases and release assessment are unchanged. A development field pass does not
+complete R04 or establish workflow, held-out, document or release acceptance.

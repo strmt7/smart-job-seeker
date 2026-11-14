@@ -18,7 +18,8 @@ verified functionality, open problems and development inefficiencies. Its
 
 The [release readiness assessment and next implementation plan](docs/RELEASE_READINESS_AND_NEXT_PLAN_2026-11-14.md)
 records the latest measured gaps and execution sequence. Reviewed qualification
-answers/corrections are connected; numeric grounding, complete journeys and
+answers/corrections are connected; exact text-field quantities now pass the
+two development cases. Broad numeric grounding, complete journeys and
 release qualification remain unfinished.
 
 The [current direction review](docs/RELEASE_DIRECTION_REVIEW_2026-11-14.md) records

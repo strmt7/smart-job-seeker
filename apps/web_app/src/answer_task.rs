@@ -113,7 +113,17 @@ pub(crate) fn generate_with_selection(
     llm: &mut dyn Inference,
     mut input: Inputs,
 ) -> Result<Value, String> {
-    generate_with_required_selection(llm, &mut input, false)
+    generate_with_required_selection(llm, &mut input, false, None)
+}
+
+/// Form-specific scalar answers retain their source/unit proof separately from
+/// prose. Ordinary answer and document numeric checks remain unchanged.
+pub(crate) fn generate_qualification_with_selection(
+    llm: &mut dyn Inference,
+    mut input: Inputs,
+    field: &waypoint_applications::form_mapping::FormField,
+) -> Result<Value, String> {
+    generate_with_required_selection(llm, &mut input, false, Some(field))
 }
 
 /// Template rewrites must retain the user-selected passage even if semantic
@@ -122,13 +132,14 @@ pub(crate) fn generate_template_with_selection(
     llm: &mut dyn Inference,
     mut input: Inputs,
 ) -> Result<Value, String> {
-    generate_with_required_selection(llm, &mut input, true)
+    generate_with_required_selection(llm, &mut input, true, None)
 }
 
 fn generate_with_required_selection(
     llm: &mut dyn Inference,
     input: &mut Inputs,
     require_first: bool,
+    field: Option<&waypoint_applications::form_mapping::FormField>,
 ) -> Result<Value, String> {
     let required = if require_first {
         Some(
@@ -211,7 +222,13 @@ fn generate_with_required_selection(
         selection["selected_passage_displaced_fact"] = json!(displaced);
         selection["template_context_omitted"] = json!(template_context_omitted);
     }
-    let mut answer = if require_first {
+    let scalar = match field {
+        Some(field) => crate::qualification_number::propose(llm, field, input)?,
+        None => None,
+    };
+    let mut answer = if let Some(scalar) = scalar {
+        scalar
+    } else if require_first {
         generate_for_context(llm, input, true)?
     } else {
         generate(llm, input)?
