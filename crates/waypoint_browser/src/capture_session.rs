@@ -21,6 +21,8 @@ use std::{
 use waypoint_net::CapturedResponse;
 use waypoint_policy::{Operation, PermissionRegistry};
 
+pub mod public_read;
+
 #[cfg(all(test, windows))]
 #[path = "capture_session_qualification.rs"]
 pub(crate) mod qualification;

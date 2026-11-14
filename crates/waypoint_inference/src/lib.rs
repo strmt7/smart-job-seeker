@@ -131,6 +131,50 @@ pub trait Inference {
 
 /* --------------------------- resource scheduling ---------------------------- */
 
+// Borrow an existing owned/guarded runtime instead of starting another model.
+impl<T: Inference + ?Sized> Inference for &mut T {
+    fn set_context_tags(&mut self, tags: &[&str]) {
+        (**self).set_context_tags(tags)
+    }
+    fn set_request_guard(
+        &mut self,
+        guard: std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync>,
+    ) {
+        (**self).set_request_guard(guard)
+    }
+    fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+        (**self).probe()
+    }
+    fn generate_structured(
+        &mut self,
+        name: &str,
+        prompt: &str,
+        max: u32,
+    ) -> Result<(serde_json::Value, UsageReport), InferenceError> {
+        (**self).generate_structured(name, prompt, max)
+    }
+    fn generate_structured_with_schema(
+        &mut self,
+        name: &str,
+        prompt: &str,
+        max: u32,
+        schema: &serde_json::Value,
+    ) -> Result<(serde_json::Value, UsageReport), InferenceError> {
+        (**self).generate_structured_with_schema(name, prompt, max, schema)
+    }
+    fn generate_advice(
+        &mut self,
+        purpose: &str,
+        prompt: &str,
+        max: u32,
+    ) -> Result<Option<(String, UsageReport)>, InferenceError> {
+        (**self).generate_advice(purpose, prompt, max)
+    }
+    fn cancel(&mut self) -> Result<(), InferenceError> {
+        (**self).cancel()
+    }
+}
+
 /// T009: bounded default concurrency per MASTER_PLAN §13.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResourceBudgets {

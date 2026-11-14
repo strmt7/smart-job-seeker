@@ -11,7 +11,7 @@
   }
   function count(value) { return Number.isSafeInteger(value) && value >= 0 ? value : null; }
   function questionPreparation(control, el, options) {
-    const root=el('div','','source-question-preparation'), open=el('button','Prepare answer','secondary');
+    const root=el('div','','source-question-preparation'), open=el('button','Prepare answer','button-secondary');
     open.type='button';root.append(open);
     const identity={id:options.jobId,attempt_id:options.attemptId,number:control.number};
     open.addEventListener('click',async()=>{
@@ -34,7 +34,7 @@
         }
         for(const draft of Array.isArray(context.drafts)?context.drafts.slice(0,8):[])showDraft(draft.answer,draft.current?'Saved draft · supporting information unchanged':'Historical draft · supporting information changed');
         if(context.drafts_partial)panel.append(el('p','More saved files may be present in this application record.','footnote'));
-        const start=el('button','Draft answer','secondary'), latest=el('div');start.type='button';panel.append(start,status,latest);
+        const start=el('button','Draft answer','button-secondary'), latest=el('div');start.type='button';panel.append(start,status,latest);
         status.textContent='Review the question above. The draft uses your reviewed qualifications and writing preferences.';
         start.addEventListener('click',async()=>{
           if(start.disabled)return;start.disabled=true;status.textContent='Preparing answer with your local model…';
@@ -91,14 +91,46 @@
       }
     }
     render();root.append(list);
-    if(outline.controls.length>12){const more=el('button',`Show all ${outline.controls.length} controls`,'secondary');more.type='button';more.setAttribute('aria-expanded','false');more.addEventListener('click',()=>{expanded=!expanded;render();more.textContent=expanded?'Show fewer controls':`Show all ${outline.controls.length} controls`;more.setAttribute('aria-expanded',String(expanded));});root.append(more);}
+    if(outline.controls.length>12){const more=el('button',`Show all ${outline.controls.length} controls`,'button-secondary');more.type='button';more.setAttribute('aria-expanded','false');more.addEventListener('click',()=>{expanded=!expanded;render();more.textContent=expanded?'Show fewer controls':`Show all ${outline.controls.length} controls`;more.setAttribute('aria-expanded',String(expanded));});root.append(more);}
     if(outline.status==='partial')root.append(el('p','Some controls, labels or question context could not be retained. Review the original page.','footnote'));
     return root;
   }
   function previewView(preview, el, options) {
     const section = el(options.inline ? 'div' : 'details', '', 'source-copy-result');
     const rehearsal = ['fictional_text_only', 'fictional_saved_form'].includes(preview?.rehearsal?.scope) ? preview.rehearsal : null;
-    if (!options.inline) section.append(el('summary', rehearsal ? 'Offline autofill rehearsal' : 'Recorded page preview'));
+    if (!options.inline) section.append(el('summary', rehearsal ? 'Saved-page autofill rehearsal' : 'Recorded page preview'));
+    if (rehearsal) {
+      for (const note of (Array.isArray(rehearsal.public_research) ? rehearsal.public_research : []).slice(0, 1)) {
+        const research = el('details', '', 'source-copy-details source-research');
+        research.append(el('summary', 'Technical research'));
+        const result = note?.result;
+        research.append(el('p', result?.status === 'advice_available' ? result.advice : 'Technical research needs review.', 'footnote'));
+        const reason = result?.reason || note?.reason;
+        if (result?.status !== 'advice_available' && typeof reason === 'string') {
+          const reasons = {
+            no_progress: 'The model could not make further progress with the available sources.',
+            research_deadline: 'The investigation reached its time limit.',
+            research_budget: 'The investigation reached its request limit.',
+            model_action_unavailable: 'The local model could not choose a supported research action.',
+            unsupported_conclusion: 'The retrieved text did not support the model’s quotations.',
+            research_context_budget: 'The investigation reached its context limit.',
+            cancelled: 'The investigation was stopped.'
+          };
+          research.append(el('p', reasons[reason] || (reason.includes('_') ? 'Details are saved in the application record.' : reason), 'footnote'));
+        }
+        research.append(el('p', 'These notes do not approve or retry any application action.', 'footnote'));
+        for (const source of (Array.isArray(result?.evidence) ? result.evidence : []).slice(0, 8)) {
+          try {
+            const url = new URL(source.url);
+            if (url.protocol !== 'https:' || url.username || url.password) continue;
+            const link = el('a', url.hostname, 'footnote');
+            link.href = url.href; link.target = '_blank'; link.rel = 'noopener noreferrer';
+            research.append(link);
+          } catch (_) { /* An invalid archive reference is not a navigation target. */ }
+        }
+        section.append(research);
+      }
+    }
     const captures = Array.isArray(preview?.views) ? preview.views.filter(view => view && ['page','frame'].includes(view.kind)).slice(0, 7) : [];
     if (!captures.length) {
       section.append(el('p', 'No view could be saved. Check this record’s screenshots and status.', 'review-label'));
@@ -119,7 +151,7 @@
     }
     label.append(select);
     const details = el('div'), imageArea = el('div');
-    const show = el('button', 'View image', 'secondary');
+    const show = el('button', 'View image', 'button-secondary');
     show.type = 'button';
     const unsupported = preview.replay?.unsupported_targets;
     const hasUnsupported = unsupported && typeof unsupported === 'object' && Object.values(unsupported).some(value => count(value) > 0);
@@ -140,7 +172,7 @@
     let revision = 0;
     function appendDetailEvidence(evidence) {
       if (typeof evidence.detail_image === 'string') {
-        const detail = el('button', 'View detail image', 'secondary');
+        const detail = el('button', 'View detail image', 'button-secondary');
         detail.type = 'button';
         detail.addEventListener('click', () => showImage({image:evidence.detail_image,sha256:evidence.detail_sha256}, detail));
         details.append(detail);
@@ -199,10 +231,10 @@
           if(typeof action.proposal?.reason==='string')details.append(el('p',`Suggested action: ${action.proposal.reason.slice(0,500)}`,'footnote'));
           if(typeof action.reason==='string')details.append(el('p',dialogReasons[action.reason]||action.reason.slice(0,500),'footnote'));
           if(action.followup_capture==='unavailable')details.append(el('p','The updated form could not be saved. Further entry stopped.','review-label'));
-          if(action.image){const button=el('button','View dialog image','secondary');button.type='button';button.addEventListener('click',()=>showImage(action,button));details.append(button);}
+          if(action.image){const button=el('button','View dialog image','button-secondary');button.type='button';button.addEventListener('click',()=>showImage(action,button));details.append(button);}
           const next=count(action.to);
           if(closed && action.followup_capture==='saved' && next!==null && next>viewNumber && next<=captures.length){
-            const button=el('button','View updated form','secondary');button.type='button';button.addEventListener('click',()=>{select.value=String(next-1);describeSelection();});details.append(button);
+            const button=el('button','View updated form','button-secondary');button.type='button';button.addEventListener('click',()=>{select.value=String(next-1);describeSelection();});details.append(button);
           }
         }
         const factPlan = Array.isArray(rehearsal.fact_plans) ? rehearsal.fact_plans.slice(0, 7).find(plan => plan?.view === viewNumber) : null;
@@ -244,7 +276,7 @@
             row.append(el('span', check.attachment.name, 'footnote'));
           }
           if (check.image) {
-            const button = el('button', 'View field image', 'secondary');
+            const button = el('button', 'View field image', 'button-secondary');
             button.type = 'button';
             button.addEventListener('click', () => showImage(check, button));
             row.append(button);
@@ -270,7 +302,7 @@
           const row = el('div', '', 'source-copy-actions');
           row.append(el('span', `${phase} \u00b7 ${target.label || 'Control'} \u00b7 ${state}`, 'footnote'));
           if (target.image) {
-            const button = el('button', 'View target image', 'secondary');
+            const button = el('button', 'View target image', 'button-secondary');
             button.type = 'button';
             button.addEventListener('click', () => showImage(target, button));
             row.append(button);
@@ -333,8 +365,14 @@
     const root = dependencies.element('div', '', 'source-copy-actions');
     const status = dependencies.element('span', '', 'footnote');
     status.setAttribute('role', 'status');
+    const researchLabel = dependencies.element('label', '', 'check-control footnote');
+    const researchOption = dependencies.element('input', '', '');
+    researchOption.type = 'checkbox';
+    researchLabel.append(researchOption, dependencies.element('span', 'Research technical issues online', ''));
+    researchLabel.title = 'Use anonymous technical context for public research after a failed check. The saved form keeps its network isolation.';
+    root.append(researchLabel);
     for (const [label, rehearse] of [['Create recorded preview', false], ['Rehearse autofill', true]]) {
-      const button = dependencies.element('button', label, 'secondary');
+      const button = dependencies.element('button', label, 'button-secondary');
       button.type = 'button';
       if (rehearse) button.title = 'Use fictional details to check supported fields in the saved copy';
       root.append(button);
@@ -348,7 +386,7 @@
         button.disabled = true;
         status.textContent = '';
         try {
-          await start(jobId, attemptId, rehearse);
+          await start(jobId, attemptId, rehearse, rehearse && researchOption.checked);
           if (state.job === jobId && state.error) status.textContent = state.error;
         } finally {
           button.disabled = false;
@@ -358,7 +396,7 @@
     root.append(status);
     return root;
   }
-  async function start(job, attempt = null, rehearse = false) {
+  async function start(job, attempt = null, rehearse = false, publicResearch = false) {
     if (state.active) return;
     Object.assign(state, { task: null, job, preview: Boolean(attempt), active: true, cancelling: false, phase: 'starting', result: null, error: null });
     publish();
@@ -366,7 +404,7 @@
       const pending = await client('/api/job-source/pending', {});
       if (pending.active) { await follow(pending.task_id, pending.job_id, pending.preview === true); return; }
       const route = attempt ? '/api/job-source/preview-start' : '/api/job-source/start';
-      const value = await client(route, attempt ? { id: job, attempt_id: attempt, ...(rehearse ? { rehearse } : {}) } : { id: job });
+      const value = await client(route, attempt ? { id: job, attempt_id: attempt, ...(rehearse ? { rehearse } : {}), ...(publicResearch ? { public_research: true } : {}) } : { id: job });
       await follow(value.task_id, job, Boolean(attempt));
     } catch (error) {
       state.active = false;
@@ -380,7 +418,7 @@
     if (value.status !== 'complete') return value.error || 'The page copy could not finish. Available files remain in application records.';
     if (value.kind === 'recorded_preview') {
       if (!value.record_saved) return 'Check the application record folder for available images.';
-      const name = value.result?.preview?.rehearsal ? 'Offline autofill rehearsal' : 'Recorded preview';
+      const name = value.result?.preview?.rehearsal ? 'Saved-page autofill rehearsal' : 'Recorded preview';
       return value.current_source === false ? `${name} saved for the earlier job link.` : `${name} saved in application records.`;
     }
     const report = value.result?.report, resources = count(report?.recorded_resources), requests = count(report?.requests);
@@ -425,7 +463,7 @@
     const root = el('section', '', 'source-copy'); root.setAttribute('aria-label', 'Saved source page');
     const title = el('h4', 'Page copy'), hint = el('p', 'Save the original page and available resources with this job’s records.', 'footnote');
     const actions = el('div', '', 'source-copy-actions'), save = el('button', 'Save page copy'), stop = el('button', 'Stop current copy');
-    save.type = stop.type = 'button'; stop.className = 'secondary';
+    save.type = stop.type = 'button'; stop.className = 'button-secondary';
     const progress = document.createElement('progress'); progress.setAttribute('aria-label', 'Page-copy stages'); progress.max=4;progress.value=0;
     const status = el('p', '', 'source-copy-status'); status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
     const details = el('details', '', 'source-copy-result'), summary = el('summary', 'Capture details'), findings = el('div');

@@ -1,8 +1,16 @@
 /* Workspace refinement: shared visual tokens and layout rhythm. */
 .source-copy { min-width: 0; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
 .source-copy h4 { margin: 0 0 6px; font-size: 14px; }
-.source-copy-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.source-copy-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
 .source-copy-actions button { margin: 0; min-height: 40px; }
+.source-copy-actions > .check-control { flex: 1 1 100%; }
+.source-research { padding: 12px; margin: 8px 0; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.source-research > summary { font: inherit; font-weight: 600; color: var(--ink); }
+.source-research > p { margin: 8px 0; }
+.source-research > p,.source-research > a { padding: 0; }
+.source-research > a { display: block; margin-top: 6px; }
+.check-control { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; cursor: pointer; }
+.check-control input[type=checkbox] { width: 16px; height: 16px; flex: 0 0 16px; margin: 0; padding: 0; }
 .source-copy progress { width: 100%; height: 6px; accent-color: var(--accent); }
 .source-copy [hidden] { display: none !important; }
 .source-copy-status,.source-copy-result { overflow-wrap: anywhere; font-size: 12px; line-height: 1.5; }

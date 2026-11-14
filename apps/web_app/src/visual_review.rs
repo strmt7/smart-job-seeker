@@ -1349,6 +1349,25 @@ pub(crate) struct RecordedFactPlan {
     pub plan: Result<crate::form_preview::FormPreview, String>,
     pub diagnostics: Value,
 }
+
+#[cfg(windows)]
+pub(crate) fn research_recorded_issue(
+    model: &mut VisionIdentityGuard,
+    addr: std::net::SocketAddr,
+    directory: &std::path::Path,
+    profile: &Value,
+    context: &str,
+) -> Result<Value, String> {
+    let guard = model.request_guard.clone();
+    let capture = crate::mapping_diagnostics::Capture::default();
+    let observer = capture.clone();
+    let mut result = with_recorded_inference(model, addr, |inference| {
+        inference.set_response_observer(move |schema, native| observer.observe(schema, native));
+        crate::form_research::run(inference, directory, profile, context, guard)
+    })?;
+    result["diagnostics"] = capture.finish();
+    Ok(result)
+}
 #[cfg(windows)]
 pub(crate) fn propose_recorded_facts(
     model: &mut VisionIdentityGuard,

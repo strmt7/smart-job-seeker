@@ -16,10 +16,32 @@ const status = root => find(root, node => node.attributes.role === 'status');
 const settle = () => new Promise(resolve => setImmediate(resolve));
 function harness(api, onFinished) {
   const timers = [], window = {};
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../web/source-copy.js'), 'utf8'), { window, document: { createElement: tag => new Node(tag) }, setTimeout: callback => { timers.push(callback); } });
-  return { preview: (preview, options) => window.WaypointSourceCopies.previewView(preview, (tag, text, style) => new Node(tag, text, style), options), create: id => window.WaypointSourceCopies.create({ id }, { api, element: (tag, text, style) => new Node(tag, text, style), onFinished }), tick: async () => { assert(timers.length, 'Expected a scheduled status poll'); timers.shift()(); await settle(); } };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../web/source-copy.js'), 'utf8'), { window, URL, document: { createElement: tag => new Node(tag) }, setTimeout: callback => { timers.push(callback); } });
+  return { actions: (id, attempt) => window.WaypointSourceCopies.previewAction(id, attempt, {api, element:(tag,text,style)=>new Node(tag,text,style),onFinished}), preview: (preview, options) => window.WaypointSourceCopies.previewView(preview, (tag, text, style) => new Node(tag, text, style), options), create: id => window.WaypointSourceCopies.create({ id }, { api, element: (tag, text, style) => new Node(tag, text, style), onFinished }), tick: async () => { assert(timers.length, 'Expected a scheduled status poll'); timers.shift()(); await settle(); } };
 }
 (async () => {
+  for (const [enabled, action, expected] of [[false,'Rehearse autofill',false],[true,'Rehearse autofill',true],[true,'Create recorded preview',false]]) {
+    let request;
+    const instance=harness(async(route,body)=>{
+      if(route.endsWith('/pending')) return {active:false};
+      if(route.endsWith('/preview-start')) {request=body;return {task_id:'research-task'};}
+      if(route.endsWith('/status')) return {task_id:'research-task',job_id:'research-job',status:'complete',attempt_id:'research-record'};
+      throw Error('Unexpected research UI route');
+    });
+    const controls=instance.actions('research-job','saved-record');
+    assert.equal(button(controls,action).className,'button-secondary');
+    find(controls,node=>node.tag==='input'&&node.type==='checkbox').checked=enabled;
+    await button(controls,action).listeners.click();
+    assert.equal(request.public_research===true,expected);
+    assert.equal(request.rehearse===true,action==='Rehearse autofill');
+  }
+  const unavailable=harness(async()=>{}).preview({views:[],rehearsal:{scope:'fictional_saved_form',public_research:[{result:{status:'needs_review',reason:'no_progress'}}]}},{});
+  assert(find(unavailable,node=>node.textContent==='The model could not make further progress with the available sources.'));
+  const researchPanel=harness(async()=>{}).preview({views:[],rehearsal:{scope:'fictional_saved_form',public_research:[{result:{status:'advice_available',advice:'Check the documented input type.',evidence:[{url:'https://docs.example.invalid/browser'},{url:'javascript:alert(1)'}]}}]}},{});
+  assert(find(researchPanel,node=>node.textContent==='Check the documented input type.'));
+  assert(find(researchPanel,node=>node.textContent==='These notes do not approve or retry any application action.'));
+  assert(find(researchPanel,node=>node.tag==='a'&&node.href==='https://docs.example.invalid/browser'&&node.rel==='noopener noreferrer'));
+  assert.equal(find(researchPanel,node=>node.tag==='a'&&node.href?.startsWith('javascript:')),undefined);
   const digest = 'a'.repeat(64);
   const preview = { views: [
     {kind:'page',label:'Page',image:'0001.png',sha256:digest,fields:[{label:'Parent name'}]},

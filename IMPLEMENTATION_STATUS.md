@@ -1,3 +1,15 @@
+## Anonymous public research runtime - 2026-11-14
+
+Saved-page rehearsals now offer an opt-in local-model search/read tool loop,
+separate from candidate browser capabilities, with native response archives and
+independent URL/privacy/source/robots controls. The model actually retrieves MDN
+and W3C sources but all five integration runs stop in review; supported advice
+and repair effectiveness remain unqualified. No action is authorized or retried.
+Workspace 1,393 passed / 615 ignored; all 171 UI scripts and 29 headless rendered
+cases pass, with native zoom screenshots inspected. Build, Clippy, fmt, audit and
+license checks pass. [Evidence](docs/g1/PUBLIC_TECHNICAL_RESEARCH_2026-11-14.md).
+This remains a prototype; complete journeys and held-out qualification are open.
+
 ## Conditional forms and local reasoning - 2026-11-14
 
 Conditional additions now stop the stale plan, preserve verified entries and

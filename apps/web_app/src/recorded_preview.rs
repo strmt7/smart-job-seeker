@@ -17,6 +17,8 @@ pub(crate) struct Source {
     pub(crate) job_id: String,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(crate) rehearse: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) public_research: bool,
 }
 
 fn linked(metadata: &fs::Metadata) -> bool {
@@ -54,6 +56,9 @@ fn read(path: &Path, max: usize) -> Result<Vec<u8>, String> {
 
 impl Source {
     pub(crate) fn validate(&self, url: &str) -> Result<(), String> {
+        if self.public_research && !self.rehearse {
+            return Err("Public research requires an autofill rehearsal".into());
+        }
         directory(
             self.directory
                 .parent()
@@ -180,6 +185,7 @@ fn render_at(
             vision_addr,
             selection.map(|value| &value.choice),
             runtime_guard,
+            source.public_research,
         )
     });
     let result: Result<Value, String> = (|| {
@@ -512,6 +518,16 @@ struct RehearsalVision {
 
 #[cfg(windows)]
 impl RehearsalVision {
+    fn research_issue(
+        &mut self,
+        directory: &Path,
+        profile: &Value,
+        context: &str,
+    ) -> Result<Value, String> {
+        crate::check_inference_memory()?;
+        let model = self.model.as_mut().ok_or("The local model needs review")?;
+        crate::visual_review::research_recorded_issue(model, self.addr, directory, profile, context)
+    }
     fn plan_profile(
         &mut self,
         form: &waypoint_applications::driver::LiveForm,
@@ -715,6 +731,8 @@ struct Rehearsal {
     profile: Result<Value, String>,
     attachment_plans: Vec<Value>,
     fact_plans: Vec<Value>,
+    public_research: bool,
+    research_notes: Vec<Value>,
 }
 
 #[cfg(windows)]
@@ -723,6 +741,7 @@ impl Rehearsal {
         addr: std::net::SocketAddr,
         choice: Option<&crate::model_preferences::Choice>,
         guard: Option<crate::visual_review::RequestGuard>,
+        public_research: bool,
     ) -> Self {
         let vision = RehearsalVision::new(addr, choice, guard);
         let profile = serde_json::from_str(include_str!("../data/rehearsal-profile.json"))
@@ -740,6 +759,8 @@ impl Rehearsal {
             profile,
             attachment_plans: Vec::new(),
             fact_plans: Vec::new(),
+            public_research,
+            research_notes: Vec::new(),
         }
     }
 
@@ -985,6 +1006,33 @@ impl Rehearsal {
                         };
                     }
                     self.halted = true;
+                    if self.public_research && self.research_notes.is_empty() {
+                        let kind = match field.field_type {
+                            FormFieldType::File => "file attachment",
+                            FormFieldType::Select { .. } | FormFieldType::Radio { .. } => {
+                                "selection"
+                            }
+                            _ => "text input",
+                        };
+                        let family = url::Url::parse(&form.schema.origin)
+                            .ok()
+                            .and_then(|u| u.host_str().map(waypoint_policy::source_for_host))
+                            .unwrap_or("user_supplied_url");
+                        let platform = if family == "user_supplied_url" {
+                            "unidentified web form"
+                        } else {
+                            family
+                        };
+                        let issue = if target_refused {
+                            "visual control inspection"
+                        } else {
+                            "native field feedback verification"
+                        };
+                        let context=format!("General technical research for {issue} of a {kind} on {platform}. Explain relevant supported browser/vision techniques and their limitations using public authoritative documentation. Do not research applicant answers, legal eligibility, authentication or challenge bypass. No candidate labels, values, images or personal URLs are provided. Findings remain advice; do not authorize or retry an application action.");
+                        self.research_notes.push(match self.vision.research_issue(directory,profile,&context) {
+                            Ok(value)=>value,Err(error)=>json!({"status":"needs_review","reason":bounded_text(&error),"form_actions_authorized":false}),
+                        });
+                    }
                 }
             }
             let replay_after = driver.rehearsal_replay_report().ok();
@@ -1138,6 +1186,7 @@ impl Rehearsal {
     fn finish(self) -> Value {
         json!({"scope":"fictional_saved_form","profile_sha256":waypoint_domain::sha256_hex(include_bytes!("../data/rehearsal-profile.json")),"profile_error":self.profile.as_ref().err(),"field_limit":REHEARSAL_LIMIT,"section_advance_limit":SECTION_ADVANCE_LIMIT,"halted":self.halted,"fields":self.fields,"fact_plans":self.fact_plans,"attachment_plans":self.attachment_plans,"sections":self.sections,"dialogs":self.dialogs,"dialog_action_limit":DIALOG_ACTION_LIMIT,"vision_model":self.vision.identity,
             "conditional_replans":self.conditionals,"conditional_replan_limit":CONDITIONAL_REPLAN_LIMIT,
+            "public_research_enabled":self.public_research,"public_research":self.research_notes,
             "visual_gate":{"required":true,"available":self.vision.model.is_some(),"targets":self.vision.targets}})
     }
 }
@@ -1813,7 +1862,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn rehearsal_without_a_qualified_visual_model_stops_before_entry() {
-        let result = Rehearsal::new("127.0.0.1:0".parse().unwrap(), None, None).finish();
+        let result = Rehearsal::new("127.0.0.1:0".parse().unwrap(), None, None, false).finish();
         assert_eq!(result["halted"], true);
         assert_eq!(result["visual_gate"]["required"], true);
         assert_eq!(result["visual_gate"]["available"], false);
@@ -1926,6 +1975,7 @@ mod tests {
             attempt_id: "copy".into(),
             job_id: "fixture-job".into(),
             rehearse: false,
+            public_research: false,
         };
         let url = "https://example.org/fictional";
         let summary_path = source.directory.join("source-page-summary.json");

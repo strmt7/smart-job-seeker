@@ -34,6 +34,7 @@ waypoint_applications = { path = "../../crates/waypoint_applications" }
 waypoint_browser = { path = "../../crates/waypoint_browser" }
 waypoint_connectors = { path = "../../crates/waypoint_connectors" }
 waypoint_inference = { path = "../../crates/waypoint_inference" }
+waypoint_research = { path = "../../crates/waypoint_research" }
 waypoint_policy = { path = "../../crates/waypoint_policy" }
 waypoint_net = { path = "../../crates/waypoint_net" }
 waypoint_store = { path = "../../crates/waypoint_store" }

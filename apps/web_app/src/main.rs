@@ -48,6 +48,8 @@ mod fit_task;
 mod form_capture_task;
 mod form_links;
 mod form_preview;
+#[cfg(windows)]
+mod form_research;
 mod form_task;
 mod gmail_connect;
 mod gmail_mailbox;
@@ -3311,15 +3313,32 @@ fn serve_request(
                     None => false,
                     Some(value) => value.as_bool().ok_or("Invalid rehearsal mode")?,
                 };
-                job_capture::start_preview(
-                    ws,
-                    &job,
-                    id.clone(),
-                    body["attempt_id"]
-                        .as_str()
-                        .ok_or("Missing saved page identity")?,
-                    rehearse,
-                )?;
+                let public_research = match body.get("public_research") {
+                    None => false,
+                    Some(value) => value.as_bool().ok_or("Invalid public research option")?,
+                };
+                if public_research {
+                    job_capture::start_preview_with_research(
+                        ws,
+                        &job,
+                        id.clone(),
+                        body["attempt_id"]
+                            .as_str()
+                            .ok_or("Missing saved page identity")?,
+                        rehearse,
+                        public_research,
+                    )?;
+                } else {
+                    job_capture::start_preview(
+                        ws,
+                        &job,
+                        id.clone(),
+                        body["attempt_id"]
+                            .as_str()
+                            .ok_or("Missing saved page identity")?,
+                        rehearse,
+                    )?;
+                }
             } else {
                 job_capture::start(ws, &job, id.clone())?;
             }

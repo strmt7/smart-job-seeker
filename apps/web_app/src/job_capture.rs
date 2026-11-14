@@ -84,6 +84,20 @@ pub fn start_preview(
     attempt: &str,
     rehearse: bool,
 ) -> Result<(), String> {
+    start_preview_with_research(ws, job, id, attempt, rehearse, false)
+}
+
+pub fn start_preview_with_research(
+    ws: &Workspace,
+    job: &JobIdentityId,
+    id: String,
+    attempt: &str,
+    rehearse: bool,
+    public_research: bool,
+) -> Result<(), String> {
+    if public_research && !rehearse {
+        return Err("Public technical research is an autofill rehearsal option".into());
+    }
     let directory = crate::attempt_record::attempt_directory(ws, job, attempt)?;
     start_task(
         ws,
@@ -94,6 +108,7 @@ pub fn start_preview(
             attempt_id: attempt.to_owned(),
             job_id: job.as_str().to_owned(),
             rehearse,
+            public_research,
         }),
     )
 }

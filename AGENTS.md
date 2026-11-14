@@ -267,6 +267,15 @@ used by development tools and tests. Do not add WSL or Docker as product require
 
 ## Real pitfalls already hit (don't rediscover these)
 
+- Runtime public research exposes only currently admitted tool actions in its
+  native schema; stated budgets alone did not stop a local model from repeatedly
+  selecting an exhausted search. Runtime checks still apply independently.
+  Reuse the shared provider's actual `results` contract, test that adapter with
+  native-shaped payloads, and retain failed requests for subsequent decisions.
+  Anonymous research advice cannot clear a failed field or authorize a retry.
+  Diagnose incomplete reasoning from native completion metadata, not empty final
+  text alone; preserve the original failed run.
+
 - A short control crop can truncate a long question even when the control is
   fully visible. Preserve the original image and use current native-associated
   labels/headings for a separate bounded detail; do not supply expected text to

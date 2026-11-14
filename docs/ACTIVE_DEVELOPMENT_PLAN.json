@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "reviewed_on": "2026-11-14",
-  "reviewed_source": "e8f932e719b8426546192ffdac43de851816c044",
+  "reviewed_source": "ec231343ee42effe7fbf3611aee12d3560041c5c",
   "goal": "Continue the existing active Smart Jobseeker product-development goal",
   "plan": "docs/COMPLETION_PLAN_2026-11-11.md",
   "assessment": "docs/REPO_STATE_REVIEW_2026-11-11.md",
@@ -127,7 +127,7 @@
         "2026-11-13: froze four more platform candidates, collected4 compiled read-only attempts/3 native inventories (3 job-alert,16 and10 supported controls; none omitted),0 entry-eligible/0 model-scored. One response representation excluded. Pinpoint reclassified to development before generic context repair; all original manifests/results preserved.",
         "2026-11-13: request-representation source family is development; immutable selectionv3 retains initial manifests/failures. New10-control saved inventory has0 omissions but no entry eligibility or independent full-workflow/requiredness truth. No model score or promotion.",
         "Independent four-control fictional dialog truth and raw decision/control oracle retained before inference. Corrected an initial scorer that credited a validated fallback as raw model correctness; original legal response remains failed. Final tuned dialog decisions pass once; contact sensitivity remains 0/3, with no held-out/workflow credit.",
-        "Bounded opt-in native completion/response diagnostics identify missing manual_review and a 512-token invented-selector repair. Offered-ID/key schemas improve frozen fictional contact case 0/3 to3/3; French6/7 and saved-employer4/6 plus1unverified rÃƒÆ’Ã‚Â©sumÃƒÆ’Ã‚Â© remain unchanged. No unknown entered, held-out or workflow credit.",
+        "Bounded opt-in native completion/response diagnostics identify missing manual_review and a 512-token invented-selector repair. Offered-ID/key schemas improve frozen fictional contact case 0/3 to3/3; French6/7 and saved-employer4/6 plus1unverified r\u00c3\u0192\u00c6\u2019\u00c3\u201a\u00c2\u00a9sum\u00c3\u0192\u00c6\u2019\u00c3\u201a\u00c2\u00a9 remain unchanged. No unknown entered, held-out or workflow credit.",
         "2026-11-13: fresh frozen French baseline and choice-context run each verify6/7 facts, unknown0/2; no measured radio mapping gain. A new independently authored eight-control English development variation proposes2facts but verifies1/2 before a clipped radio image; unknown0/6, all native requiredness checked. Original truth/results immutable; the prepared retest controller marks subsequent development use and requires unchanged truth before inference; its first admission attempt was held; later runs are recorded below. No wrong/unexpected/unverified performed entries in these3runs; no whole-workflow/held-out credit.",
         "2026-11-13: source32d2bec exact binary, post-crop English development truth unchanged except explicit used_for_tuning/revision2 provenance. Two same-input local12B runs each2/2 verified, unknown0/6, no wrong/unexpected/unverified performed entries or critical uncertainties. Whole-workflow not_qualified; French remains6/7. Immutable results and actual repeat radio image retained.",
         "2026-11-13: final native frame matrix15cases,8entrycases/10exact readbacks,7explicit review outcomes, allclosed; paired observations/source bindings/stale callback refusals retained. This is native capability evidence only, no new model/workflow/held-out score. Stable independent logical frame oracle identity is the next evaluation requirement.",
@@ -241,7 +241,10 @@
         "apps/web_app/src/visual_review.rs",
         "apps/web_app/src/resident_inference.rs",
         "crates/waypoint_inference/src/ollama.rs",
-        "crates/waypoint_research/src/lib.rs"
+        "crates/waypoint_research/src/lib.rs",
+        "apps/web_app/src/form_research.rs",
+        "crates/waypoint_research/src/tools.rs",
+        "crates/waypoint_browser/src/capture_session/public_read.rs"
       ],
       "acceptance": [
         "Typed bounded planning using supported candidate facts",
@@ -261,7 +264,8 @@
         "docs/g1/NATIVE_FRAME_IDENTITY_2026-11-13.md",
         "docs/g1/INLINE_FRAME_COMPLETENESS_2026-11-13.md",
         "docs/RELEASE_DIRECTION_REVIEW_2026-11-14.md",
-        "docs/g1/CONDITIONAL_FORM_CONTINUATION_2026-11-14.md"
+        "docs/g1/CONDITIONAL_FORM_CONTINUATION_2026-11-14.md",
+        "docs/g1/PUBLIC_TECHNICAL_RESEARCH_2026-11-14.md"
       ],
       "execution_batch": "C",
       "steps": [
@@ -273,7 +277,7 @@
         "After every action, read back native state and perform local-model visual review; detect stale state and no progress.",
         "Measure the local model on the frozen corpus; provide actionable review records rather than invented answers."
       ],
-      "next_action": "Connect existing public research through a typed bounded runtime broker, separate from candidate-bearing inert browsers, then join candidate facts/history and complete workflows/archives. Separate local reasoning, constrained decisions and independent native/visual checks are now demonstrated on one conditional case, not generally qualified. Preserve earlier failures, all unknowns and no-send gates; avoid more isolated geometry work without an observed journey blocker.",
+      "next_action": "Isolate owned local-model tool decisions and excerpt quality without repeating unchanged browser/mapping stages. Qualify grounded technical conclusions, fragment/section-aware reading and useful recovery before enabling any guarded repair. Then connect existing candidate-supported history/facts to complete contained journeys and archives; preserve unknowns, independent visual/native review and all no-send/approval gates.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "start_requirements": [
         "The frozen schema2 known-source initial-control case and native mutation fixture admit investigation of the observed actuator failure. This does not admit broad planner promotion; that still requires the varied held-out tranche and full workflow truth.",
@@ -284,8 +288,8 @@
         "Native-bound failed-entry witness and coherent diagnostic image/text without accepting the entry; challenge/schema/document changes refuse observations.",
         "Actual failed Phone image/value retained: +1 202-555-0123 versus intended +12025550123. Independent gate stays failed; no section advances.",
         "Native tel-only presentation proof and stable actual-value captures, separate raw local-model transcription and explicit oracle comparison; final known-source run verifies4/6 initial answerable controls. No held-out or full-workflow claim.",
-        "Bounded generic document catalog proposals and distinct PDF truth; three known-source local12B runs choose both roles. Explicit current native file-group proof supports separate label comparison. Four of six controls verified; rÃƒÆ’Ã‚Â©sumÃƒÆ’Ã‚Â© visual gap remains, cover unreached, workflow not qualified.",
-        "Phase-specific file-feedback context preserves pre-entry/contact images; per-entry replay deltas retain degraded states. Final local12B4/6 verified with native rÃƒÆ’Ã‚Â©sumÃƒÆ’Ã‚Â© selection still visually unverified; field/workflow gates remain failed/not_qualified. Native embedded/contact feedback and rendered record/inspector/zoom checks pass within documented scopes.",
+        "Bounded generic document catalog proposals and distinct PDF truth; three known-source local12B runs choose both roles. Explicit current native file-group proof supports separate label comparison. Four of six controls verified; r\u00c3\u0192\u00c6\u2019\u00c3\u201a\u00c2\u00a9sum\u00c3\u0192\u00c6\u2019\u00c3\u201a\u00c2\u00a9 visual gap remains, cover unreached, workflow not qualified.",
+        "Phase-specific file-feedback context preserves pre-entry/contact images; per-entry replay deltas retain degraded states. Final local12B4/6 verified with native r\u00c3\u0192\u00c6\u2019\u00c3\u201a\u00c2\u00a9sum\u00c3\u0192\u00c6\u2019\u00c3\u201a\u00c2\u00a9 selection still visually unverified; field/workflow gates remain failed/not_qualified. Native embedded/contact feedback and rendered record/inspector/zoom checks pass within documented scopes.",
         "Contained semantic contact proposals reuse native options/constraints, captured aliases and section context, with strict failure/manual exclusions and bound records. Repaired native preflight passes. Fictional local12B case proposes6, verifies2/7, leaves2 unknown; email vision omission stops entry and residence radio remains manual. No field/workflow/held-out promotion.",
         "Conditional blind coverage distinguishes absence from ambiguous/different/limited evidence, retains raw first and second observations, and vetoes conflicts/failures. Native text/select detail views preserve original inputs. Frozen French case4/7 and prior family4/6; neither field/workflow gate passes. Scoped native/unit/actual UI checks pass.",
         "Shared pre/post coverage resolver retains exact/native-telephone and conflict/ambiguity/failure gates. Post-entry native detail recovers Country; French6/7 with0 wrong/unverified performed entries,2 unknown untouched and radio withheld. Prior family4/6, no full-workflow or held-out success. Native regressions and actual UI pass.",
@@ -294,8 +298,10 @@
         "2026-11-13: backend now admits fully inspected same-origin/inherited frames and preserves unknown/opaque/covered/stale barriers. Final native matrix and actual crop inspection pass; no local-model frame accuracy or whole-workflow credit. All existing current native/visual/value checks still apply.",
         "2026-11-14: native conditional main/inline additions retain current scope/document/target identity and require fresh planning; ten cases close, with four positive native readbacks/four transitions and eight refusal cases. Three unchanged-source local12B runs each0/2; formatting/key definitions did not fix initial mapping abstention. Unknown citizenship is unreached, not a proven abstention. No workflow/held-out credit.",
         "2026-11-14: separate bounded local reasoning repairs initial mapping abstention. Complete native label detail and structural separator comparison repair two further visual-input/comparer failures. Unchanged frozen conditional development case verifies2/2 facts, reached unknown0/1, two fresh replans, four independently matched before/after detail reviews, no incorrect/unverified/unexpected/ambiguous/unbound entries. One run only; whole workflow and held-out qualification remain open. All five failures retained; current workspace1378passed/614ignored, Clippy/build pass.",
-        "2026-11-14 final declaration/packaging check: named read-only JS passes Node syntax and four native associated-detail cases; current workspace1378passed/614ignored, Clippy/build pass. Final separately bound binary repeats unchanged-truth conditional2/2 with reached unknown0/1 and zero critical entries. Model/app tree drains; two development runs are not held-out/model promotion or full-workflow completion."
-      ]
+        "2026-11-14 final declaration/packaging check: named read-only JS passes Node syntax and four native associated-detail cases; current workspace1378passed/614ignored, Clippy/build pass. Final separately bound binary repeats unchanged-truth conditional2/2 with reached unknown0/1 and zero critical entries. Model/app tree drains; two development runs are not held-out/model promotion or full-workflow completion.",
+        "2026-11-14: opt-in typed anonymous runtime research with retained native HTTP/model evidence, source/robots/PII guards and independent no-action authority. Local12B actually searches and reads MDN/W3C but all5runs remain review; no supported advice, repaired field or workflow credit. Core8/app3/transport4 regressions pass; workspace1393/615ignored,171UI scripts,29headless rendered cases and native zoom screenshots pass. Original model/harness failures retained; all model trees drain and shared runtime stays unchanged."
+      ],
+      "open_checkpoint": "All5compiled research-model runs remain needs_review/no_progress; actual public reads work, grounded conclusions and repair effectiveness are unqualified. Wiby-only default, bounded introductory extraction, reasoning-length exhaustion and native interruption/cleanup latency remain open."
     },
     {
       "id": "R05",

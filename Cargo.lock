@@ -3072,6 +3072,7 @@ dependencies = [
  "waypoint_inference",
  "waypoint_net",
  "waypoint_policy",
+ "waypoint_research",
  "waypoint_search",
  "waypoint_store",
  "waypoint_workspace",

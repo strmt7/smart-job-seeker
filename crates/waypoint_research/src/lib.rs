@@ -8,6 +8,8 @@
 use serde::{Deserialize, Serialize};
 use waypoint_inference::{Inference, InferenceError};
 
+pub mod tools;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResearchBudget {
     pub max_queries: u8,

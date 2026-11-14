@@ -1,5 +1,18 @@
 # Known limitations register (T050)
 
+The [anonymous research runtime](docs/g1/PUBLIC_TECHNICAL_RESEARCH_2026-11-14.md)
+now provides actual public search/document reads to the local model, behind an
+explicit rehearsal option and independent transport guards. All five measured
+model runs remain in review: the model repeats requests and its optional
+reassessment exhausts the supported output budget without a final answer.
+Supported conclusions and useful autonomous remediation are not demonstrated.
+The initial provider is Wiby; configurable/fallback technical search, better
+source/fragment extraction and isolated model-decision qualification remain open.
+The saved browser stays isolated, and advice cannot retry actions or promote
+lessons. Rendered UI 29 cases and 171 scripts pass; earlier blank zoom captures are
+retained as rejected evidence. Broader installation, workflow, sustained-memory
+and release gates remain unfinished.
+
 The [conditional continuation](docs/g1/CONDITIONAL_FORM_CONTINUATION_2026-11-14.md)
 qualifies native additive transitions and one unchanged local 12B development
 case: 2/2 facts, reached unknown0/1, no incorrect/unverified entries. Five prior
