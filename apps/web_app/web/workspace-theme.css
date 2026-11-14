@@ -304,7 +304,7 @@ button.secondary-button { background: var(--surface); color: var(--accent); bord
 .source-question-preparation{min-width:0;margin-top:10px}
 .source-question-review{min-width:0;margin-top:12px;padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--surface);overflow-wrap:anywhere}
 .source-question-review>h4{margin:8px 0;font-size:13px}
-.source-question-review textarea{display:block;box-sizing:border-box;width:100%;min-width:0;max-width:100%;min-height:100px;font:inherit;line-height:1.5;resize:vertical;overflow-wrap:anywhere}
+.source-question-review textarea,.qualification-correction textarea{display:block;box-sizing:border-box;width:100%;min-width:0;max-width:100%;min-height:100px;font:inherit;line-height:1.5;resize:vertical;overflow-wrap:anywhere}
 .source-question-text{white-space:pre-line}
 .source-question-review>button{max-width:100%;white-space:normal;overflow-wrap:anywhere}
 
@@ -325,3 +325,14 @@ button.secondary-button { background: var(--surface); color: var(--accent); bord
 .source-document-row > label:nth-child(3) { flex: 1 1 100%; order: 4; }
 .source-document-row > label[hidden] { display: none; }
 .source-document-row > button { max-width: 100%; overflow-wrap: anywhere; white-space: normal; }
+
+/* Qualification corrections share field typography and interaction tokens. */
+.qualification-correction { min-width: 0; max-width: 100%; margin: 8px 0 16px; }
+.qualification-correction > summary { padding: 6px 0; color: var(--accent); font-size: 13px; cursor: pointer; }
+.qualification-correction form { display: grid; gap: 12px; min-width: 0; margin-top: 12px; }
+.qualification-correction label { display: grid; gap: 6px; min-width: 0; color: var(--ink); font-size: 13px; }
+.qualification-correction textarea { padding: 10px 12px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; max-height: min(360px,60dvh); }
+.qualification-correction p { margin: 0; padding: 0; line-height: 1.5; }
+.qualification-correction p:empty { display: none; }
+.qualification-correction .form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.qualification-correction .form-actions button { margin: 0; }

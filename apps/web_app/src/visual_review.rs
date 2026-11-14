@@ -1410,6 +1410,23 @@ pub(crate) fn propose_recorded_history(
 }
 
 #[cfg(windows)]
+pub(crate) fn propose_recorded_qualifications(
+    model: &mut VisionIdentityGuard,
+    addr: std::net::SocketAddr,
+    fields: &[waypoint_applications::form_mapping::FormField],
+    facts: &crate::rehearsal_facts::Snapshot,
+) -> Result<Value, String> {
+    let capture = crate::mapping_diagnostics::Capture::default();
+    let observer = capture.clone();
+    let mut result = with_recorded_inference(model, addr, |inference| {
+        inference.set_response_observer(move |schema, native| observer.observe(schema, native));
+        crate::rehearsal_facts::propose(inference, fields, facts)
+    })?;
+    result["diagnostics"] = capture.finish();
+    Ok(result)
+}
+
+#[cfg(windows)]
 fn with_recorded_inference<T>(
     model: &mut VisionIdentityGuard,
     addr: std::net::SocketAddr,

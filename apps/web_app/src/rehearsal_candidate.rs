@@ -24,6 +24,8 @@ pub(crate) struct Snapshot {
     pub(crate) documents: Vec<SnapshotDocument>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) history: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) facts: Option<crate::rehearsal_facts::Snapshot>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -145,10 +147,19 @@ pub(crate) fn stage_selected(
         directory,
         job,
         raw_profile,
-        raw_profile.is_some(),
-        false,
+        InputSelection {
+            contacts: raw_profile.is_some(),
+            ..Default::default()
+        },
         selections,
     )
+}
+
+#[derive(Clone, Copy, Default)]
+pub(crate) struct InputSelection {
+    pub(crate) contacts: bool,
+    pub(crate) history: bool,
+    pub(crate) facts: bool,
 }
 
 pub(crate) fn stage_inputs(
@@ -156,22 +167,28 @@ pub(crate) fn stage_inputs(
     directory: &Path,
     job: &str,
     raw_profile: Option<&str>,
-    use_contacts: bool,
-    use_history: bool,
+    selection: InputSelection,
     selections: &[DocumentSelection],
 ) -> Result<String, String> {
+    let InputSelection {
+        contacts: use_contacts,
+        history: use_history,
+        facts: use_facts,
+    } = selection;
     ordinary(directory, true)?;
     if !document_id(job) {
         return Err("Invalid candidate job binding".into());
     }
     validate_selections(selections)?;
-    if selections.is_empty() && !use_history {
+    if selections.is_empty() && !use_history && !use_facts {
         return Err("Select candidate PDFs or checked history before staging them".into());
     }
-    if (use_contacts || use_history) && raw_profile.is_none_or(|raw| raw.len() > 256 * 1024) {
+    if (use_contacts || use_history || use_facts)
+        && raw_profile.is_none_or(|raw| raw.len() > 256 * 1024)
+    {
         return Err("Saved candidate profile is unavailable or exceeds its limit".into());
     }
-    if raw_profile.is_some() && !use_contacts && !use_history {
+    if raw_profile.is_some() && !use_contacts && !use_history && !use_facts {
         return Err("Saved candidate information was not selected".into());
     }
     let profile: Value = match raw_profile {
@@ -192,6 +209,9 @@ pub(crate) fn stage_inputs(
     } else {
         None
     };
+    let facts = use_facts
+        .then(|| crate::rehearsal_facts::Snapshot::stage(ws, &profile))
+        .transpose()?;
     let mut total = 0usize;
     let mut infos = Vec::new();
     for selection in selections {
@@ -240,7 +260,13 @@ pub(crate) fn stage_inputs(
     retain(
         directory,
         &Snapshot {
-            schema: if use_history { 3 } else { 2 },
+            schema: if use_facts {
+                4
+            } else if use_history {
+                3
+            } else {
+                2
+            },
             source_profile_sha256: raw_profile
                 .map(|raw| waypoint_domain::sha256_hex(raw.as_bytes()))
                 .unwrap_or_default(),
@@ -248,6 +274,7 @@ pub(crate) fn stage_inputs(
             job_id: Some(job.into()),
             documents,
             history,
+            facts,
         },
     )
 }
@@ -283,6 +310,7 @@ pub(crate) fn stage(directory: &Path, raw_profile: &str) -> Result<String, Strin
         job_id: None,
         documents: Vec::new(),
         history: None,
+        facts: None,
     };
     retain(directory, &snapshot)
 }
@@ -304,27 +332,36 @@ pub(crate) fn load(directory: &Path, expected: &str) -> Result<Snapshot, String>
         serde_json::from_slice(&bytes).map_err(|_| "Invalid candidate snapshot")?;
     let history_valid = match &snapshot.history {
         Some(raw) => {
-            snapshot.schema == 3 && crate::candidate_history::checked_snapshot(raw)? == *raw
+            matches!(snapshot.schema, 3 | 4)
+                && crate::candidate_history::checked_snapshot(raw)? == *raw
         }
         None => snapshot.schema != 3,
+    };
+    let facts_valid = match &snapshot.facts {
+        Some(facts) => {
+            facts.validate()?;
+            snapshot.schema == 4
+        }
+        None => snapshot.schema != 4,
     };
     let contacts_empty = snapshot.contacts == json!({});
     let profile_valid = if snapshot.source_profile_sha256.is_empty() {
         snapshot.schema == 2 && contacts_empty
     } else {
         digest(&snapshot.source_profile_sha256)
-            && ((snapshot.schema == 3 && contacts_empty)
+            && ((matches!(snapshot.schema, 3 | 4) && contacts_empty)
                 || crate::suggestions::contact_profile_snapshot(&snapshot.contacts)?
                     == snapshot.contacts)
     };
     if !profile_valid
         || !history_valid
-        || !matches!(snapshot.schema, 1..=3)
+        || !facts_valid
+        || !matches!(snapshot.schema, 1..=4)
         || (snapshot.schema == 1
             && (bytes.len() > 48 * 1024
                 || snapshot.job_id.is_some()
                 || !snapshot.documents.is_empty()))
-        || (matches!(snapshot.schema, 2 | 3)
+        || (matches!(snapshot.schema, 2..=4)
             && (snapshot.job_id.as_deref().is_none_or(|id| !document_id(id))
                 || (snapshot.schema == 2 && snapshot.documents.is_empty())))
     {
@@ -356,7 +393,7 @@ pub(crate) fn load(directory: &Path, expected: &str) -> Result<Snapshot, String>
 impl Snapshot {
     pub(crate) fn metadata(&self, binding: &str) -> Value {
         let mut value = json!({"scope":"saved_candidate_contacts","snapshot_sha256":binding,"source_profile_sha256":self.source_profile_sha256,"profile_sha256":waypoint_domain::sha256_hex(self.contacts.to_string().as_bytes()),"documents":"not_selected"});
-        if matches!(self.schema, 2 | 3) {
+        if matches!(self.schema, 2..=4) {
             value["scope"] = json!("saved_candidate_materials");
             value["contacts_selected"] = json!(self
                 .contacts
@@ -371,6 +408,13 @@ impl Snapshot {
             value["history_records"] = json!(crate::candidate_history::reviewed(history)
                 .map(|records| records.len())
                 .ok());
+        }
+        if let Some(facts) = &self.facts {
+            if let Some(metadata) = facts.metadata().as_object() {
+                for (key, item) in metadata {
+                    value[key] = item.clone();
+                }
+            }
         }
         value
     }
@@ -429,6 +473,51 @@ mod tests {
         fs::create_dir(&snapshots).unwrap();
         (folder, snapshots)
     }
+    #[test]
+    fn qualification_only_snapshots_bind_claims_without_demo_contacts_or_documents() {
+        let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
+        let claim = ws
+            .add_fact(
+                "Fictional checked qualification",
+                waypoint_workspace::FactOrigin::UserAttested,
+            )
+            .unwrap();
+        ws.add_fact(
+            "Unreviewed canary",
+            waypoint_workspace::FactOrigin::ModelInferred,
+        )
+        .unwrap();
+        let (_root, directory) = folders();
+        let binding = stage_inputs(
+            &ws,
+            &directory,
+            "job",
+            Some("{}"),
+            InputSelection {
+                facts: true,
+                ..Default::default()
+            },
+            &[],
+        )
+        .unwrap();
+        let loaded = load(&directory, &binding).unwrap();
+        assert_eq!(loaded.schema, 4);
+        assert_eq!(loaded.contacts, json!({}));
+        assert!(loaded.documents.is_empty());
+        assert!(loaded.history.is_none());
+        assert_eq!(loaded.facts.as_ref().unwrap().facts[0].id, claim);
+        assert_eq!(loaded.metadata(&binding)["facts_selected"], true);
+        assert!(!fs::read_to_string(directory.join(NAME))
+            .unwrap()
+            .contains("canary"));
+        let mut value: Value =
+            serde_json::from_slice(&fs::read(directory.join(NAME)).unwrap()).unwrap();
+        value["facts"]["facts"][0]["status"] = json!("inferred");
+        let bytes = serde_json::to_vec(&value).unwrap();
+        fs::write(directory.join(NAME), &bytes).unwrap();
+        assert!(load(&directory, &waypoint_domain::sha256_hex(&bytes)).is_err());
+    }
+
     fn workspace() -> waypoint_workspace::Workspace {
         let ws = waypoint_workspace::Workspace::in_memory().unwrap();
         ws.add_document(
@@ -597,7 +686,18 @@ mod tests {
         let ws = workspace();
         let (_folder, snapshots) = folders();
         let raw=json!({"career_history":checked_history(),"first_name":"Avery","instructions":"private instructions"}).to_string();
-        let binding = stage_inputs(&ws, &snapshots, "job", Some(&raw), false, true, &[]).unwrap();
+        let binding = stage_inputs(
+            &ws,
+            &snapshots,
+            "job",
+            Some(&raw),
+            InputSelection {
+                history: true,
+                ..Default::default()
+            },
+            &[],
+        )
+        .unwrap();
         let snapshot = load(&snapshots, &binding).unwrap();
         assert_eq!(snapshot.contacts, json!({}));
         let history = snapshot.history.as_ref().unwrap();
@@ -628,12 +728,34 @@ mod tests {
         ] {
             let (_folder, snapshots) = folders();
             let raw = json!({"career_history":history}).to_string();
-            assert!(stage_inputs(&ws, &snapshots, "job", Some(&raw), false, true, &[]).is_err());
+            assert!(stage_inputs(
+                &ws,
+                &snapshots,
+                "job",
+                Some(&raw),
+                InputSelection {
+                    history: true,
+                    ..Default::default()
+                },
+                &[]
+            )
+            .is_err());
             assert!(!snapshots.join(NAME).exists());
         }
         let (_folder, snapshots) = folders();
         let raw = json!({"career_history":checked_history()}).to_string();
-        let binding = stage_inputs(&ws, &snapshots, "job", Some(&raw), false, true, &[]).unwrap();
+        let binding = stage_inputs(
+            &ws,
+            &snapshots,
+            "job",
+            Some(&raw),
+            InputSelection {
+                history: true,
+                ..Default::default()
+            },
+            &[],
+        )
+        .unwrap();
         let mut snapshot = load(&snapshots, &binding).unwrap();
         snapshot.history = Some(checked_history());
         let bytes = serde_json::to_vec(&snapshot).unwrap();

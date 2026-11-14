@@ -303,6 +303,20 @@ fn research_identifiers(profile: &Value) -> Result<Vec<String>, String> {
             }
         }
     }
+    if let Some(facts) = profile.get("reviewed_qualifications") {
+        for fact in facts
+            .as_array()
+            .ok_or("Private qualification guard is unavailable")?
+        {
+            let value = crate::search_planner::normalized_identifier(
+                fact.as_str()
+                    .ok_or("Private qualification guard is unavailable")?,
+            );
+            if value.chars().count() >= 2 {
+                identifiers.push(value);
+            }
+        }
+    }
     identifiers.sort();
     identifiers.dedup();
     Ok(identifiers)
@@ -398,6 +412,20 @@ mod tests {
         assert!(result.unwrap()["results"].as_array().unwrap().is_empty());
         assert!(events.iter().all(|e| e["status"] == "empty"));
     }
+    #[test]
+    fn reviewed_qualification_values_stay_in_the_local_research_guard() {
+        let protected = research_identifiers(
+            &json!({"reviewed_qualifications":["Fictional Private Qualification"]}),
+        )
+        .unwrap();
+        assert!(
+            protected.contains(&crate::search_planner::normalized_identifier(
+                "Fictional Private Qualification"
+            ))
+        );
+        assert!(research_identifiers(&json!({"reviewed_qualifications":[42]})).is_err());
+    }
+
     #[test]
     fn checked_history_values_are_private_guards_not_public_research_context() {
         let history=json!({"version":1,"employment":[{"id":"a".repeat(32),"employer":"Fictional Private Works","title":"Engineer","reviewed":true}],"education":[{"id":"b".repeat(32),"institution":"IBM","qualification":"Certificate","reviewed":true}]}).to_string();

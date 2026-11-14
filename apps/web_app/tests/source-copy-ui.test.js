@@ -24,6 +24,13 @@ function harness(api, onFinished) {
     let request;const instance=harness(async(route,body)=>{if(route.endsWith('/pending'))return {active:false};if(route.endsWith('/preview-start')){request=body;return {task_id:'history-task'};}if(route.endsWith('/status'))return {status:'complete',task_id:'history-task',job_id:'history-job'};throw Error('Unexpected history route');});
     const controls=instance.actions('history-job','source');const label=find(controls,node=>node.tag==='label'&&node.children.some(child=>child.textContent==='Use checked career history'));const checkbox=label.children[0];assert.equal(Boolean(checkbox.checked),false);checkbox.checked=enabled;await button(controls,action).listeners.click();assert.equal(request.use_saved_history===true,enabled&&action==='Rehearse autofill');assert.equal(request.career_history,undefined);assert.equal(request.use_saved_contacts,undefined);
   }
+  for(const [enabled,action] of [[false,'Rehearse autofill'],[true,'Rehearse autofill'],[true,'Create recorded preview']]){
+    let request;const instance=harness(async(route,body)=>{if(route.endsWith('/pending'))return {active:false};if(route.endsWith('/preview-start')){request=body;return {task_id:'facts-task'};}if(route.endsWith('/status'))return {status:'complete',task_id:'facts-task',job_id:'facts-job'};throw Error('Unexpected facts route');});
+    const controls=instance.actions('facts-job','source');const label=find(controls,node=>node.tag==='label'&&node.children.some(child=>child.textContent==='Use reviewed qualifications'));const checkbox=label.children[0];assert.equal(Boolean(checkbox.checked),false);checkbox.checked=enabled;await button(controls,action).listeners.click();assert.equal(request.use_reviewed_facts===true,enabled&&action==='Rehearse autofill');assert.equal(request.facts,undefined);assert.equal(request.candidate_facts,undefined);
+  }
+  const factsOnly=harness(async()=>{}).preview({views:[],candidate_facts_current:false,rehearsal:{scope:'saved_candidate_materials',candidate_source:{contacts_selected:false,facts_selected:true,documents:[]}}},{});
+  assert(find(factsOnly,node=>node.textContent.includes('Reviewed qualifications have changed')));
+  assert(find(factsOnly,node=>node.textContent==='This saved copy uses your reviewed qualifications. Answers, later steps and server validation still need review.'));
   const historyOnly=harness(async()=>{}).preview({views:[],rehearsal:{scope:'saved_candidate_materials',candidate_source:{contacts_selected:false,history_selected:true,documents:[]}}},{});
   assert(find(historyOnly,node=>node.textContent==='This saved copy uses your checked career history. Answers, later steps and server validation still need review.'));
   const staleHistory=harness(async()=>{}).preview({views:[],candidate_profile_current:false,rehearsal:{scope:'saved_candidate_materials',candidate_source:{history_selected:true,documents:[]}}},{});
@@ -104,11 +111,13 @@ function harness(api, onFinished) {
   assert(find(degraded,node=>node.textContent==='Some search services were unavailable. Results may be incomplete.'));
   const unavailable=harness(async()=>{}).preview({views:[],rehearsal:{scope:'fictional_saved_form',public_research:[{result:{status:'needs_review',reason:'no_progress'}}]}},{});
   assert(find(unavailable,node=>node.textContent==='The model could not make further progress with the available sources.'));
-  const researchPanel=harness(async()=>{}).preview({views:[],rehearsal:{scope:'fictional_saved_form',public_research:[{result:{status:'advice_available',advice:'Check the documented input type.',evidence:[{url:'https://docs.example.invalid/browser'},{url:'javascript:alert(1)'}]}}]}},{});
+  const researchPanel=harness(async()=>{}).preview({views:[],rehearsal:{scope:'fictional_saved_form',public_research:[{result:{status:'advice_available',advice:'Check the documented input type.',evidence:[{url:'https://docs.example.invalid/browser'},{url:'javascript:alert(1)'},{url:'data:text/html,fictional'},{url:'vbscript:fictional'},{url:'http://docs.example.invalid/plain'},{url:'https://user:fictional@docs.example.invalid/private'}]}}]}},{});
   assert(find(researchPanel,node=>node.textContent==='Check the documented input type.'));
   assert(find(researchPanel,node=>node.textContent==='These notes do not approve or retry any application action.'));
   assert(find(researchPanel,node=>node.tag==='a'&&node.href==='https://docs.example.invalid/browser'&&node.rel==='noopener noreferrer'));
-  assert.equal(find(researchPanel,node=>node.tag==='a'&&node.href?.startsWith('javascript:')),undefined);
+  const referenceLinks=[];find(researchPanel,node=>{if(node.tag==='a')referenceLinks.push(node);return false;});
+  assert.deepEqual(referenceLinks.map(node=>node.href),['https://docs.example.invalid/browser']);
+  for(const link of referenceLinks){const url=new URL(link.href);assert.equal(url.protocol,'https:');assert.equal(url.username,'');assert.equal(url.password,'');}
   const digest = 'a'.repeat(64);
   const preview = { views: [
     {kind:'page',label:'Page',image:'0001.png',sha256:digest,fields:[{label:'Parent name'}]},

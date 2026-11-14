@@ -224,6 +224,61 @@ impl Store {
         Ok((total, oversized))
     }
 
+    /// One immediate SQLite write transaction, including error/panic rollback.
+    /// Nested calls are refused before the callback; no earlier transaction is committed.
+    pub fn atomic_write<T, E>(
+        &mut self,
+        action: impl FnOnce(&mut Self) -> Result<T, E>,
+    ) -> Result<T, E>
+    where
+        E: From<StoreError> + std::fmt::Display,
+    {
+        self.conn
+            .execute_batch("BEGIN IMMEDIATE")
+            .map_err(E::from)?;
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| action(self)));
+        let rollback = |store: &Self, original: String| -> Result<(), E> {
+            store.conn.execute_batch("ROLLBACK").map_err(|error| {
+                E::from(StoreError::ToSqlConversionFailure(Box::new(
+                    std::io::Error::other(format!("{original}; rollback failed: {error}")),
+                )))
+            })
+        };
+        match outcome {
+            Ok(Ok(value)) => match self.conn.execute_batch("COMMIT") {
+                Ok(()) => Ok(value),
+                Err(error) => {
+                    rollback(self, format!("Commit failed: {error}"))?;
+                    Err(E::from(error))
+                }
+            },
+            Ok(Err(error)) => {
+                rollback(self, error.to_string())?;
+                Err(error)
+            }
+            Err(payload) => {
+                let detail = payload
+                    .downcast_ref::<String>()
+                    .map(String::as_str)
+                    .or_else(|| payload.downcast_ref::<&str>().copied())
+                    .unwrap_or("non-text panic payload");
+                if let Err(error) = rollback(self, format!("Atomic write panicked: {detail}")) {
+                    panic!("Atomic write panicked and rollback was unconfirmed: {error}");
+                }
+                std::panic::resume_unwind(payload)
+            }
+        }
+    }
+
+    /// Narrow current-claim lookup, through the same sealed-text read path.
+    pub fn active_claim(&self, id: &str) -> Result<Option<StoredClaim>, StoreError> {
+        let mut found = None;
+        self.visit_claims(true, false, Some(id), Some(1), usize::MAX, |claim| {
+            found = Some(claim)
+        })?;
+        Ok(found)
+    }
+
     /// Hash active claim content one row at a time, including unreviewed claims.
     pub fn active_claims_digest(&self) -> Result<String, StoreError> {
         let mut digest = waypoint_domain::sha256_hex(b"waypoint-active-claims-v1");
@@ -682,5 +737,75 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(!untouched.expired, "unrelated approval must survive");
+    }
+}
+
+#[cfg(test)]
+mod atomic_write_tests {
+    use super::*;
+    #[test]
+    fn atomic_write_rolls_back_metadata_and_rows_after_a_late_failure() {
+        let mut store = Store::in_memory().unwrap();
+        let before = store.profile_revision().unwrap();
+        store.conn.execute_batch("CREATE TEMP TABLE atomic_probe(value TEXT); INSERT INTO atomic_probe VALUES('original'); CREATE TEMP TRIGGER reject_probe BEFORE UPDATE ON atomic_probe BEGIN SELECT RAISE(ABORT,'fictional late failure'); END;").unwrap();
+        let result: Result<(), StoreError> = store.atomic_write(|store| {
+            store.bump_profile_revision()?;
+            store
+                .conn
+                .execute("INSERT INTO atomic_probe VALUES('new')", [])?;
+            store
+                .conn
+                .execute("UPDATE atomic_probe SET value='changed'", [])?;
+            Ok(())
+        });
+        assert!(result.is_err());
+        assert_eq!(store.profile_revision().unwrap(), before);
+        assert_eq!(
+            store
+                .conn
+                .query_row("SELECT COUNT(*) FROM atomic_probe", [], |r| r
+                    .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            store
+                .conn
+                .query_row("SELECT value FROM atomic_probe", [], |r| r
+                    .get::<_, String>(0))
+                .unwrap(),
+            "original"
+        );
+        assert!(store.conn.is_autocommit());
+    }
+    #[test]
+    fn atomic_write_panics_rollback_and_nested_calls_cannot_commit_the_outer_scope() {
+        let mut store = Store::in_memory().unwrap();
+        let before = store.profile_revision().unwrap();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _: Result<(), StoreError> = store.atomic_write(|store| {
+                store.bump_profile_revision()?;
+                panic!("fictional callback panic");
+            });
+        }));
+        assert!(result.is_err());
+        assert!(store.conn.is_autocommit());
+        assert_eq!(store.profile_revision().unwrap(), before);
+        let mut entered = false;
+        store
+            .atomic_write::<_, StoreError>(|store| {
+                store.bump_profile_revision()?;
+                let nested: Result<(), StoreError> = store.atomic_write(|_| {
+                    entered = true;
+                    Ok(())
+                });
+                assert!(nested.is_err());
+                assert!(!store.conn.is_autocommit());
+                Ok(())
+            })
+            .unwrap();
+        assert!(!entered);
+        assert_eq!(store.profile_revision().unwrap(), before + 1);
+        assert!(store.conn.is_autocommit());
     }
 }

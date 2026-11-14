@@ -211,6 +211,8 @@ pub enum WorkspaceError {
     EmptyFact,
     /// The referenced fact does not exist.
     UnknownFact(String),
+    /// A correction was based on a superseded or changed source value.
+    FactChanged,
     /// A packet must exist before it can be approved or exported.
     PacketRequired(String),
     /// The packet cited a fact that has since been corrected.
@@ -241,6 +243,10 @@ impl std::fmt::Display for WorkspaceError {
             WorkspaceError::NotFound(id) => write!(f, "no such job: {id}"),
             WorkspaceError::EmptyFact => write!(f, "a fact must have text"),
             WorkspaceError::UnknownFact(id) => write!(f, "no such fact: {id}"),
+            WorkspaceError::FactChanged => write!(
+                f,
+                "Qualification changed or is no longer active; reload before correcting it"
+            ),
             WorkspaceError::PacketRequired(id) => {
                 write!(f, "no prepared packet exists for {id}")
             }
@@ -926,8 +932,15 @@ impl Workspace {
         id: &JobIdentityId,
         next: ApplicationState,
     ) -> Result<bool, WorkspaceError> {
-        let mut job = self
-            .store
+        Self::set_state_in_store(&mut self.store, id, next)
+    }
+
+    fn set_state_in_store(
+        store: &mut Store,
+        id: &JobIdentityId,
+        next: ApplicationState,
+    ) -> Result<bool, WorkspaceError> {
+        let mut job = store
             .get_job(id)?
             .ok_or_else(|| WorkspaceError::NotFound(id.as_str().to_string()))?;
         if job.state == next {
@@ -940,7 +953,7 @@ impl Workspace {
             });
         }
         job.state = next;
-        self.store.upsert_job(&job)?;
+        store.upsert_job(&job)?;
         Ok(true)
     }
 

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "reviewed_on": "2026-11-14",
-  "reviewed_source": "f7d28ffa1ef8258e014ed547c8f4f6f37f07ea2e",
+  "reviewed_source": "4ea8a3959c6f0e0b373336f33ef384affe5a4625",
   "goal": "Continue the existing active Smart Jobseeker product-development goal",
   "plan": "docs/COMPLETION_PLAN_2026-11-11.md",
   "assessment": "docs/REPO_STATE_REVIEW_2026-11-11.md",
@@ -50,7 +50,8 @@
         "docs/g1/INLINE_FRAME_COMPLETENESS_2026-11-13.md",
         "docs/g1/SELECTED_CANDIDATE_PDFS_2026-11-14.md",
         "docs/g1/NATIVE_FILE_LABEL_DETAILS_2026-11-14.md",
-        "docs/g1/CHECKED_HISTORY_REHEARSAL_2026-11-14.md"
+        "docs/g1/CHECKED_HISTORY_REHEARSAL_2026-11-14.md",
+        "docs/g1/REVIEWED_QUALIFICATION_ANSWERS_2026-11-14.md"
       ],
       "next_action": "Prepare and qualify lazy private model/cache admission after native eligibility and efficient verified qualification-cache reuse. Retain native worker failure diagnostics and sufficient RAM-admitted aggregate job capacity measured with model/browser/helpers. Native-call interruption, cleanup latency and uncollected-session idle expiry remain open.",
       "execution_batch": "A",
@@ -114,7 +115,8 @@
         "docs/g1/CONDITIONAL_FORM_CONTINUATION_2026-11-14.md",
         "docs/g1/SELECTED_CANDIDATE_PDFS_2026-11-14.md",
         "docs/g1/NATIVE_FILE_LABEL_DETAILS_2026-11-14.md",
-        "docs/g1/CHECKED_HISTORY_REHEARSAL_2026-11-14.md"
+        "docs/g1/CHECKED_HISTORY_REHEARSAL_2026-11-14.md",
+        "docs/g1/REVIEWED_QUALIFICATION_ANSWERS_2026-11-14.md"
       ],
       "execution_batch": "B",
       "steps": [
@@ -280,7 +282,8 @@
         "docs/g1/SAVED_CONTACT_SNAPSHOTS_2026-11-14.md",
         "docs/g1/SELECTED_CANDIDATE_PDFS_2026-11-14.md",
         "docs/g1/NATIVE_FILE_LABEL_DETAILS_2026-11-14.md",
-        "docs/g1/CHECKED_HISTORY_REHEARSAL_2026-11-14.md"
+        "docs/g1/CHECKED_HISTORY_REHEARSAL_2026-11-14.md",
+        "docs/g1/REVIEWED_QUALIFICATION_ANSWERS_2026-11-14.md"
       ],
       "execution_batch": "C",
       "steps": [
@@ -292,7 +295,7 @@
         "After every action, read back native state and perform local-model visual review; detect stale state and no progress.",
         "Measure the local model on the frozen corpus; provide actionable review records rather than invented answers."
       ],
-      "next_action": "Connect source-bound reviewed candidate facts/qualification answers to the offline actor; then complete mixed contacts/PDF/history journeys with conditional, repeated and section controls, final native/visual workflow review and full archives. Checked-history text fields now pass2/2 authored local12B cases,9/9 answerable with unknown0/7, exact source links and live profile-revision cancellation. Preserve initial0/2/intermediate1/2 runs. General facts, broader controls, embedded file details and held-out complete workflows remain unqualified. Research semantic usefulness remains a separate qualification task.",
+      "next_action": "Implement source-span/field-bound short-value and numeric-unit projection without weakening paragraph numeric checks; rerun unchanged qualification cases (currently2/4 answerable,0/4 unknown entered,0incorrect;0/2cases passed). Then complete two mixed contacts/PDF/history/qualification journeys with conditional/repeated/section controls and final native/visual/document acceptance. Preserve the initial wrong-format entries and all prior failures. Anonymous runtime research usefulness and held-out workflows remain unqualified.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "start_requirements": [
         "The frozen schema2 known-source initial-control case and native mutation fixture admit investigation of the observed actuator failure. This does not admit broad planner promotion; that still requires the varied held-out tranche and full workflow truth.",
@@ -318,9 +321,10 @@
         "2026-11-14: isolated owned local12B qualification; free-provider fallback, HTML5 fragment/focus views and native-byte reuse, full action feedback, precise validator issues and constrained exact-source citation repair. Final-source native-text advice passes provenance; attachment question stops on irrelevant search results (1/2 advisory outcomes, not semantic/repair/workflow or held-out qualification). All prior failures retained. Workspace1408passed/616ignored,171UI scripts,29headless rendered cases, build/Clippy/fmt/audit/license checks pass; both owned model sessions/namespaces and rendered browser/app close.",
         "2026-11-14: explicit saved-contact snapshots replace the single bundled-profile bottleneck. Contact-only projection and source/hash validation, candidate-free public worker requests, freshness checks and no demo-document substitution. Two frozen fictional profiles through the compiled route each verify 3/3 contacts with independent native/visual evidence and leave 0/1 required uploads entered; no incorrect/unverified entries. This is 2/2 development field cases, not complete candidate/document/history workflows or held-out qualification. Exact temporary test-profile restoration remains unverified after API normalization; original model and filesystem-check limitations are retained.",
         "2026-11-14 final checkpoint: workspace 1414 passed / 616 ignored, full fixture-only browser selection 139 passed, Clippy/build/fmt pass. UI 171 scripts and 29 rendered cases pass at recorded sources. Research prompt packing preserves source excerpts/validation while omitting rejected prose with byte accounting; source IDs/counts are bound and repair state survives invalid generations. Four retained attachment investigations remain review; no model/semantic/repair promotion. Scoped host audit has no matching processes or registrations and no shared resident models; 33,963,266,048 bytes RAM available. Exact private fixture-data restoration remains unverified.",
-        "2026-11-14: checked-only history snapshots, reused question/record/value planner, separate immutable plan/entry archives, exact source-component checks and correction invalidation. Local12B2/2 development text-field cases9/9 answerable, unknown0/7; live owned-model exit after profile correction and nonmutating stale archive annotation pass. Windows1431/617ignored,172JavaScript and49rendered cases pass. No whole-workflow or held-out promotion."
+        "2026-11-14: checked-only history snapshots, reused question/record/value planner, separate immutable plan/entry archives, exact source-component checks and correction invalidation. Local12B2/2 development text-field cases9/9 answerable, unknown0/7; live owned-model exit after profile correction and nonmutating stale archive annotation pass. Windows1431/617ignored,172JavaScript and49rendered cases pass. No whole-workflow or held-out promotion.",
+        "2026-11-14: reviewed-claim snapshot/actor/archive integration, atomic source-checked correction UI/API, facts-revision cancellation and nonmutating archive freshness. Shared wording pass now receives the question; final same-input local12B2/4 fields verified,unknown0/4,0incorrect/unverified/source mismatches;0/2fieldcases passed. Numeric/unit proof remains open. Windows1442 ordinarypassed/617ignored, focused3afterinputguard,173JS and61rendered pass; older bad-format runs retained."
       ],
-      "open_checkpoint": "Saved contacts, explicitly selected candidate PDFs and checked career history are connected to bound offline snapshots. Their authored field cases do not establish whole-workflow/held-out coverage or final document truth/layout/ATS acceptance. General candidate facts/qualification answers and broader controls/repeated journeys remain unfinished. Anonymous public technical research can read direct documents; semantic usefulness and effective schema/finalization remain unqualified. Earlier model, browser and research failures remain retained."
+      "open_checkpoint": "Reviewed qualifications are connected through version4 immutable snapshots, factual/natural-wording/question checks, exact source IDs, independent native/visual entry and separate archives. The format-context fix removes two earlier wrong-format performed entries; final native2/4 answerable andunknown0/4, but both cases remain0/2 because numeric/unit grounding still blocks required answers. No complete-workflow or held-out promotion. Contacts/history/PDF field evidence does not establish mixed journeys or final attachment truth/layout/ATS acceptance."
     },
     {
       "id": "R05",
@@ -506,7 +510,8 @@
         "Email preparation/correlation; no application email sent"
       ],
       "evidence": [
-        "docs/g1/INDEPENDENT_ENTRY_EVIDENCE_2026-11-11.md"
+        "docs/g1/INDEPENDENT_ENTRY_EVIDENCE_2026-11-11.md",
+        "docs/g1/REVIEWED_QUALIFICATION_ANSWERS_2026-11-14.md"
       ],
       "execution_batch": "E",
       "steps": [
@@ -518,7 +523,8 @@
       "next_action": "Complete immutable per-attempt evidence including failed-entry screenshots/readback and explicit unavailable observations; preserve original ads, exact attachments, answers and uncertain outcomes.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "completed_scopes": [
-        "Bound failed-entry screenshots/readback now persist with entry_unverified, original failure and explicit unavailable states; full attempt/recovery/email gates remain open."
+        "Bound failed-entry screenshots/readback now persist with entry_unverified, original failure and explicit unavailable states; full attempt/recovery/email gates remain open.",
+        "2026-11-14: immutable qualification plan/entry evidence and stale-source annotations; compiled correction route saves once/refuses stale editor, and runtime-live facts change cancels/drains owned model. Complete record/journey, crash/restart and ambiguous external-write recovery remain unqualified."
       ]
     },
     {
@@ -555,7 +561,7 @@
     {
       "id": "R12",
       "priority": "P1",
-      "status": "planned",
+      "status": "in_progress",
       "depends_on": [
         "R01",
         "R04",
@@ -572,7 +578,9 @@
         "Mouse-drag resize bounds, real browser zoom/DPI/accessibility where available",
         "Every setting functional and persisted; no invented status"
       ],
-      "evidence": [],
+      "evidence": [
+        "docs/g1/REVIEWED_QUALIFICATION_ANSWERS_2026-11-14.md"
+      ],
       "execution_batch": "F",
       "steps": [
         "Build complete screen/state/setting behavior matrix including setup, license/about, errors, recovery and manual review.",
@@ -584,6 +592,9 @@
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "start_requirements": [
         "Apply shared style and interaction checks during every changed user flow; full interface acceptance remains a separate completion gate."
+      ],
+      "completed_scopes": [
+        "2026-11-14: qualification controls/source notices and correction editor at five widths/200% zoom.61rendered cases pass; geometry-only first pass was visually inadequate, shared styling repaired and actual captures reinspected. Not whole-interface acceptance."
       ]
     },
     {
@@ -606,7 +617,8 @@
         "Change-directed checks, short evidence handoffs and verified cleanup"
       ],
       "evidence": [
-        "docs/g1/NATIVE_FRAME_IDENTITY_2026-11-13.md"
+        "docs/g1/NATIVE_FRAME_IDENTITY_2026-11-13.md",
+        "docs/g1/REVIEWED_QUALIFICATION_ANSWERS_2026-11-14.md"
       ],
       "execution_batch": "F",
       "steps": [
@@ -624,7 +636,7 @@
     {
       "id": "R14",
       "priority": "P2",
-      "status": "planned",
+      "status": "in_progress",
       "depends_on": [
         "R01",
         "R02",
@@ -651,7 +663,10 @@
         "Required hosted checks and visible detector states; no manual closure",
         "Honest remaining limits; no release or application submission"
       ],
-      "evidence": [],
+      "evidence": [
+        "docs/g1/REVIEWED_QUALIFICATION_ANSWERS_2026-11-14.md",
+        "docs/RELEASE_READINESS_AND_NEXT_PLAN_2026-11-14.md"
+      ],
       "execution_batch": "G",
       "steps": [
         "Assemble exact-source supported-capability and end-to-end acceptance matrix after prerequisite packages pass.",
@@ -659,7 +674,7 @@
         "Bind installer, model, corpus, recovery and UI evidence; report remaining unsupported scope.",
         "Tell the user what is ready and what remains; do not publish a release or send applications."
       ],
-      "next_action": "Assemble exact-source supported-capability and end-to-end acceptance matrix after prerequisite packages pass."
+      "next_action": "Maintain this gate-based readiness review alongside exact-source checks. No completion percentage/date or release candidate claim until complete journeys, held-out/model/document/write-isolation and clean-host evidence qualify. User alone decides release."
     }
   ],
   "original_reviewed_source": "4acb9a955bcb961ad7a27cb9538e77bb0e03a547",

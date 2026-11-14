@@ -161,18 +161,49 @@ impl Workspace {
         new_text: &str,
         now_unix: i64,
     ) -> Result<CorrectionReport, WorkspaceError> {
+        self.store.atomic_write(|store| {
+            Self::correct_fact_inner(store, claim_id, new_text, None, now_unix)
+        })
+    }
+
+    /// Correct exactly the active value the caller reviewed, under one writer lock.
+    pub fn correct_fact_if_unchanged(
+        &mut self,
+        claim_id: &str,
+        expected_text: &str,
+        new_text: &str,
+        now_unix: i64,
+    ) -> Result<CorrectionReport, WorkspaceError> {
+        self.store.atomic_write(|store| {
+            Self::correct_fact_inner(store, claim_id, new_text, Some(expected_text), now_unix)
+        })
+    }
+
+    fn correct_fact_inner(
+        store: &mut waypoint_store::Store,
+        claim_id: &str,
+        new_text: &str,
+        expected_text: Option<&str>,
+        now_unix: i64,
+    ) -> Result<CorrectionReport, WorkspaceError> {
         let new_text = new_text.trim();
         if new_text.is_empty() {
             return Err(WorkspaceError::EmptyFact);
         }
-        let old = self
-            .store
-            .claim(claim_id)?
-            .ok_or_else(|| WorkspaceError::UnknownFact(claim_id.to_string()))?;
+        let old = store.active_claim(claim_id)?.ok_or_else(|| {
+            if expected_text.is_some() {
+                WorkspaceError::FactChanged
+            } else {
+                WorkspaceError::UnknownFact(claim_id.to_string())
+            }
+        })?;
 
-        let new_revision = self.store.bump_profile_revision()?;
+        if expected_text.is_some_and(|expected| expected != old.text) {
+            return Err(WorkspaceError::FactChanged);
+        }
+        let new_revision = store.bump_profile_revision()?;
         let new_id = format!("c{new_revision}-{}", &sha256_hex(new_text.as_bytes())[..12]);
-        self.store.insert_claim(&StoredClaim {
+        store.insert_claim(&StoredClaim {
             id: new_id.clone(),
             profile_revision: new_revision,
             text: new_text.to_string(),
@@ -190,9 +221,9 @@ impl Workspace {
         };
         let now = now_unix.to_string();
 
-        for packet in self.store.packets_citing_claim(&old.id)? {
+        for packet in store.packets_citing_claim(&old.id)? {
             let job_id = JobIdentityId::new(packet.job_id.clone())?;
-            let Some(job) = self.store.get_job(&job_id)? else {
+            let Some(job) = store.get_job(&job_id)? else {
                 continue;
             };
             if is_submitted(job.state) {
@@ -200,16 +231,15 @@ impl Workspace {
                 report.submitted_untouched.push(packet.job_id.clone());
                 continue;
             }
-            if self.store.invalidate_packet(&packet.job_id, &now)? {
+            if store.invalidate_packet(&packet.job_id, &now)? {
                 report.invalidated_packets.push(packet.job_id.clone());
             }
             report.expired_grants.extend(
-                self.store
-                    .expire_grants_for_packets(std::slice::from_ref(&packet.packet_sha256))?,
+                store.expire_grants_for_packets(std::slice::from_ref(&packet.packet_sha256))?,
             );
             if job.state == ApplicationState::Approved {
                 // The approval is void, so the job returns to Prepared.
-                if self.set_state(&job_id, ApplicationState::Prepared)? {
+                if Self::set_state_in_store(store, &job_id, ApplicationState::Prepared)? {
                     report.reopened_to_prepared.push(packet.job_id.clone());
                 }
             }
@@ -561,4 +591,44 @@ fn domain_claims(claims: &[StoredClaim]) -> Vec<Claim> {
             })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod atomic_correction_tests {
+    use super::*;
+    #[test]
+    fn corrections_compare_the_active_source_before_any_revision_change() {
+        let mut ws = Workspace::in_memory().unwrap();
+        let original = ws
+            .add_fact("Fictional original skill", FactOrigin::UserAttested)
+            .unwrap();
+        let before = ws.profile_revision().unwrap();
+        let digest = ws.active_facts_digest().unwrap();
+        assert!(matches!(
+            ws.correct_fact_if_unchanged(&original, "stale source", "Fictional corrected skill", 1),
+            Err(WorkspaceError::FactChanged)
+        ));
+        assert_eq!(ws.profile_revision().unwrap(), before);
+        assert_eq!(ws.active_facts_digest().unwrap(), digest);
+        let report = ws
+            .correct_fact_if_unchanged(
+                &original,
+                "Fictional original skill",
+                "Fictional corrected skill",
+                1,
+            )
+            .unwrap();
+        let after = ws.active_facts_digest().unwrap();
+        assert_eq!(ws.facts().unwrap()[0].id, report.new_claim_id);
+        assert!(ws
+            .correct_fact_if_unchanged(
+                &original,
+                "Fictional original skill",
+                "Second correction",
+                2
+            )
+            .is_err());
+        assert_eq!(ws.active_facts_digest().unwrap(), after);
+        assert_eq!(ws.fact_history().unwrap().len(), 2);
+    }
 }

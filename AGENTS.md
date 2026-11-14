@@ -496,6 +496,11 @@ For continuation of the active product-development goal, read
 The [2026-11-14 direction review](docs/RELEASE_DIRECTION_REVIEW_2026-11-14.md)
 adds current competitor research and prioritizes the actual reasoning/tool actor
 and complete candidate journeys; it preserves every unfinished acceptance gate.
+The [readiness assessment and next sequence](docs/RELEASE_READINESS_AND_NEXT_PLAN_2026-11-14.md)
+prioritizes the observed numeric/short-answer proof gap, then complete mixed
+candidate journeys. Preserve the unchanged failed field-case denominators; do
+not replace integrated work with more isolated geometry passes or relax numeric
+units, source checks or unknown abstention to obtain a passing score.
 Use that queue's prioritized `next_task` once its `start_requirements` are ready;
 `depends_on` records completion prerequisites, not a ban on independent preparation.
 Containment, ownership and interface obligations apply throughout. Keep all

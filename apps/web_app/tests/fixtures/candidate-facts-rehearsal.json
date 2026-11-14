@@ -1,0 +1,23 @@
+{
+  "scope": "Authored fictional qualification text fields; independent exact answer values frozen before inference; no delivery endpoint, held-out or complete-workflow claim.",
+  "cases": [
+    {
+      "id": "qualifications-a",
+      "language": "Rust",
+      "years": "4",
+      "expected": {
+        "#q1": "Rust",
+        "#q2": "4"
+      }
+    },
+    {
+      "id": "qualifications-b",
+      "language": "Python",
+      "years": "7",
+      "expected": {
+        "#q1": "Python",
+        "#q2": "7"
+      }
+    }
+  ]
+}

@@ -572,6 +572,16 @@ impl RehearsalVision {
         ))
     }
 
+    fn plan_qualifications(
+        &mut self,
+        fields: &[waypoint_applications::form_mapping::FormField],
+        facts: &crate::rehearsal_facts::Snapshot,
+    ) -> Result<Value, String> {
+        crate::check_inference_memory()?;
+        let model = self.model.as_mut().ok_or("The local model needs review")?;
+        crate::visual_review::propose_recorded_qualifications(model, self.addr, fields, facts)
+    }
+
     fn plan_attachments(
         &mut self,
         schema: &waypoint_applications::form_mapping::FormSchema,
@@ -743,8 +753,22 @@ fn archive_history(
     kind: &str,
     value: &Value,
 ) -> Result<Value, String> {
+    archive_candidate_answers(screenshots, "history", index, kind, value)
+}
+
+#[cfg(windows)]
+fn archive_candidate_answers(
+    screenshots: &Path,
+    category: &str,
+    index: usize,
+    kind: &str,
+    value: &Value,
+) -> Result<Value, String> {
     use std::io::Write;
-    if !matches!(kind, "plan" | "entries") || !(1..=64).contains(&index) {
+    if !matches!(category, "history" | "facts")
+        || !matches!(kind, "plan" | "entries")
+        || !(1..=64).contains(&index)
+    {
         return Err("Invalid history archive identity".into());
     }
     let parent = screenshots
@@ -761,7 +785,7 @@ fn archive_history(
     if bytes.len() > 512 * 1024 {
         return Err("History answer evidence exceeds its limit".into());
     }
-    let name = format!("history-{kind}-{index:03}.json");
+    let name = format!("{category}-{kind}-{index:03}.json");
     let mut file = fs::OpenOptions::new()
         .create_new(true)
         .write(true)
@@ -787,6 +811,8 @@ struct Rehearsal {
     candidate_metadata: Value,
     history: Result<Vec<crate::candidate_history::SelectedRecord>, String>,
     history_plans: Vec<Value>,
+    qualifications: Option<crate::rehearsal_facts::Snapshot>,
+    qualification_plans: Vec<Value>,
     privacy_profile: Value,
     candidate_documents: Vec<crate::rehearsal_candidate::SnapshotDocument>,
     candidate_selected: bool,
@@ -812,6 +838,9 @@ impl Rehearsal {
             .as_ref()
             .map(|(snapshot, _)| snapshot.documents.clone())
             .unwrap_or_default();
+        let qualifications = candidate
+            .as_ref()
+            .and_then(|(snapshot, _)| snapshot.facts.clone());
         let history_raw = candidate
             .as_ref()
             .and_then(|(snapshot, _)| snapshot.history.clone());
@@ -829,6 +858,13 @@ impl Rehearsal {
         if let Some(raw) = history_raw {
             privacy_profile["career_history"] = json!(raw);
         }
+        if let Some(facts) = &qualifications {
+            privacy_profile["reviewed_qualifications"] = json!(facts
+                .facts
+                .iter()
+                .map(|f| f.text.clone())
+                .collect::<Vec<_>>());
+        }
         let halted = vision.model.is_none() || profile.is_err();
         Self {
             vision,
@@ -843,6 +879,8 @@ impl Rehearsal {
             candidate_metadata,
             history,
             history_plans: Vec::new(),
+            qualifications,
+            qualification_plans: Vec::new(),
             privacy_profile,
             candidate_documents,
             candidate_selected,
@@ -991,6 +1029,77 @@ impl Rehearsal {
                 }
             }
         }
+        let mut qualification_sources = std::collections::BTreeMap::new();
+        if let Some(facts) = &self.qualifications {
+            let eligible: Vec<_> = form
+                .schema
+                .fields
+                .iter()
+                .filter(|field| {
+                    crate::rehearsal_facts::eligible(field)
+                        && !review_selectors.contains(&field.selector)
+                        && !mappings
+                            .iter()
+                            .any(|mapping| mapping.field_selector == field.selector)
+                        && !self.captures[carry_from..]
+                            .iter()
+                            .any(|(_, capture, _)| capture.matches_field(field))
+                        && form
+                            .schema
+                            .fields
+                            .iter()
+                            .filter(|f| f.label.trim().eq_ignore_ascii_case(field.label.trim()))
+                            .count()
+                            == 1
+                })
+                .cloned()
+                .collect();
+            let offered: Vec<_> = eligible
+                .iter()
+                .take(
+                    crate::rehearsal_facts::MAX_FIELDS
+                        .min(REHEARSAL_LIMIT.saturating_sub(self.fields.len())),
+                )
+                .cloned()
+                .collect();
+            if !offered.is_empty() {
+                let mut report = json!({"view":view,"source":facts.metadata(),"eligible_fields":eligible.len(),"offered_fields":offered.len(),"omitted_eligible_fields":eligible.len()-offered.len(),"status":"needs_review"});
+                match self
+                    .vision
+                    .plan_qualifications(&offered, facts)
+                    .and_then(|plan| {
+                        crate::rehearsal_facts::resolve(&offered, facts, &plan)
+                            .map(|resolved| (plan, resolved))
+                    }) {
+                    Ok((plan, resolved)) => {
+                        report["status"] = json!("proposed");
+                        report["plan"] = plan;
+                        for (mapping, source) in resolved {
+                            qualification_sources.insert(mapping.field_selector.clone(), source);
+                            mappings.push(mapping);
+                        }
+                    }
+                    Err(error) => report["reason"] = json!(bounded_text(&error)),
+                }
+                match archive_candidate_answers(
+                    directory,
+                    "facts",
+                    self.qualification_plans.len() + 1,
+                    "plan",
+                    &report,
+                ) {
+                    Ok(archive) => report["archive"] = archive,
+                    Err(error) => {
+                        report["archive_error"] = json!(error);
+                        self.halted = true;
+                    }
+                }
+                self.qualification_plans.push(report);
+                if self.halted {
+                    return None;
+                }
+            }
+        }
         let mut attachments = std::collections::BTreeMap::new();
         if form
             .schema
@@ -1112,6 +1221,9 @@ impl Rehearsal {
             }
             if let Some(source) = history_sources.get(&field.selector) {
                 result["candidate_history"] = json!({"snapshot_sha256":self.candidate_metadata["snapshot_sha256"],"history_sha256":self.candidate_metadata["history_sha256"],"source_profile_sha256":self.candidate_metadata["source_profile_sha256"],"schema_sha256":schema_sha,"proposal":source,"note":"Resolved from checked saved career history; experience and delivery are not independently verified."});
+            }
+            if let Some(source) = qualification_sources.get(&field.selector) {
+                result["candidate_facts"] = json!({"snapshot_sha256":self.candidate_metadata["snapshot_sha256"],"source_facts_sha256":self.candidate_metadata["source_facts_sha256"],"schema_sha256":schema_sha,"proposal":source,"note":"Grounded in reviewed saved qualifications; candidate facts and delivery are not independently verified."});
             }
             if field.field_type == FormFieldType::File && self.candidate_selected {
                 let document = self
@@ -1308,6 +1420,23 @@ impl Rehearsal {
                 self.halted = true;
             }
         }
+        if self.fields[history_start..]
+            .iter()
+            .any(|field| field.get("candidate_facts").is_some())
+        {
+            let report = json!({"view":view,"snapshot_sha256":self.candidate_metadata["snapshot_sha256"],"fields":self.fields[history_start..].iter().filter(|field|field.get("candidate_facts").is_some()).collect::<Vec<_>>()});
+            if let Err(error) = archive_candidate_answers(
+                directory,
+                "facts",
+                self.qualification_plans.len(),
+                "entries",
+                &report,
+            ) {
+                self.qualification_plans
+                    .push(json!({"view":view,"status":"needs_review","archive_error":error}));
+                self.halted = true;
+            }
+        }
         if self.halted {
             None
         } else {
@@ -1420,7 +1549,7 @@ impl Rehearsal {
     }
 
     fn finish(self) -> Value {
-        json!({"scope":if self.candidate_selected{self.candidate_metadata["scope"].as_str().unwrap_or("saved_candidate_materials")}else{"fictional_saved_form"},"candidate_source":self.candidate_metadata,"profile_sha256":self.candidate_metadata["profile_sha256"],"profile_error":self.profile.as_ref().err(),"field_limit":REHEARSAL_LIMIT,"section_advance_limit":SECTION_ADVANCE_LIMIT,"halted":self.halted,"fields":self.fields,"fact_plans":self.fact_plans,"history_plans":self.history_plans,"history_error":self.history.as_ref().err(),"attachment_plans":self.attachment_plans,"sections":self.sections,"dialogs":self.dialogs,"dialog_action_limit":DIALOG_ACTION_LIMIT,"vision_model":self.vision.identity,
+        json!({"scope":if self.candidate_selected{self.candidate_metadata["scope"].as_str().unwrap_or("saved_candidate_materials")}else{"fictional_saved_form"},"candidate_source":self.candidate_metadata,"profile_sha256":self.candidate_metadata["profile_sha256"],"profile_error":self.profile.as_ref().err(),"field_limit":REHEARSAL_LIMIT,"section_advance_limit":SECTION_ADVANCE_LIMIT,"halted":self.halted,"fields":self.fields,"fact_plans":self.fact_plans,"history_plans":self.history_plans,"qualification_plans":self.qualification_plans,"history_error":self.history.as_ref().err(),"attachment_plans":self.attachment_plans,"sections":self.sections,"dialogs":self.dialogs,"dialog_action_limit":DIALOG_ACTION_LIMIT,"vision_model":self.vision.identity,
             "conditional_replans":self.conditionals,"conditional_replan_limit":CONDITIONAL_REPLAN_LIMIT,
             "public_research_enabled":self.public_research,"public_research":self.research_notes,
             "visual_gate":{"required":true,"available":self.vision.model.is_some(),"targets":self.vision.targets}})

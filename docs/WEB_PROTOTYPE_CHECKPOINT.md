@@ -1,3 +1,14 @@
+## Reviewed qualifications and release direction — 2026-11-14
+
+Source-bound qualification answers and atomic corrections are connected, with
+actual native/model/UI evidence. The final local 12B qualification run verifies
+2/4 answerable fields and leaves all four unknown answers blank; numeric/unit checks still block the
+two required numeric answers, so both declared cases remain 0/2. No complete-
+workflow or release readiness is claimed. [Evidence](g1/REVIEWED_QUALIFICATION_ANSWERS_2026-11-14.md)
+and the [current readiness assessment/next plan](RELEASE_READINESS_AND_NEXT_PLAN_2026-11-14.md)
+separate working foundations, measured failures and the remaining product gates.
+Earlier checkpoint statements below retain their original scope.
+
 ## Inline form entry - 2026-11-13
 
 Fully inspected same-origin inline documents now support bounded field entry,

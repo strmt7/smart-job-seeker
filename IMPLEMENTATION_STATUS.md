@@ -1,3 +1,24 @@
+## Reviewed qualification answers and corrections — 2026-11-14
+
+Reviewed qualification snapshots now reach the offline actor with source IDs,
+factual/question checks, immutable answer archives and independent facts-revision
+cancellation. Source-checked corrections and their dependent invalidation share
+one SQLite transaction; the profile editor saves/cancels and refuses stale edits.
+
+The shared wording pass now retains the question's requested format. On the same
+frozen local 12B cases, wrong-format entries fall from two to zero; **2/4 answerable
+fields verify, no unknown answers are entered (0/4), but both field cases remain 0/2** because numeric/unit
+support still blocks required answers. This is partial progress, not generic or
+whole-workflow qualification. [Measured method and limits](docs/g1/REVIEWED_QUALIFICATION_ANSWERS_2026-11-14.md).
+
+Windows workspace: 1,442 passed / 617 ignored, final three focused input checks, Clippy,
+debug build, 173 JavaScript scripts and 61 rendered cases pass. Actual screenshots
+caught and corrected the first editor's default styling. No real application,
+application email or release occurred. The [readiness assessment and next plan](docs/RELEASE_READINESS_AND_NEXT_PLAN_2026-11-14.md)
+prioritizes typed numeric/short answers, complete candidate journeys and the
+remaining isolation/document/held-out/installation gates. The new source has not
+yet inherited the previous commit's hosted checks.
+
 ## Checked career history in offline forms - 2026-11-14
 
 Explicitly selected checked employment/education records now reach the offline

@@ -38,6 +38,7 @@ struct Task {
     rx: mpsc::Receiver<Result<Value, String>>,
     result: Option<Result<Value, String>>,
     candidate_revision: Option<String>,
+    facts_revision: Option<String>,
     invalidated: Option<&'static str>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
@@ -77,7 +78,14 @@ fn public_url(raw: &str, profile: &Value) -> Result<(String, String), String> {
     Ok((url.to_string(), source))
 }
 pub fn start(ws: &Workspace, job: &JobIdentityId, id: String) -> Result<(), String> {
-    start_task(ws, job, id, None, false, false, &[])
+    start_task(
+        ws,
+        job,
+        id,
+        None,
+        crate::rehearsal_candidate::InputSelection::default(),
+        &[],
+    )
 }
 pub fn start_preview(
     ws: &Workspace,
@@ -118,6 +126,7 @@ pub fn start_preview_options(
             public_research,
             use_saved_contacts,
             use_saved_history: false,
+            use_reviewed_facts: false,
             documents: Vec::new(),
         },
     )
@@ -127,6 +136,7 @@ pub(crate) struct PreviewOptions {
     pub(crate) public_research: bool,
     pub(crate) use_saved_contacts: bool,
     pub(crate) use_saved_history: bool,
+    pub(crate) use_reviewed_facts: bool,
     pub(crate) documents: Vec<crate::rehearsal_candidate::DocumentSelection>,
 }
 pub(crate) fn start_selected_preview(
@@ -141,10 +151,15 @@ pub(crate) fn start_selected_preview(
         public_research,
         use_saved_contacts,
         use_saved_history,
+        use_reviewed_facts,
         documents,
     } = options;
     crate::rehearsal_candidate::validate_selections(&documents)?;
-    if (public_research || use_saved_contacts || use_saved_history || !documents.is_empty())
+    if (public_research
+        || use_saved_contacts
+        || use_saved_history
+        || use_reviewed_facts
+        || !documents.is_empty())
         && !rehearse
     {
         return Err(
@@ -165,8 +180,11 @@ pub(crate) fn start_selected_preview(
             public_research,
             candidate_snapshot_sha256: None,
         }),
-        use_saved_contacts,
-        use_saved_history,
+        crate::rehearsal_candidate::InputSelection {
+            contacts: use_saved_contacts,
+            history: use_saved_history,
+            facts: use_reviewed_facts,
+        },
         &documents,
     )
 }
@@ -175,10 +193,14 @@ fn start_task(
     job: &JobIdentityId,
     id: String,
     mut replay: Option<crate::recorded_preview::Source>,
-    use_saved_contacts: bool,
-    use_saved_history: bool,
+    inputs: crate::rehearsal_candidate::InputSelection,
     documents: &[crate::rehearsal_candidate::DocumentSelection],
 ) -> Result<(), String> {
+    let crate::rehearsal_candidate::InputSelection {
+        contacts: use_saved_contacts,
+        history: use_saved_history,
+        facts: use_reviewed_facts,
+    } = inputs;
     if !checked_id(&id) {
         return Err("Invalid page-copy identity".into());
     }
@@ -234,7 +256,22 @@ fn start_task(
                 .ok_or("Add checked career history before using this option")?,
         )?;
     }
-    let candidate_revision = (use_saved_contacts || use_saved_history)
+    if use_reviewed_facts {
+        if !replay.as_ref().is_some_and(|source| source.rehearse)
+            || raw_profile
+                .as_ref()
+                .is_none_or(|raw| raw.len() > 256 * 1024)
+        {
+            return Err(
+                "Reviewed qualifications require a saved profile and offline rehearsal".into(),
+            );
+        }
+        crate::rehearsal_facts::Snapshot::stage(ws, &profile)?;
+    }
+    let facts_revision = use_reviewed_facts
+        .then(|| ws.active_facts_digest().map_err(|e| e.to_string()))
+        .transpose()?;
+    let candidate_revision = (use_saved_contacts || use_saved_history || use_reviewed_facts)
         .then(|| {
             raw_profile
                 .as_ref()
@@ -282,12 +319,12 @@ fn start_task(
     .ok_or("Page copies require a saved workspace")?;
     let root = record.source_capture_directory();
     std::fs::create_dir(&root).map_err(|_| "Cannot create page-copy folder")?;
-    if use_saved_contacts || use_saved_history || !documents.is_empty() {
+    if use_saved_contacts || use_saved_history || use_reviewed_facts || !documents.is_empty() {
         let source = replay
             .as_mut()
             .filter(|source| source.rehearse)
             .ok_or("Saved contacts require an offline rehearsal")?;
-        let raw = if use_saved_contacts || use_saved_history {
+        let raw = if use_saved_contacts || use_saved_history || use_reviewed_facts {
             Some(
                 raw_profile
                     .as_deref()
@@ -300,14 +337,13 @@ fn start_task(
             .parent()
             .ok_or("Candidate record is unavailable")?
             .join("screenshots");
-        source.candidate_snapshot_sha256 = Some(if use_saved_history {
+        source.candidate_snapshot_sha256 = Some(if use_saved_history || use_reviewed_facts {
             crate::rehearsal_candidate::stage_inputs(
                 ws,
                 &snapshots,
                 job.as_str(),
                 raw,
-                use_saved_contacts,
-                true,
+                inputs,
                 documents,
             )?
         } else if documents.is_empty() {
@@ -401,6 +437,7 @@ fn start_task(
         rx,
         result: None,
         candidate_revision,
+        facts_revision,
         invalidated: None,
     });
     Ok(())
@@ -416,6 +453,20 @@ pub(crate) fn invalidate_candidate_profile(ws: &Workspace) -> Result<(), String>
     Ok(())
 }
 fn invalidate_task_profile(ws: &Workspace, task: &mut Task) {
+    if ws.db_path.as_ref() == Some(&task.workspace) {
+        if let Some(expected) = &task.facts_revision {
+            let current = ws.active_facts_digest().ok();
+            if current.as_ref() != Some(expected) {
+                task.invalidated = Some(if current.is_some() {
+                    "candidate_facts_changed"
+                } else {
+                    "candidate_facts_unavailable"
+                });
+                task.cancel.store(true, Ordering::Release);
+                return;
+            }
+        }
+    }
     if ws.db_path.as_ref() != Some(&task.workspace) || task.candidate_revision.is_none() {
         return;
     }
@@ -545,7 +596,9 @@ fn with_current_source(ws: &Workspace, mut value: Value) -> Value {
 pub(crate) fn candidate_profile_bound(source: &Value) -> bool {
     source["scope"] == "saved_candidate_contacts"
         || (source["scope"] == "saved_candidate_materials"
-            && (source["contacts_selected"] == true || source["history_selected"] == true))
+            && (source["contacts_selected"] == true
+                || source["history_selected"] == true
+                || source["facts_selected"] == true))
 }
 pub(crate) fn candidate_profile_match(source: &Value, current: Option<&str>) -> Option<bool> {
     let expected = source["source_profile_sha256"]
@@ -554,17 +607,30 @@ pub(crate) fn candidate_profile_match(source: &Value, current: Option<&str>) -> 
     current.map(|current| current == expected)
 }
 fn with_current_candidate(ws: &Workspace, mut value: Value) -> Value {
-    let source = &value["result"]["preview"]["rehearsal"]["candidate_source"];
-    if candidate_profile_bound(source) {
+    let source = value["result"]["preview"]["rehearsal"]["candidate_source"].clone();
+    if candidate_profile_bound(&source) {
         let current = ws
             .candidate_profile()
             .ok()
             .flatten()
             .map(|raw| waypoint_domain::sha256_hex(raw.as_bytes()));
         value["current_candidate_profile"] =
-            json!(candidate_profile_match(source, current.as_deref()));
+            json!(candidate_profile_match(&source, current.as_deref()));
+    }
+    if source["facts_selected"] == true {
+        value["current_candidate_facts"] = json!(candidate_facts_match(
+            &source,
+            ws.active_facts_digest().ok().as_deref()
+        ));
     }
     value
+}
+
+pub(crate) fn candidate_facts_match(source: &Value, current: Option<&str>) -> Option<bool> {
+    let expected = source["source_facts_sha256"]
+        .as_str()
+        .filter(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()))?;
+    current.map(|current| current == expected)
 }
 
 fn finalize(
@@ -1137,6 +1203,7 @@ mod tests {
             rx,
             result: None,
             candidate_revision: None,
+            facts_revision: None,
             invalidated: None,
         };
         (dir, ws, task)
@@ -1206,6 +1273,40 @@ mod tests {
         value.as_object_mut().unwrap().remove("source_url_sha256");
         assert!(with_current_source(&ws, value)["current_source"].is_null());
     }
+    #[test]
+    fn qualification_corrections_cancel_the_bound_task_and_change_cached_freshness() {
+        let (_dir, mut ws, mut task) = fixture();
+        ws.save_candidate_profile("{}").unwrap();
+        let claim = ws
+            .add_fact(
+                "Fictional old skill",
+                waypoint_workspace::FactOrigin::UserAttested,
+            )
+            .unwrap();
+        let digest = ws.active_facts_digest().unwrap();
+        task.facts_revision = Some(digest.clone());
+        invalidate_task_profile(&ws, &mut task);
+        assert!(!task.cancel.load(Ordering::Acquire));
+        let source = json!({"scope":"saved_candidate_materials","facts_selected":true,"source_profile_sha256":waypoint_domain::sha256_hex(b"{}"),"source_facts_sha256":digest});
+        let value = json!({"result":{"preview":{"rehearsal":{"candidate_source":source}}}});
+        assert_eq!(
+            with_current_candidate(&ws, value.clone())["current_candidate_facts"],
+            true
+        );
+        ws.correct_fact_if_unchanged(&claim, "Fictional old skill", "Fictional new skill", 1)
+            .unwrap();
+        invalidate_task_profile(&ws, &mut task);
+        assert_eq!(task.invalidated, Some("candidate_facts_changed"));
+        assert!(task.cancel.load(Ordering::Acquire));
+        assert_eq!(
+            with_current_candidate(&ws, value)["current_candidate_facts"],
+            false
+        );
+        let value = finalize(&ws, &mut task, Ok(completed())).unwrap();
+        assert_eq!(value["status"], "cancelled");
+        assert_eq!(value["record_saved"], true);
+    }
+
     #[test]
     fn corrected_candidate_inputs_cancel_only_the_bound_workspace_and_preserve_evidence() {
         let (_dir, ws, mut task) = fixture();

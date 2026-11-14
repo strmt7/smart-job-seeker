@@ -113,6 +113,46 @@ async function bounded(promise,label,ms=15000){let timer;try{return await Promis
   evidence.cases.push(`checked history provenance and revision warning at ${width}px`);
   if(width===390||width===1440)await captureViewport(`history-result-${width}.png`);
  }
+
+ await page.evaluate(()=>{
+  const host=element('section','','answer-draft');host.id='facts-result-qualification';host.style.padding='20px';
+  host.append(window.WaypointSourceCopies.previewView({candidate_facts_current:false,views:[{kind:'page',label:'Fictional reviewed qualifications',fields:[{label:'Technical skills'}]}],rehearsal:{scope:'saved_candidate_materials',candidate_source:{contacts_selected:false,facts_selected:true,documents:[]},qualification_plans:[{view:1,status:'proposed',plan:{proposals:[{}],manual_review:[{}]},archive:{file:'answers/facts-plan-001.json'}}],fields:[{view:1,label:'Technical skills',kind:'text',status:'visually_matched',native_verified:true,candidate_facts:{proposal:{sources:[{id:'fictional-source'}]}}}]}},element,{inline:true}));document.querySelector('#workspace-pane').append(host);
+ });
+ const factsResult=page.locator('#facts-result-qualification');
+ for(const width of [320,390,768,1440,1920]){
+  await resizeViewport({width,height:1000});await factsResult.scrollIntoViewIfNeeded();
+  assert.equal(await factsResult.evaluate(el=>el.scrollWidth>el.clientWidth+1||document.documentElement.scrollWidth>innerWidth+1),false,`Qualification result overflow at ${width}`);
+  assert.equal(await factsResult.getByText('Reviewed qualifications have changed since this rehearsal. Review these saved answers before using them.',{exact:true}).count(),1);
+  assert.equal(await factsResult.getByText('1 reviewed qualification source',{exact:true}).count(),1);
+  assert.equal(await factsResult.getByText('Some questions remain unanswered or outside this rehearsal. Review the saved plan.',{exact:true}).count(),1);
+  evidence.cases.push(`reviewed qualification provenance and revision warning at ${width}px`);
+  if(width===390||width===1440)await captureViewport(`facts-result-${width}.png`);
+ }
+ const correctionId=await page.evaluate(async()=>{
+  const value=await api('/api/facts',{text:'Fictional Rust tooling skill'});
+  const host=element('section','','answer-draft');host.id='correction-qualification';host.style.padding='20px';
+  const editor=qualificationCorrectionControl({id:value.id,text:'Fictional Rust tooling skill'});editor.open=true;host.append(editor);document.querySelector('#workspace-pane').append(host);return value.id;
+ });
+ const correction=page.locator('#correction-qualification');
+ for(const width of [320,390,768,1440,1920]){
+  await resizeViewport({width,height:1000});await correction.scrollIntoViewIfNeeded();
+  assert.equal(await correction.evaluate(el=>el.scrollWidth>el.clientWidth+1||document.documentElement.scrollWidth>innerWidth+1),false,`Qualification editor overflow at ${width}`);
+  assert.equal(await correction.getByRole('button',{name:'Save correction',exact:true}).count(),1);
+  assert.equal(await correction.getByRole('button',{name:'Cancel',exact:true}).count(),1);
+  assert.equal(await correction.evaluate(el=>{const area=el.querySelector('textarea'),label=el.querySelector('label');return getComputedStyle(label).display==='grid'&&getComputedStyle(area).fontFamily===getComputedStyle(document.body).fontFamily&&area.getBoundingClientRect().width>=label.getBoundingClientRect().width*.95;}),true,'Qualification editor must use full-width shared form typography');
+  evidence.cases.push(`qualification correction controls at ${width}px`);
+  if(width===390||width===1440)await captureViewport(`facts-editor-${width}.png`);
+ }
+ await resizeViewport({width:1440,height:1000});await controller.evaluate(async({origin})=>{const tabs=await chrome.tabs.query({url:origin+'/*'});await chrome.tabs.setZoom(tabs[0].id,2);},{origin});
+ await correction.scrollIntoViewIfNeeded();assert.equal(await correction.evaluate(el=>el.scrollWidth>el.clientWidth+1||document.documentElement.scrollWidth>innerWidth+1),false,'Qualification editor overflow at 200%');
+ evidence.cases.push('qualification correction controls at zoom 2');await captureViewport('facts-editor-zoom-2.png');
+ await controller.evaluate(async({origin})=>{const tabs=await chrome.tabs.query({url:origin+'/*'});await chrome.tabs.setZoom(tabs[0].id,1);},{origin});
+ await correction.getByRole('textbox',{name:'Qualification',exact:true}).fill('Fictional corrected tooling skill');
+ await correction.getByRole('button',{name:'Save correction',exact:true}).click();
+ await page.waitForFunction(async id=>{const state=await api('/api/state');return !state.facts.some(f=>f.id===id)&&state.facts.some(f=>f.text==='Fictional corrected tooling skill');},correctionId);
+ await correction.getByRole('button',{name:'Save correction',exact:true}).click();
+ await correction.getByText('Qualification changed or is no longer active; reload before correcting it',{exact:false}).waitFor();
+ evidence.cases.push('compiled correction route saves once and refuses stale editor source');
  assert.deepEqual(evidence.errors,[]);evidence.complete=true;console.log('Headless visual follow-up qualification passed: '+folder);
  }catch(error){evidence.error=error.stack;console.error(error);process.exitCode=1;}finally{
   try{if(context)await bounded(context.close(),'Browser context close',10000);evidence.cleanup.contextClosed=true;}catch(error){evidence.cleanup.errors.push(error.message);}

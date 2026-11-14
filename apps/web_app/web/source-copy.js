@@ -100,6 +100,9 @@
     const rehearsal = ['fictional_text_only', 'fictional_saved_form', 'saved_candidate_contacts', 'saved_candidate_materials'].includes(preview?.rehearsal?.scope) ? preview.rehearsal : null;
     if (!options.inline) section.append(el('summary', rehearsal ? 'Saved-page autofill rehearsal' : 'Recorded page preview'));
     const currentProfile=options.currentCandidateProfile!==undefined?options.currentCandidateProfile:preview?.candidate_profile_current;
+    const currentFacts=options.currentCandidateFacts!==undefined?options.currentCandidateFacts:preview?.candidate_facts_current;
+    if(rehearsal&&currentFacts===false)section.append(el('p','Reviewed qualifications have changed since this rehearsal. Review these saved answers before using them.','review-label'));
+    else if(rehearsal&&currentFacts===null)section.append(el('p','The current qualifications could not be verified. Review this saved snapshot.','review-label'));
     if(rehearsal&&currentProfile===false)section.append(el('p','Saved candidate information has changed since this rehearsal. Review the saved answers before using them.','review-label'));
     else if(rehearsal&&currentProfile===null)section.append(el('p','The current candidate information could not be verified. Review this saved snapshot.','review-label'));
     if (rehearsal) {
@@ -139,6 +142,7 @@
       const inputs=[];
       if(rehearsal.candidate_source?.contacts_selected===true)inputs.push('your saved contact details');
       if(rehearsal.candidate_source?.history_selected===true)inputs.push('your checked career history');
+      if(rehearsal.candidate_source?.facts_selected===true)inputs.push('your reviewed qualifications');
       const hasPdfs=Array.isArray(rehearsal.candidate_source?.documents)&&rehearsal.candidate_source.documents.length>0;
       if(hasPdfs)inputs.push('explicitly selected PDFs');
       section.append(el('p', rehearsal.scope === 'saved_candidate_materials'
@@ -273,6 +277,13 @@
           if(plan.archive_error)details.append(el('p','History answer evidence could not be saved. Further entry stopped.','review-label'));
           if(plan.omitted_eligible_fields>0||Array.isArray(plan.entry_deferred)&&plan.entry_deferred.length)details.append(el('p','Some history fields remain outside this rehearsal or need manual handling.','review-label'));
         }
+        for(const plan of (Array.isArray(rehearsal.qualification_plans)?rehearsal.qualification_plans:[]).slice(0,24).filter(plan=>plan?.view===viewNumber)) {
+          const proposed=Array.isArray(plan.plan?.proposals)?plan.plan.proposals.length:0;
+          details.append(el('p',plan.status==='proposed'?`${proposed} answer${proposed===1?'':'s'} prepared from reviewed qualifications.`:'Qualification answers need review.',plan.status==='proposed'?'footnote':'review-label'));
+          const unanswered=Array.isArray(plan.plan?.manual_review)?plan.plan.manual_review.length:0;
+          if(unanswered||plan.omitted_eligible_fields>0)details.append(el('p','Some questions remain unanswered or outside this rehearsal. Review the saved plan.','review-label'));
+          if(plan.archive_error)details.append(el('p','Qualification evidence could not be saved. Further entry stopped.','review-label'));
+        }
         if(rehearsal.history_error)details.append(el('p','The saved career history could not be verified.','review-label'));
         const documentPlan = Array.isArray(rehearsal.attachment_plans) ? rehearsal.attachment_plans.slice(0, 7).find(plan => plan?.view === viewNumber) : null;
         if (documentPlan?.status === 'needs_review') {
@@ -299,6 +310,7 @@
           const row = el('div', '', 'source-copy-actions');
           row.append(el('span', `${check.label || 'Field'} · ${states[check.status] || 'Needs review'}`, 'footnote'));
           if(typeof check.candidate_history?.proposal?.entry_label==='string')row.append(el('span',`Saved history · ${check.candidate_history.proposal.entry_label.slice(0,200)}`,'footnote'));
+          if(check.candidate_facts?.proposal?.sources?.length)row.append(el('span',`${check.candidate_facts.proposal.sources.length} reviewed qualification source${check.candidate_facts.proposal.sources.length===1?'':'s'}`,'footnote'));
           if (check.kind === 'file' && /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,95}\.pdf$/.test(check.attachment?.name || '')) {
             row.append(el('span', check.attachment.name, 'footnote'));
           }
@@ -457,8 +469,12 @@
     const contactOption = dependencies.element('input', '', ''); contactOption.type = 'checkbox';
     contactLabel.append(contactOption, dependencies.element('span', 'Use saved contact details', ''));
     contactLabel.title = 'Use a snapshot of your saved contact profile in the offline copy. Candidate documents are not selected by this option.';
+    const factsLabel=dependencies.element('label','','check-control footnote');
+    const factsOption=dependencies.element('input','','');factsOption.type='checkbox';
+    factsLabel.append(factsOption,dependencies.element('span','Use reviewed qualifications',''));
+    factsLabel.title='Use reviewed qualification facts in the offline copy. Each answer keeps its sources and still requires factual, question and image checks.';
     const documents=documentPicker(dependencies.element,dependencies.documents);
-    root.append(contactLabel, historyLabel, documents.panel, researchLabel);
+    root.append(contactLabel, historyLabel, factsLabel, documents.panel, researchLabel);
     for (const [label, rehearse] of [['Create recorded preview', false], ['Rehearse autofill', true]]) {
       const button = dependencies.element('button', label, 'button-secondary');
       button.type = 'button';
@@ -474,7 +490,7 @@
         button.disabled = true;
         status.textContent = '';
         try {
-          await start(jobId, attemptId, rehearse, rehearse && researchOption.checked, rehearse && contactOption.checked, rehearse && historyOption.checked, rehearse ? documents.selection() : []);
+          await start(jobId, attemptId, rehearse, rehearse && researchOption.checked, rehearse && contactOption.checked, rehearse && historyOption.checked, rehearse && factsOption.checked, rehearse ? documents.selection() : []);
           if (state.job === jobId && state.error) status.textContent = state.error;
         } catch(error) { status.textContent=error.message; }
         finally {
@@ -485,7 +501,7 @@
     root.append(status);
     return root;
   }
-  async function start(job, attempt = null, rehearse = false, publicResearch = false, useSavedContacts = false, useSavedHistory = false, selectedDocuments = []) {
+  async function start(job, attempt = null, rehearse = false, publicResearch = false, useSavedContacts = false, useSavedHistory = false, useReviewedFacts = false, selectedDocuments = []) {
     if (state.active) return;
     Object.assign(state, { task: null, job, preview: Boolean(attempt), active: true, cancelling: false, phase: 'starting', result: null, error: null });
     publish();
@@ -493,7 +509,7 @@
       const pending = await client('/api/job-source/pending', {});
       if (pending.active) { await follow(pending.task_id, pending.job_id, pending.preview === true); return; }
       const route = attempt ? '/api/job-source/preview-start' : '/api/job-source/start';
-      const value = await client(route, attempt ? { id: job, attempt_id: attempt, ...(rehearse ? { rehearse } : {}), ...(publicResearch ? { public_research: true } : {}), ...(useSavedContacts ? { use_saved_contacts: true } : {}), ...(useSavedHistory ? { use_saved_history: true } : {}), ...(selectedDocuments.length ? { selected_documents: selectedDocuments } : {}) } : { id: job });
+      const value = await client(route, attempt ? { id: job, attempt_id: attempt, ...(rehearse ? { rehearse } : {}), ...(publicResearch ? { public_research: true } : {}), ...(useSavedContacts ? { use_saved_contacts: true } : {}), ...(useSavedHistory ? { use_saved_history: true } : {}), ...(useReviewedFacts ? { use_reviewed_facts: true } : {}), ...(selectedDocuments.length ? { selected_documents: selectedDocuments } : {}) } : { id: job });
       await follow(value.task_id, job, Boolean(attempt));
     } catch (error) {
       state.active = false;
@@ -583,7 +599,7 @@
         findings.replaceChildren();
         if (state.result.kind === 'recorded_preview') {
           summary.textContent = state.result.result?.preview?.rehearsal ? 'Offline autofill rehearsal' : 'Recorded page preview';
-          findings.append(previewView(state.result.result?.preview, el, { api: client, jobId: job.id, attemptId: state.result.attempt_id, inline: true, currentCandidateProfile:state.result.current_candidate_profile }));
+          findings.append(previewView(state.result.result?.preview, el, { api: client, jobId: job.id, attemptId: state.result.attempt_id, inline: true, currentCandidateProfile:state.result.current_candidate_profile,currentCandidateFacts:state.result.current_candidate_facts }));
           details.open = true;
           return;
         }

@@ -1,5 +1,16 @@
 # Completion plan - 11 November 2026
 
+The [qualification/correction checkpoint](g1/REVIEWED_QUALIFICATION_ANSWERS_2026-11-14.md)
+connects reviewed facts and repairs a question-format loss in the wording pass.
+Final local 12B results are 2/4 answerable fields, unknown entries 0/4, and zero incorrect/unverified/source
+mismatches, but **0/2 declared field cases pass**. Bare numeric/unit grounding
+remains blocked; the guard is unchanged. These are authored field cases, not
+representative/held-out/whole-workflow or final document acceptance. Atomic
+correction, stale-editor refusal and runtime-live facts invalidation pass;
+crash/restart, native-call cancellation latency and sustained memory behavior
+remain unqualified. The [readiness assessment and next execution plan](RELEASE_READINESS_AND_NEXT_PLAN_2026-11-14.md)
+keeps all remaining product gates open. No release candidate is claimed.
+
 The [checked-history continuation](g1/CHECKED_HISTORY_REHEARSAL_2026-11-14.md)
 connects explicit checked employment/education records to immutable offline
 inputs, retained answer/source evidence and revision cancellation. Two authored

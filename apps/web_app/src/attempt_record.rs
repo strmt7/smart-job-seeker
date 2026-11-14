@@ -1024,7 +1024,11 @@ pub fn list(ws: &Workspace, id: &JobIdentityId) -> Result<Value, String> {
 }
 
 /// Read the bounded outcome of an anonymous source-copy attempt.
-fn source_page_copy_summary(root: &std::path::Path, current_profile: Option<&str>) -> Value {
+fn source_page_copy_summary(
+    root: &std::path::Path,
+    current_profile: Option<&str>,
+    current_facts: Option<&str>,
+) -> Value {
     let path = root.join("source-page-summary.json");
     if let Ok(meta) = fs::symlink_metadata(&path) {
         #[cfg(windows)]
@@ -1055,6 +1059,12 @@ fn source_page_copy_summary(root: &std::path::Path, current_profile: Option<&str
             preview["candidate_profile_current"] = json!(
                 crate::job_capture::candidate_profile_match(source, current_profile)
             );
+        }
+        if preview["rehearsal"]["candidate_source"]["facts_selected"] == true {
+            preview["candidate_facts_current"] = json!(crate::job_capture::candidate_facts_match(
+                &preview["rehearsal"]["candidate_source"],
+                current_facts
+            ));
         }
         return json!({"kind":"recorded_preview","status":value["status"],"preview":preview});
     }
@@ -1094,6 +1104,7 @@ pub fn list_page(ws: &Workspace, id: &JobIdentityId, page: usize) -> Result<Valu
         .ok()
         .flatten()
         .map(|raw| waypoint_domain::sha256_hex(raw.as_bytes()));
+    let current_facts = ws.active_facts_digest().ok();
     let hash = Sha256Digest::of(id.as_str());
     let prefix = format!("{}-", &hash.as_str()[..16]);
     let mut attempts = Vec::new();
@@ -1159,7 +1170,7 @@ pub fn list_page(ws: &Workspace, id: &JobIdentityId, page: usize) -> Result<Valu
                 meta.is_file() && !meta.file_type().is_symlink() && meta.len() <= 65536
             })
         };
-        attempts.push(json!({"attempt_id":attempt_id,"status":status,"started_at":started,"folder":entry.path().to_string_lossy(),"submitted":value["submitted"],"submitted_by_waypoint":value["submitted_by_waypoint"],"material_manifest_incomplete":value["material_manifest_incomplete"],"page_capture_available":value["page_capture_available"],"page_capture_coverage":value["page_capture_coverage"],"followup_capture_available":value["followup_capture_available"],"followup_capture_files":listing_capture_files(&entry.path(), &value, true),"page_capture_files":listing_capture_files(&entry.path(), &value, false),"page_capture_segment_count":value["page_capture_segment_count"],"followup_capture_segment_count":value["followup_capture_segment_count"],"page_capture_source_url":value["page_capture_source_url"],"page_capture_matches_current_url":value["page_capture_matches_current_url"],"source_page_copy":source_page_copy_summary(&entry.path(),current_profile.as_deref()),"gmail_review":gmail_review,"email_outcome_file":has_record("email-handoff.json"),"email_reconciliation_file":has_record("email-reconciliation.json"),"export_document_id":reviewed_export_document_id(&entry.path()),"document_visual_review":fs::symlink_metadata(entry.path().join("document-visual-review.json")).is_ok_and(|m|m.is_file() && !m.file_type().is_symlink() && m.len() <= 512*1024)}));
+        attempts.push(json!({"attempt_id":attempt_id,"status":status,"started_at":started,"folder":entry.path().to_string_lossy(),"submitted":value["submitted"],"submitted_by_waypoint":value["submitted_by_waypoint"],"material_manifest_incomplete":value["material_manifest_incomplete"],"page_capture_available":value["page_capture_available"],"page_capture_coverage":value["page_capture_coverage"],"followup_capture_available":value["followup_capture_available"],"followup_capture_files":listing_capture_files(&entry.path(), &value, true),"page_capture_files":listing_capture_files(&entry.path(), &value, false),"page_capture_segment_count":value["page_capture_segment_count"],"followup_capture_segment_count":value["followup_capture_segment_count"],"page_capture_source_url":value["page_capture_source_url"],"page_capture_matches_current_url":value["page_capture_matches_current_url"],"source_page_copy":source_page_copy_summary(&entry.path(),current_profile.as_deref(),current_facts.as_deref()),"gmail_review":gmail_review,"email_outcome_file":has_record("email-handoff.json"),"email_reconciliation_file":has_record("email-reconciliation.json"),"export_document_id":reviewed_export_document_id(&entry.path()),"document_visual_review":fs::symlink_metadata(entry.path().join("document-visual-review.json")).is_ok_and(|m|m.is_file() && !m.file_type().is_symlink() && m.len() <= 512*1024)}));
     }
     attempts.sort_by(|a, b| {
         b["started_at"]
@@ -2852,17 +2863,17 @@ mod tests {
         let raw=serde_json::to_vec(&serde_json::json!({"kind":"recorded_preview","status":"complete","result":{"preview":{"rehearsal":{"candidate_source":{"scope":"saved_candidate_materials","history_selected":true,"contacts_selected":false,"source_profile_sha256":"a".repeat(64)}}}}})).unwrap();
         std::fs::write(&path, &raw).unwrap();
         assert_eq!(
-            super::source_page_copy_summary(folder.path(), Some(&"a".repeat(64)))["preview"]
+            super::source_page_copy_summary(folder.path(), Some(&"a".repeat(64)), None)["preview"]
                 ["candidate_profile_current"],
             true
         );
         assert_eq!(
-            super::source_page_copy_summary(folder.path(), Some(&"b".repeat(64)))["preview"]
+            super::source_page_copy_summary(folder.path(), Some(&"b".repeat(64)), None)["preview"]
                 ["candidate_profile_current"],
             false
         );
         assert!(
-            super::source_page_copy_summary(folder.path(), None)["preview"]
+            super::source_page_copy_summary(folder.path(), None, None)["preview"]
                 ["candidate_profile_current"]
                 .is_null()
         );
@@ -4993,5 +5004,26 @@ mod tests {
         }
         let events = fs::read_to_string(record.dir.join("events.jsonl")).unwrap();
         assert!(events.contains("Sign-in required"));
+    }
+    #[test]
+    fn qualification_source_freshness_is_dynamic_without_rewriting_the_archive() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("source-page-summary.json");
+        let bytes=serde_json::to_vec(&json!({"kind":"recorded_preview","status":"complete","result":{"preview":{"rehearsal":{"candidate_source":{"scope":"saved_candidate_materials","facts_selected":true,"source_facts_sha256":"a".repeat(64)}}}}})).unwrap();
+        fs::write(&path, &bytes).unwrap();
+        assert_eq!(
+            source_page_copy_summary(root.path(), None, Some(&"a".repeat(64)))["preview"]
+                ["candidate_facts_current"],
+            true
+        );
+        assert_eq!(
+            source_page_copy_summary(root.path(), None, Some(&"b".repeat(64)))["preview"]
+                ["candidate_facts_current"],
+            false
+        );
+        assert!(source_page_copy_summary(root.path(), None, None)["preview"]
+            ["candidate_facts_current"]
+            .is_null());
+        assert_eq!(fs::read(path).unwrap(), bytes);
     }
 }

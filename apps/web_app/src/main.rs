@@ -97,6 +97,7 @@ mod private_inference;
 mod public_document;
 mod recorded_preview;
 mod rehearsal_candidate;
+mod rehearsal_facts;
 mod resident_inference;
 mod runtime_setup;
 mod runtime_start;
@@ -3330,6 +3331,12 @@ fn serve_request(
                     None => false,
                     Some(value) => value.as_bool().ok_or("Invalid checked-history option")?,
                 };
+                let use_reviewed_facts = match body.get("use_reviewed_facts") {
+                    None => false,
+                    Some(value) => value
+                        .as_bool()
+                        .ok_or("Invalid reviewed-qualification option")?,
+                };
                 let attempt = body["attempt_id"]
                     .as_str()
                     .ok_or("Missing saved page identity")?;
@@ -3339,7 +3346,7 @@ fn serve_request(
                         Some(value) => serde_json::from_value(value.clone())
                             .map_err(|_| "Invalid candidate PDF selection")?,
                     };
-                if !documents.is_empty() || use_saved_history {
+                if !documents.is_empty() || use_saved_history || use_reviewed_facts {
                     job_capture::start_selected_preview(
                         ws,
                         &job,
@@ -3350,6 +3357,7 @@ fn serve_request(
                             public_research,
                             use_saved_contacts,
                             use_saved_history,
+                            use_reviewed_facts,
                             documents,
                         },
                     )?;
@@ -4400,7 +4408,32 @@ fn serve_request(
             let id = ws
                 .add_fact(text, FactOrigin::UserAttested)
                 .map_err(|e| e.to_string())?;
+            job_capture::invalidate_candidate_profile(ws)?;
             json_reply(stream, "200 OK", json!({"id": id}));
+        }
+        "/api/facts/correct" => {
+            let id = body["id"]
+                .as_str()
+                .filter(|id| !id.is_empty() && id.len() <= 128)
+                .ok_or("Invalid qualification identity")?;
+            let text = body["text"]
+                .as_str()
+                .filter(|text| !text.trim().is_empty() && text.len() <= 4000)
+                .ok_or("Use a nonempty qualification up to 4,000 bytes")?;
+            let expected = body["expected_text"]
+                .as_str()
+                .filter(|text| text.len() <= 4000)
+                .ok_or("Original qualification text is required")?;
+            let report = ws
+                .correct_fact_if_unchanged(id, expected, text, now())
+                .map_err(|e| e.to_string())?;
+            job_capture::invalidate_candidate_profile(ws)?;
+            interrupt_session(ws, session, "Qualification changed")?;
+            json_reply(
+                stream,
+                "200 OK",
+                json!({"id":report.new_claim_id,"profile_revision":report.new_profile_revision,"invalidated_packets":report.invalidated_packets,"expired_grants":report.expired_grants,"reopened_to_prepared":report.reopened_to_prepared,"submitted_untouched":report.submitted_untouched}),
+            );
         }
         "/api/profile" => {
             let input = body.as_object().ok_or("profile must be an object")?;
