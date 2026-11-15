@@ -85,9 +85,10 @@ real-employer interaction or a general submission-isolation boundary.
 
 Implement generic review-page navigation and independent final native/visual
 summary verification; reaching an empty screen or clicking a control must never
-be interpreted as completion. Measure planning, native inspection, model/image,
-process-helper and checkpoint costs before making latency claims. Then connect
-the full UI/discovery/document journeys and conditional/repeated/custom controls,
+be interpreted as completion. Connect the full UI/discovery/document journeys and conditional/repeated/custom
+controls first, prioritizing correctness and complete autonomous workflow coverage.
+Latency profiling is secondary unless deadlines block completion or host resources
+are threatened; measure actual stages before attributing a cause. Qualify breadth
 with frozen representative and held-out truth. The current run is one mixed
 development field case, not complete candidate-journey or release acceptance.
 All earlier failures and every other open release gate remain visible.

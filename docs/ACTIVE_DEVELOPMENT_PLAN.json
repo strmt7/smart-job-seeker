@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "reviewed_on": "2026-11-14",
-  "reviewed_source": "6559fe5935aff01cbc91c70a0829bf6c75bf1402",
+  "reviewed_on": "2026-11-15",
+  "reviewed_source": "90b5b1063af546e2544195394fec9b466f107060",
   "goal": "Continue the existing active Smart Jobseeker product-development goal",
   "plan": "docs/COMPLETION_PLAN_2026-11-11.md",
   "assessment": "docs/REPO_STATE_REVIEW_2026-11-11.md",
@@ -117,7 +117,8 @@
         "docs/g1/NATIVE_FILE_LABEL_DETAILS_2026-11-14.md",
         "docs/g1/CHECKED_HISTORY_REHEARSAL_2026-11-14.md",
         "docs/g1/REVIEWED_QUALIFICATION_ANSWERS_2026-11-14.md",
-        "docs/g1/SAME_SITE_FRAME_FIXTURE_READINESS_2026-11-14.md"
+        "docs/g1/SAME_SITE_FRAME_FIXTURE_READINESS_2026-11-14.md",
+        "docs/g1/MODEL_CAPABILITIES_2026-11-15.md"
       ],
       "execution_batch": "B",
       "steps": [
@@ -145,7 +146,8 @@
         "2026-11-13: native owner availability uses a common ancestor-viewport hit point; clipped/transparent scopes preserve review even with0inspected fields. Final24native cases:13entrycases/16exact readbacks/11review-only/allclosed. Compiled clipped preview confirms0fields/blocked/review/no model. One independent frozen tall-frame development local12B case2/2verified,unknown0/6,zero critical/unbound entries. No whole-workflow/held-out/promotion credit; prior failures retained.",
         "2026-11-14: native conditional main/inline additions retain current scope/document/target identity and require fresh planning; ten cases close, with four positive native readbacks/four transitions and eight refusal cases. Three unchanged-source local12B runs each0/2; formatting/key definitions did not fix initial mapping abstention. Unknown citizenship is unreached, not a proven abstention. No workflow/held-out credit.",
         "2026-11-14: separate bounded local reasoning repairs initial mapping abstention. Complete native label detail and structural separator comparison repair two further visual-input/comparer failures. Unchanged frozen conditional development case verifies2/2 facts, reached unknown0/1, two fresh replans, four independently matched before/after detail reviews, no incorrect/unverified/unexpected/ambiguous/unbound entries. One run only; whole workflow and held-out qualification remain open. All five failures retained; current workspace1378passed/614ignored, Clippy/build pass.",
-        "2026-11-14 final declaration/packaging check: named read-only JS passes Node syntax and four native associated-detail cases; current workspace1378passed/614ignored, Clippy/build pass. Final separately bound binary repeats unchanged-truth conditional2/2 with reached unknown0/1 and zero critical entries. Model/app tree drains; two development runs are not held-out/model promotion or full-workflow completion."
+        "2026-11-14 final declaration/packaging check: named read-only JS passes Node syntax and four native associated-detail cases; current workspace1378passed/614ignored, Clippy/build pass. Final separately bound binary repeats unchanged-truth conditional2/2 with reached unknown0/1 and zero critical entries. Model/app tree drains; two development runs are not held-out/model promotion or full-workflow completion.",
+        "2026-11-15: frozen six development component probes compare baseline12B and compressed27B configurations, retaining every failure. Native-import parser/renderer correction enables separately observable thinking; explicit advertised xhigh and native tool proposal exercised without executing it. Results vary by configuration and maximum effort regresses one visual observation. No held-out, workflow or model-promotion claim. Native2/2 capability checks pass; all model trees drain, shared state unchanged; sampled host headroom minimum15834972160bytes."
       ],
       "start_requirements": [
         "Existing versioned input-binding/evaluation protocol is implemented; reviewed in tools/form_corpus.py and docs/FORM_EVALUATION.md."
@@ -293,19 +295,22 @@
         "docs/g1/CHECKED_HISTORY_REHEARSAL_2026-11-14.md",
         "docs/g1/REVIEWED_QUALIFICATION_ANSWERS_2026-11-14.md",
         "docs/g1/TYPED_QUALIFICATION_QUANTITIES_2026-11-14.md",
-        "docs/g1/MIXED_MATERIALS_REHEARSAL_2026-11-14.md"
+        "docs/g1/MIXED_MATERIALS_REHEARSAL_2026-11-14.md",
+        "docs/g1/MODEL_CAPABILITIES_2026-11-15.md"
       ],
       "execution_batch": "C",
       "steps": [
+        "Optimize complete autonomous application coverage and correctness across unfamiliar sites, not success on a small fixture set. Preserve frozen varied/held-out platform, wording, language, document and control-family truth. Report whole-workflow completion separately from exact-field correctness, manual intervention and unsupported walls; keep latency secondary.",
         "Preserve a generic bounded post-entry failure observation and screenshot with provenance; qualify input mutation/formatting and prerequisite-control behavior on contained varied fixtures before using that evidence for planner repair.",
         "Use completed plain reasoning separately from strict output schemas; retain original abstentions, native completion metadata and explicit recovery budgets. Measure unchanged frozen tasks before claiming gains.",
         "Connect anonymous public technical research to the local actor through existing source permissions, robots/PII guards and bounded cancellable requests; retrieved text remains untrusted advice and cannot authorize candidate writes.",
         "Connect candidate-supported facts and native/visual observations to a small typed action planner.",
         "Implement bounded choose/enter/attach/section/repeated-history decisions with independent current-state validation.",
         "After every action, read back native state and perform local-model visual review; detect stale state and no progress.",
-        "Measure the local model on the frozen corpus; provide actionable review records rather than invented answers."
+        "Measure the local model on the frozen corpus; provide actionable review records rather than invented answers.",
+        "Qualify native-supported inference profiles per role, including projector/renderer/parser and advertised effort. Retain actual thinking/final/tool observations and sufficient admitted budgets; do not force maximum effort onto every primitive or promote from component probes. Incorporate current primary-source research and the adapted catalog guidance without treating instructions as runtime implementation."
       ],
-      "next_action": "Implement generic review-page navigation and independent final native/visual summary verification: the mixed9-known-field case stops at Review application with no_forward_control. Profile stage-level latency (final controller643.753s, includes probes) rather than merely extending limits again. Then complete the actual UI/discovery/tailored-PDF/history/qualification journeys with conditional/repeated/custom controls and frozen representative/held-out truth. Preserve first mixed timeout and all prior failures; no workflow promotion from field passes.",
+      "next_action": "Prioritize correctness and autonomous complete-workflow coverage for a universal tool. Implement generic native-bound review/navigation intent and independent final native/visual summary verification, then full UI/discovery/tailored-PDF/history/qualification journeys across varied platform/control families and frozen unfamiliar held-out cases. The mixed development case9/9 field pass is not universal or workflow proof. Keep manual walls, incomplete cases and all prior failures visible. Latency profiling is secondary unless deadlines prevent completion or resource behavior threatens the host; never trade source/native/visual/authorization checks for speed.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "start_requirements": [
         "The frozen schema2 known-source initial-control case and native mutation fixture admit investigation of the observed actuator failure. This does not admit broad planner promotion; that still requires the varied held-out tranche and full workflow truth.",
@@ -334,9 +339,10 @@
         "2026-11-14: checked-only history snapshots, reused question/record/value planner, separate immutable plan/entry archives, exact source-component checks and correction invalidation. Local12B2/2 development text-field cases9/9 answerable, unknown0/7; live owned-model exit after profile correction and nonmutating stale archive annotation pass. Windows1431/617ignored,172JavaScript and49rendered cases pass. No whole-workflow or held-out promotion.",
         "2026-11-14: reviewed-claim snapshot/actor/archive integration, atomic source-checked correction UI/API, facts-revision cancellation and nonmutating archive freshness. Shared wording pass now receives the question; final same-input local12B2/4 fields verified,unknown0/4,0incorrect/unverified/source mismatches;0/2fieldcases passed. Numeric/unit proof remains open. Windows1442 ordinarypassed/617ignored, focused3afterinputguard,173JS and61rendered pass; older bad-format runs retained.",
         "2026-11-14: separate field-bound exact quantity projection preserves prose guards; full staged-pool competing-quantity veto and selected-context question review. Two source-bound local12B runs of unchanged qualification truth verify4/4 answerable, unknown0/4 and zero critical/source mismatches;2/2development fieldcases. Native/visual entry, runtime-live facts cancellation and immutable stale archive pass. Windows1448passed/617ignored, Clippy/build/fmt pass. No whole-workflow/held-out/release promotion.",
-        "2026-11-14: native number entry with exact source/unit and native constraints;6contained native cases pass, schema4 independent truth keeps legacy criteria. Mixed contacts/two distinct placeholder PDFs/checked employment/qualification/native-number case verifies9/9 known,unknown0/2,zero critical/qualification-source mismatches after retained300s browser-budget failure. Bounded16entries/900s, immutable per-entry progress files9/9hashes checked; stop at no_forward_control, workflow not_qualified. Windows1448passed/618ignored, Clippy/build/fmt,31corpus tests and139fixture-onlybrowser cases pass. SetupAPI-driven, not full UI/discovery/tailoring or held-out qualification; performance remains open."
+        "2026-11-14: native number entry with exact source/unit and native constraints;6contained native cases pass, schema4 independent truth keeps legacy criteria. Mixed contacts/two distinct placeholder PDFs/checked employment/qualification/native-number case verifies9/9 known,unknown0/2,zero critical/qualification-source mismatches after retained300s browser-budget failure. Bounded16entries/900s, immutable per-entry progress files9/9hashes checked; stop at no_forward_control, workflow not_qualified. Windows1448passed/618ignored, Clippy/build/fmt,31corpus tests and139fixture-onlybrowser cases pass. SetupAPI-driven, not full UI/discovery/tailoring or held-out qualification; performance remains open.",
+        "2026-11-15: production capability probe now requires completed expected JSON and observable thinking with a separate exact final answer; retained old768-token baseline length stop, then2048-token/90sec/brief-arithmetic protocol passes2/2native baseline checks. Three adversarial tests and one nativeHTTP protocol matrix pass. Final Windowsworkspace1452passed/618ignored, warnings-deniedClippy/debugbuild pass. This is capability/configuration evidence, not universal workflow completion or maximum-effort profile promotion."
       ],
-      "open_checkpoint": "One mixed development field case now verifies9/9 known with zero unknown/critical entries, including native number and both selected PDFs. First attempt failed its browser lifetime budget and remains visible. Review application is not recognized, final workflow observation is absent, and controller time643.753s needs profiling. APIs staged inputs and PDFs are placeholders: full UI/discovery/tailoring/final document/ATS/held-out acceptance remains open. Progress snapshots preserve partial historical evidence, never final/current validity."
+      "open_checkpoint": "One mixed development field case now verifies9/9 known with zero unknown/critical entries, including native number and both selected PDFs. First attempt failed its browser lifetime budget and remains visible. Review application is not recognized, final workflow observation is absent, and controller time643.753s needs profiling. APIs staged inputs and PDFs are placeholders: full UI/discovery/tailoring/final document/ATS/held-out acceptance remains open. Progress snapshots preserve partial historical evidence, never final/current validity. Native27B thinking/vision/tool configuration is component-qualified only; the production actor and model-selection/custom-store path still require paired whole-workflow qualification before adoption."
     },
     {
       "id": "R05",
@@ -948,6 +954,35 @@
       "available_ram_bytes": 33963266048,
       "scope": "Scoped checkpoint plus native owned tree/listener teardown; no sustained leak or exact fixture-data restoration claim."
     },
+    "all_packages_complete": false
+  },
+  "development_priorities": {
+    "primary": [
+      "correctness and complete autonomous application coverage",
+      "universal unfamiliar-site/platform/control support",
+      "model-agnostic agent augmentation and enterprise usability"
+    ],
+    "secondary": [
+      "latency optimization unless completion/resource blocker"
+    ],
+    "research": "Continuously revisit leading OSS/commercial architectures and current local models at relevant development checkpoints; retain primary-source evidence and evaluate quality/completion, not marketing claims. Test stronger mostly16GiBGPU candidates with bounded host spill and explicit ownership/RAM guards; never use paid runtime APIs or send applications."
+  },
+  "latest_agent_research_checkpoint": "docs/AGENT_RESEARCH_CHECKPOINT_2026-11-15.md",
+  "latest_local_model_capability_checkpoint": {
+    "date": "2026-11-15",
+    "report": "docs/g1/MODEL_CAPABILITIES_2026-11-15.md",
+    "source_base": "90b5b1063af546e2544195394fec9b466f107060",
+    "workspace": {
+      "passed": 1452,
+      "ignored": 618,
+      "groups": 43
+    },
+    "workspace_clippy": "passed",
+    "canonical_debug_build": "passed",
+    "scoped_search_regressions": 9,
+    "skill_structural_validation": "passed",
+    "model_promotion": false,
+    "whole_workflow_qualification": false,
     "all_packages_complete": false
   }
 }

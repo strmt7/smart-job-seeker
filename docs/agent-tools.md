@@ -35,6 +35,21 @@ indexing it, and never use private data or secrets in a query. Search refuses
 source changes until an explicit reindex. The returned paths are candidates;
 verify them in the current source.
 
+Authorized review of another checkout can use a bounded tracked scope without
+altering that checkout or its providers:
+
+```powershell
+py -3.13 -B tools/cocoindex_agent_search.py --repo <absolute-git-root> --prefix docs/catalog/index.md index
+py -3.13 -B tools/cocoindex_agent_search.py --repo <absolute-git-root> --prefix docs/catalog/index.md search --limit 5 "relevant question"
+```
+
+Use the same root/prefixes for indexing and search. Root and normalized prefixes
+select an independent external mirror, lock, configuration and receipt; existing
+full-repository indexes keep their namespace. Only selected tracked bytes are
+covered. Untracked unfinished files require separately identified exact reads;
+do not present this index as their semantic coverage. Missing prefixes, stale
+source and unsafe paths are refused.
+
 The application index excludes `third_party/` so upstream amalgamations do not
 dominate retrieval or embedding memory. This is an explicit coverage limit.
 Use exact paths for dependency inspection and `python tools/verify_sqlite_vendor.py`

@@ -120,6 +120,7 @@ pub const KNOWN_SCHEMAS: &[(&str, &str)] = &[
 ];
 
 const PROBE_TIMEOUT_MS: u64 = 20_000;
+const GENERATION_PROBE_TIMEOUT_MS: u64 = 90_000;
 const GENERATE_TIMEOUT_MS: u64 = 300_000;
 
 type ResponseObserver = Box<dyn FnMut(&str, &Value) + Send>;
@@ -344,18 +345,9 @@ impl Inference for OllamaInference {
                 "think": false,
                 "options": {"num_predict": 48, "temperature": 0.0},
             }),
-            PROBE_TIMEOUT_MS,
+            GENERATION_PROBE_TIMEOUT_MS,
         )?;
-        let structured_ok = structured
-            .get("response")
-            .and_then(|r| r.as_str())
-            .map(|s| {
-                serde_json::from_str::<Value>(s.trim())
-                    .ok()
-                    .is_some_and(|v| v.is_object())
-            })
-            .unwrap_or(false);
-        if !structured_ok {
+        if !verified_structured_probe(&structured) {
             return Err(InferenceError::StructuredOutputFailed(
                 "runtime failed the strict-JSON probe".into(),
             ));
@@ -363,43 +355,22 @@ impl Inference for OllamaInference {
 
         // 3. Reasoning probe with an adequate budget (learned pitfall: a tiny
         // num_predict under think:true yields an empty final answer and would
-        // fake "reasoning unavailable"). Reasoning is verified by checking a
-        // multi-step arithmetic answer for correctness — the runtime may
-        // deliver reasoning via a separate `thinking` field (this build) or
-        // inline, and the final answer may be plain prose, not JSON.
+        // fake "reasoning unavailable"). A correct final answer alone does not
+        // establish that thinking controls worked. Require completed, separately
+        // observable thinking or a complete inline block plus the final answer.
+        // This is a capability probe, not a model intelligence benchmark.
         let reasoning = self.post_json(
             "/api/generate",
             &serde_json::json!({
                 "model": self.model,
-                "prompt": "What is 17 * 23? Show your reasoning briefly.",
+                "prompt": "Compute 17 * 23. Think briefly. Put only the final integer in your final answer.",
                 "stream": false,
                 "think": true,
-                "options": {"num_predict": 768, "temperature": 0.0},
+                "options": {"num_predict": 2048, "temperature": 0.0},
             }),
-            PROBE_TIMEOUT_MS,
+            GENERATION_PROBE_TIMEOUT_MS,
         )?;
-        let response_text = reasoning
-            .get("response")
-            .and_then(|r| r.as_str())
-            .unwrap_or("")
-            .to_string();
-        let thinking_text = reasoning
-            .get("thinking")
-            .and_then(|r| r.as_str())
-            .unwrap_or("")
-            .to_string();
-        let done_reason = reasoning
-            .get("done_reason")
-            .and_then(|d| d.as_str())
-            .unwrap_or("");
-        let answer_ok = response_text.contains("391");
-        let reasoning_evidence = !thinking_text.is_empty()
-            || response_text.contains("<think>")
-            || response_text.contains("391");
-        if !(answer_ok && reasoning_evidence) {
-            if response_text.is_empty() && done_reason == "length" {
-                return Err(InferenceError::ReasoningUnavailable);
-            }
+        if !verified_reasoning_probe(&reasoning) {
             return Err(InferenceError::ReasoningUnavailable);
         }
 
@@ -603,6 +574,40 @@ fn require_natural_stop(out: &Value) -> Result<(), InferenceError> {
         ));
     }
     Ok(())
+}
+
+fn verified_structured_probe(out: &Value) -> bool {
+    require_natural_stop(out).is_ok()
+        && out["response"].as_str().is_some_and(|text| {
+            serde_json::from_str::<Value>(text.trim())
+                .is_ok_and(|value| value == serde_json::json!({"ok": true}))
+        })
+}
+
+fn verified_reasoning_probe(out: &Value) -> bool {
+    if require_natural_stop(out).is_err() {
+        return false;
+    }
+    let Some(response) = out["response"].as_str() else {
+        return false;
+    };
+    let (observed, answer) = if let Some(inline) = response.trim().strip_prefix("<think>") {
+        let Some((thinking, answer)) = inline.split_once("</think>") else {
+            return false;
+        };
+        (
+            !thinking.trim().is_empty() && !thinking.contains("<think>"),
+            answer,
+        )
+    } else {
+        (
+            out["thinking"]
+                .as_str()
+                .is_some_and(|text| !text.trim().is_empty()),
+            response,
+        )
+    };
+    observed && answer.trim() == "391"
 }
 
 /* ------------------------------ origin guard ------------------------------- */
@@ -833,6 +838,154 @@ fn decode_chunked(body: &[u8]) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capability_probes_require_completed_expected_outputs() {
+        let good = serde_json::json!({"done":true,"done_reason":"stop","response":"{\"ok\":true}"});
+        assert!(verified_structured_probe(&good));
+        for response in [
+            "{}",
+            "{\"ok\":false}",
+            "{\"ok\":true,\"extra\":1}",
+            "not json",
+        ] {
+            let mut bad = good.clone();
+            bad["response"] = response.into();
+            assert!(!verified_structured_probe(&bad));
+        }
+        for (key, value) in [
+            ("done", Value::Bool(false)),
+            ("done_reason", "length".into()),
+        ] {
+            let mut bad = good.clone();
+            bad[key] = value;
+            assert!(!verified_structured_probe(&bad));
+        }
+    }
+
+    #[test]
+    fn capability_probe_does_not_mistake_an_answer_for_enabled_thinking() {
+        let good = serde_json::json!({"done":true,"done_reason":"stop","thinking":"Arithmetic checked.","response":"391"});
+        assert!(verified_reasoning_probe(&good));
+        for thinking in [Value::Null, "".into(), " \n\t".into(), Value::Bool(true)] {
+            let mut bad = good.clone();
+            bad["thinking"] = thinking;
+            assert!(!verified_reasoning_probe(&bad));
+        }
+        for response in [
+            "2391",
+            "3910",
+            "391 is incorrect; use 388",
+            "",
+            "391\nunfinished",
+        ] {
+            let mut bad = good.clone();
+            bad["response"] = response.into();
+            assert!(!verified_reasoning_probe(&bad));
+        }
+        let mut bad = good.clone();
+        bad["done_reason"] = "length".into();
+        assert!(!verified_reasoning_probe(&bad));
+        bad["done_reason"] = "stop".into();
+        bad["done"] = false.into();
+        assert!(!verified_reasoning_probe(&bad));
+    }
+
+    #[test]
+    fn capability_probe_requires_complete_inline_thinking_and_a_separate_answer() {
+        for response in [
+            "<think>Arithmetic checked.</think>391",
+            " <think>Checked.</think>\n391\n",
+        ] {
+            assert!(verified_reasoning_probe(
+                &serde_json::json!({"done":true,"done_reason":"stop","response":response})
+            ));
+        }
+        for response in [
+            "<think>391",
+            "<think></think>391",
+            "<think> \n </think>391",
+            "<think>391</think>388",
+            "<think><think>Checked.</think>391",
+            "<think>Checked.</think><think>More</think>391",
+        ] {
+            assert!(
+                !verified_reasoning_probe(
+                    &serde_json::json!({"done":true,"done_reason":"stop","response":response})
+                ),
+                "{response}"
+            );
+        }
+    }
+
+    #[test]
+    fn capability_probe_qualifies_the_native_protocol_and_refuses_answer_only() {
+        for mode in ["separate_thinking", "answer_only", "wrong_json"] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.set_nonblocking(true).unwrap();
+            let addr = listener.local_addr().unwrap();
+            let server = std::thread::spawn(move || {
+                let requests = match mode {
+                    "wrong_json" => 2,
+                    "answer_only" => 3,
+                    _ => 4,
+                };
+                for step in 0..requests {
+                    let deadline = Instant::now() + Duration::from_secs(3);
+                    let mut stream = loop {
+                        match listener.accept() {
+                            Ok((stream, _)) => break stream,
+                            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                                assert!(Instant::now() < deadline, "missing probe request");
+                                std::thread::sleep(Duration::from_millis(5));
+                            }
+                            Err(error) => panic!("probe fixture accept failed: {error}"),
+                        }
+                    };
+                    let raw = read_fixture_request(&mut stream);
+                    let response = match step {
+                        0 => serde_json::json!({"version":"fictional"}),
+                        1 | 2 => {
+                            let end = find_headers_end(&raw).unwrap();
+                            let request: Value = serde_json::from_slice(&raw[end + 4..]).unwrap();
+                            assert_eq!(request["think"], step == 2);
+                            if step == 1 {
+                                assert_eq!(request["format"], "json");
+                                serde_json::json!({"done":true,"done_reason":"stop","response":if mode == "wrong_json" {"{}"} else {"{\"ok\":true}"}})
+                            } else {
+                                assert!(request.get("format").is_none());
+                                assert!(request["options"]["num_predict"].as_u64().unwrap() >= 2048);
+                                let mut response = serde_json::json!({"done":true,"done_reason":"stop","response":"391"});
+                                if mode == "separate_thinking" {
+                                    response["thinking"] = "Arithmetic checked.".into();
+                                }
+                                response
+                            }
+                        }
+                        _ => serde_json::json!({"models":[{"name":"local","size":1000,"size_vram":1000,"context_length":4096}]}),
+                    }.to_string();
+                    write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        response.len(),
+                        response
+                    )
+                    .unwrap();
+                }
+            });
+            let mut inference = OllamaInference::new(&format!("http://{addr}"), "local").unwrap();
+            let result = inference.probe();
+            server.join().unwrap();
+            match mode {
+                "separate_thinking" => assert!(result.unwrap().supports_reasoning),
+                "answer_only" => assert_eq!(result, Err(InferenceError::ReasoningUnavailable)),
+                _ => assert!(matches!(
+                    result,
+                    Err(InferenceError::StructuredOutputFailed(_))
+                )),
+            }
+        }
+    }
 
     fn read_fixture_request(stream: &mut TcpStream) -> Vec<u8> {
         stream

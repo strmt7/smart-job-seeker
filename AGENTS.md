@@ -6,6 +6,34 @@ repo up cold. Read this first, then `README.md`, then the references below.
 
 ## Agent efficiency and research
 
+- Product priority: correctness and the measured percentage of complete autonomous
+  application workflows come before latency. Treat latency as a secondary
+  optimization unless it prevents completion or threatens bounded host operation.
+  Never weaken factual, native, visual or authorization checks to improve speed.
+- Keep agent augmentation model-agnostic: shared perception, browser/document
+  tools, reasoning/validation, bounded internet-assisted repair, validated learning
+  and recovery should improve any compatible local model. Qualify capabilities
+  explicitly; do not tie the architecture to one model or pretend unavailable
+  vision/tools work. A stronger model is an optional, measured upgrade.
+- When changing local-model capabilities, prompts, inference profiles or learned
+  procedures, use [local model qualification](.agents/skills/local-model-qualification/SKILL.md).
+  Verify the effective native renderer/parser, actual visual/tool responses and
+  advertised reasoning effort. A successful request or a correct final answer
+  alone does not establish enabled thinking. Developer guidance is not runtime
+  prompt wiring or evidence of a measured model improvement.
+- Continue primary-source research into leading open-source and commercial
+  systems at relevant capability/design checkpoints. Turn useful findings into
+  generic implementation and matched/held-out evaluations, retaining provenance
+  and license boundaries. Do not substitute vendor benchmark claims for product
+  evidence or make superiority promises. Runtime tools/APIs remain free.
+- Build a universal application tool: generic current-state DOM/visual reasoning,
+  typed controls and bounded tools must handle unfamiliar sites and layouts. A few
+  fixtures or employer/ATS adapters do not establish coverage. Use varied platform
+  families, custom/conditional/repeated/multistep controls and frozen held-out
+  cases; report complete-workflow rates and manual walls separately from field
+  accuracy. Do not tune production behavior to particular test pages or silently
+  exclude difficult cases to inflate autonomous completion.
+
 - Keep user-facing responses and progress updates brief, direct and useful.
   Routine use of any current or future repository tool, workflow, protocol or
   skill does not need narration. This includes Crawl4AI, CocoIndex Code and

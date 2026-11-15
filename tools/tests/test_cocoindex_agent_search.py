@@ -99,6 +99,59 @@ class CocoIndexBoundaryTests(unittest.TestCase):
                 with coco.exclusive_lock(self.base, 'same'):
                     self.fail('lock should reject a second owner')
 
+    def test_scoped_source_selection_rejects_unsafe_missing_and_untracked_inputs(self):
+        for prefix in ['', '.', '..', '../source.rs', '/source.rs', 'C:/source.rs',
+                       'docs\\source.rs', 'docs//source.rs', 'docs/', '*.rs', '.git/config',
+                       'source\t.rs', 'source\x7f.rs', 'a' * 1025]:
+            with self.subTest(prefix=prefix), self.assertRaises(ValueError):
+                coco.tracked_files(self.repo, (prefix,))
+        with self.assertRaisesRegex(ValueError, 'at most 32'):
+            coco.tracked_files(self.repo, ('source.rs',) * 33)
+        (self.repo / 'untracked.md').write_text('not admitted', encoding='utf-8')
+        with self.assertRaisesRegex(ValueError, 'no eligible tracked'):
+            coco.tracked_files(self.repo, ('untracked.md',))
+        self.assertEqual(coco.tracked_files(self.repo, ('source.rs',)),
+                         [('source.rs', self.repo / 'source.rs')])
+
+    def test_scoped_cache_namespaces_preserve_full_and_other_repository_indexes(self):
+        full = coco.paths(self.base, self.repo)
+        self.assertEqual(full[1].name, hashlib.sha256(str(self.repo.resolve()).encode('utf-8')).hexdigest()[:16])
+        scoped = coco.paths(self.base, self.repo, ('source.rs',))
+        other = coco.paths(self.base, self.root / 'other-repo', ('source.rs',))
+        self.assertEqual(full[0], scoped[0])  # Same verified provider, independent state.
+        self.assertEqual(len({full[1], scoped[1], other[1]}), 3)
+        self.assertEqual(scoped, coco.paths(self.base, self.repo, ('source.rs', 'source.rs')))
+        self.assertEqual(coco.paths(self.base, self.repo, ('b', 'a')),
+                         coco.paths(self.base, self.repo, ('a', 'b')))
+
+    def test_scoped_search_binds_selected_live_bytes_without_modifying_source(self):
+        (self.repo / 'unrelated.md').write_text('original unrelated', encoding='utf-8')
+        subprocess.run(['git', 'add', 'unrelated.md'], cwd=self.repo, check=True)
+        prefixes = ('source.rs',)
+        def run(args, **_kwargs):
+            output = (coco.VERSION if args[1] == 'version' else
+                      'Indexing: done, error: 0' if args[1] == 'index' else
+                      json.dumps({'success': True, 'results': [
+                          {'file_path': 'source.rs', 'start_line': 1, 'end_line': 1,
+                           'score': .9, 'content': 'fn original() {}'}]}))
+            return subprocess.CompletedProcess(args, 0, stdout=output)
+        with mock.patch.object(coco, '_run', side_effect=run):
+            coco.index(self.base, self.repo, prefixes)
+            mirror = coco.paths(self.base, self.repo, prefixes)[1]
+            self.assertTrue((mirror / 'source.rs').is_file())
+            self.assertFalse((mirror / 'unrelated.md').exists())
+            (self.repo / 'unrelated.md').write_text('changed unrelated', encoding='utf-8')
+            coco.search(self.base, 'source', 3, self.repo, prefixes=prefixes)
+            receipt = json.loads(next((self.base / 'receipts').rglob('search-*.json')).read_text(encoding='utf-8'))
+            self.assertEqual(receipt['repo_root'], str(self.repo.resolve()))
+            self.assertEqual(receipt['prefixes'], ['source.rs'])
+            self.assertEqual((self.repo / 'source.rs').read_text(encoding='utf-8'), 'fn original() {}\n')
+            (self.repo / 'source.rs').write_text('fn changed() {}\n', encoding='utf-8')
+            with self.assertRaisesRegex(RuntimeError, 'stale'):
+                coco.search(self.base, 'source', 3, self.repo, prefixes=prefixes)
+            with self.assertRaisesRegex(RuntimeError, 'no active index'):
+                coco.search(self.base, 'source', 3, self.repo)
+
     def test_model_bytes_are_checked(self):
         model = self.root / 'model'
         model.mkdir()

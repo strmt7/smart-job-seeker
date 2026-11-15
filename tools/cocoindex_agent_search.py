@@ -1,6 +1,6 @@
 """Local, external-mirror CocoIndex Code routing for development agents.
 
-This tool is never imported by scanner runtime. Install and index explicitly;
+This tool is never imported by application runtime. Install and index explicitly;
 search refuses stale source bytes. Exact source reads remain authoritative.
 """
 
@@ -87,8 +87,27 @@ def home() -> Path:
     return selected
 
 
-def paths(base: Path, repo: Path = ROOT) -> tuple[Path, Path, Path, Path]:
-    digest = hashlib.sha256(str(repo.resolve()).encode("utf-8")).hexdigest()[:16]
+def normalize_prefixes(prefixes: tuple[str, ...]) -> tuple[str, ...]:
+    if len(prefixes) > 32:
+        raise ValueError('select at most 32 source prefixes')
+    result = []
+    for name in prefixes:
+        relative = PurePosixPath(name)
+        if (not name or len(name) > 1024 or not relative.parts or relative.is_absolute() or relative.as_posix() != name
+                or any(part in ('.', '..', '.git') or ':' in part for part in relative.parts)
+                or any(char in name for char in '\\*?[')
+                or any(ord(char) < 32 or ord(char) == 127 for char in name)):
+            raise ValueError('source prefixes must be exact repository-relative files or directories')
+        result.append(name)
+    return tuple(sorted(set(result)))
+
+
+def paths(base: Path, repo: Path = ROOT,
+          prefixes: tuple[str, ...] = ()) -> tuple[Path, Path, Path, Path]:
+    identity = str(repo.resolve())
+    if prefixes:
+        identity += '\0' + '\0'.join(normalize_prefixes(prefixes))
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
     # Versioned environments preserve other repositories' installed providers.
     return (base / "venvs" / f"cocoindex-code-{VERSION}-py{sys.version_info.major}{sys.version_info.minor}", base / "mirrors" / digest,
             base / "config" / digest, base / "runtime" / digest)
@@ -204,7 +223,8 @@ def install(base: Path) -> None:
     print(f"Installed CocoIndex Code {VERSION} in {venv}")
 
 
-def tracked_files(repo: Path) -> list[tuple[str, Path]]:
+def tracked_files(repo: Path, prefixes: tuple[str, ...] = ()) -> list[tuple[str, Path]]:
+    prefixes = normalize_prefixes(prefixes)
     raw = subprocess.run(["git", "ls-files", "-z", "--cached"], cwd=repo,
                          timeout=30, check=True, stdout=subprocess.PIPE).stdout
     result = []
@@ -214,6 +234,8 @@ def tracked_files(repo: Path) -> list[tuple[str, Path]]:
                 any(part in (".", "..") or ":" in part for part in rel.parts) or
                 "\\" in name):
             raise ValueError(f"unsafe tracked path: {name!r}")
+        if prefixes and not any(name == prefix or name.startswith(prefix + '/') for prefix in prefixes):
+            continue
         if (rel.parts[0].lower() == "secrets" or rel.name.lower().startswith('.env') or
                 rel.name.lower().endswith((".env", ".pem", ".key", ".p12", ".pfx"))):
             raise ValueError(f"refusing to mirror secret-like path: {name}")
@@ -232,6 +254,9 @@ def tracked_files(repo: Path) -> list[tuple[str, Path]]:
         if source.stat().st_size > 32 * 1024 * 1024:
             raise ValueError(f"tracked file exceeds 32 MiB index bound: {name}")
         result.append((name, source))
+    if prefixes and any(not any(name == prefix or name.startswith(prefix + '/')
+                                for name, _ in result) for prefix in prefixes):
+        raise ValueError('a selected source prefix has no eligible tracked files')
     return result
 
 
@@ -282,14 +307,15 @@ def _environment(base: Path, config: Path, runtime: Path) -> dict[str, str]:
     return result
 
 
-def index(base: Path, repo: Path = ROOT) -> None:
-    venv, mirror, config, runtime = paths(base, repo)
+def index(base: Path, repo: Path = ROOT, prefixes: tuple[str, ...] = ()) -> None:
+    prefixes = normalize_prefixes(prefixes)
+    venv, mirror, config, runtime = paths(base, repo, prefixes)
     command = ccc_path(venv)
     verify_version(command)
     model = model_path(base)
     settings_text = settings_for(model)
     active_config_digest = config_digest(model)
-    entries = tracked_files(repo)
+    entries = tracked_files(repo, prefixes)
     digest = source_digest(entries)
     marker = base / "active" / (mirror.name + ".json")
     marker.unlink(missing_ok=True)
@@ -314,11 +340,12 @@ def index(base: Path, repo: Path = ROOT) -> None:
     output = _run([str(command), "index"], cwd=mirror, timeout=3600,
                   env=_environment(base, config, runtime)).stdout
     match = re.search(r"Indexing: .*?error: (\d+)", output)
-    if match is None or int(match.group(1)) != 0 or source_digest(tracked_files(repo)) != digest:
+    if match is None or int(match.group(1)) != 0 or source_digest(tracked_files(repo, prefixes)) != digest:
         raise RuntimeError("index errors or source changed during indexing; no active marker written")
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text(json.dumps({"schema": 1, "source_digest": digest,
                                   "config_digest": active_config_digest,
+                                  "prefixes": prefixes,
                                   "cocoindex_code": VERSION, "files": len(entries)}) + "\n",
                       encoding="utf-8")
     print(f"Indexed {len(entries)} tracked files; source SHA-256 {digest[:16]}")
@@ -326,18 +353,19 @@ def index(base: Path, repo: Path = ROOT) -> None:
 
 
 def search(base: Path, query: str, limit: int, repo: Path = ROOT,
-           path: str | None = None) -> None:
+           path: str | None = None, prefixes: tuple[str, ...] = ()) -> None:
+    prefixes = normalize_prefixes(prefixes)
     if path and any(mark in path for mark in "*?["):
         raise ValueError("wildcard path filters are not qualified by this adapter; "
                          "search broadly, then validate files with rg")
-    venv, mirror, config, runtime = paths(base, repo)
+    venv, mirror, config, runtime = paths(base, repo, prefixes)
     marker = base / "active" / (mirror.name + ".json")
     if not marker.is_file():
         raise RuntimeError("no active index; run index explicitly")
     model = model_path(base)
     active_config_digest = config_digest(model)
     recorded = json.loads(marker.read_text(encoding="utf-8"))
-    current = source_digest(tracked_files(repo))
+    current = source_digest(tracked_files(repo, prefixes))
     if (recorded.get("source_digest") != current or
             recorded.get("config_digest") != active_config_digest or
             recorded.get("cocoindex_code") != VERSION):
@@ -354,14 +382,14 @@ def search(base: Path, query: str, limit: int, repo: Path = ROOT,
     payload = json.loads(output)
     if not payload.get("success"):
         raise RuntimeError(f"CocoIndex search failed: {payload.get('message')}")
-    if source_digest(tracked_files(repo)) != current:
+    if source_digest(tracked_files(repo, prefixes)) != current:
         raise RuntimeError("source changed during search; results discarded")
     receipts = base / "receipts" / mirror.name
     receipts.mkdir(parents=True, exist_ok=True)
     receipt = {"schema": 1, "repo_root": str(repo.resolve()), "cocoindex_code": VERSION,
                "model_revision": MODEL_REVISION, "source_digest": current, "config_digest": active_config_digest,
                "query_sha256": hashlib.sha256(query.encode('utf-8')).hexdigest(),
-               "path": path, "limit": limit, "result": payload}
+               "prefixes": prefixes, "path": path, "limit": limit, "result": payload}
     with (receipts / f"search-{uuid.uuid4().hex}.json").open('x', encoding='utf-8') as file:
         json.dump(receipt, file, ensure_ascii=False)
     hits = payload.get("results", [])
@@ -413,6 +441,10 @@ def exclusive_lock(base: Path, name: str):
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--repo', type=Path, default=ROOT,
+                        help='Read-only source checkout; caches remain external and separately namespaced')
+    parser.add_argument('--prefix', action='append', default=[],
+                        help='Exact tracked file/directory scope; repeat to select a bounded corpus')
     sub = parser.add_subparsers(dest="action", required=True)
     sub.add_parser("install")
     sub.add_parser("index")
@@ -421,20 +453,27 @@ def main(argv: list[str] | None = None) -> int:
     find.add_argument("--limit", type=int, default=5)
     find.add_argument("--path", help="repository-relative glob after initial routing")
     args = parser.parse_args(argv)
+    repo = args.repo.resolve(strict=True)
+    actual_root = Path(_run(['git', 'rev-parse', '--show-toplevel'], cwd=repo, timeout=30).stdout.strip()).resolve()
+    if actual_root != repo:
+        parser.error('--repo must identify the actual Git root')
+    prefixes = normalize_prefixes(tuple(args.prefix))
     base = home()
-    lock_name = 'install' if args.action == 'install' else paths(base)[1].name
+    if base.is_relative_to(repo):
+        parser.error('agent state must remain outside the source repository')
+    lock_name = 'install' if args.action == 'install' else paths(base, repo, prefixes)[1].name
     with exclusive_lock(base, lock_name):
         if args.action == "install":
             admit_index_memory()
             install(base)
         elif args.action == "index":
             admit_index_memory()
-            index(base)
+            index(base, repo, prefixes)
         else:
             if not 1 <= args.limit <= 10 or not args.query.strip():
                 parser.error("search requires a query and limit between 1 and 10")
             admit_index_memory()
-            search(base, args.query, args.limit, path=args.path)
+            search(base, args.query, args.limit, repo, path=args.path, prefixes=prefixes)
     return 0
 
 

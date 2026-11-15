@@ -1,5 +1,12 @@
 # Release readiness and next implementation plan — 14 November 2026
 
+Current continuation: [15 November research, capability qualification and next
+implementation order](AGENT_RESEARCH_CHECKPOINT_2026-11-15.md). This document
+retains its original dated measurements; later typed-quantity and mixed-material
+evidence supersedes the earlier 2/4 field result below. The committed mixed case
+reaches 9/9 known fields but still has no qualified complete workflow. Release
+status remains an integrated prototype, not a release candidate.
+
 ## Assessment
 
 **Smart Jobseeker is an integrated prototype, not a release candidate.** It is
@@ -230,3 +237,17 @@ verification; 643.753 seconds including probes also exposes a latency gap.
 Immediate work is generic review navigation, final native/visual summary checks
 and stage-level profiling, then the full UI/discovery/document journeys. This
 is preparation for phase 2, not completion of it or any release package.
+
+## User priority clarification
+
+Correctness and the percentage of complete autonomous application workflows are
+the primary objectives. Latency has moderate importance and must not displace
+implementation or lower verification quality. Investigate it first only when
+deadlines prevent completion or resource behavior threatens the host.
+
+The product must be universal: generic current-state reasoning and tools across
+varied sites, languages, documents and native/custom/conditional/repeated/multistep
+controls. The small development fixtures are regressions, not proof of platform
+coverage. Freeze unfamiliar held-out cases and report complete-workflow rates,
+field correctness, interventions and unsupported walls separately. Never tune
+production code to a few pages or remove difficult cases after observing results.

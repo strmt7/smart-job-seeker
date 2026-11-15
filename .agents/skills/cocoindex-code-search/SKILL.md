@@ -26,6 +26,13 @@ the semantic index does not claim coverage of those files.
 Wildcard `--path` filters are not supported by this adapter. Route with a normal
 semantic search, then verify exact live paths/symbols with bounded `rg` reads.
 Never overwrite another repository's registration or cache.
+For authorized read-only cross-repository review, use `--repo <absolute-git-root>`
+and repeated `--prefix <exact-tracked-file-or-directory>` before `index` and
+`search`. Use identical prefixes for both. Each root/scope has a separate external
+mirror, lock, index and receipt; the source checkout and its provider registrations
+stay untouched. Receipts describe the selected tracked scope, not the whole repo
+or its untracked unfinished files. Start with the catalog/index files and expand
+only to relevant candidates; do not rebuild another task's index.
 Diagnose and disclose failures; continue only independent work until restored.
 The installer pins the direct CocoIndex version; its transitive dependencies are
 not hash-locked, so do not claim a verified reproducible installation.
