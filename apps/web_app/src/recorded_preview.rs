@@ -690,16 +690,15 @@ impl RehearsalVision {
     fn review_field(
         &mut self,
         capture: &waypoint_browser::RecordedFieldCapture,
-    ) -> (&'static str, Option<Value>) {
-        if crate::check_inference_memory().is_err() {
-            return ("visual_unavailable", None);
-        }
-        let Some(model) = self.model.as_mut() else {
-            return ("visual_unavailable", None);
-        };
+    ) -> Result<(&'static str, Option<Value>), String> {
+        crate::check_inference_memory()?;
+        let model = self
+            .model
+            .as_mut()
+            .ok_or("Local vision model unavailable")?;
         let (outcome, transcription) =
-            crate::visual_review::review_recorded_field(model, self.addr, capture);
-        (recorded_vision_status(outcome), transcription)
+            crate::visual_review::review_recorded_field(model, self.addr, capture)?;
+        Ok((recorded_vision_status(outcome), transcription))
     }
 }
 
@@ -1294,10 +1293,14 @@ impl Rehearsal {
                         }
                     }
                     if image_saved {
-                        let (status, transcription) = self.vision.review_field(&capture);
-                        result["status"] = json!(status);
-                        if let Some(transcription) = transcription {
-                            result["transcription"] = transcription;
+                        match self.vision.review_field(&capture) {
+                            Ok((status, transcription)) => {
+                                result["status"] = json!(status);
+                                if let Some(transcription) = transcription {
+                                    result["transcription"] = transcription;
+                                }
+                            }
+                            Err(reason) => result["review_reason"] = json!(bounded_text(&reason)),
                         }
                     }
                     if !image_saved || result["status"] != "visually_matched" {

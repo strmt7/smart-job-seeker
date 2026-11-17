@@ -1464,7 +1464,7 @@ pub(crate) fn review_recorded_field(
     model: &mut VisionIdentityGuard,
     addr: std::net::SocketAddr,
     capture: &waypoint_browser::RecordedFieldCapture,
-) -> (RecordedVisionOutcome, Option<Value>) {
+) -> Result<(RecordedVisionOutcome, Option<Value>), String> {
     let label = capture.label();
     // Expected text is withheld from the transcription prompt. Only the native
     // telephone proof admits separator equality; other fields stay exact.
@@ -1509,7 +1509,7 @@ pub(crate) fn review_recorded_field(
             // The shared gate still refuses mismatches, duplicate observations,
             // exhausted coverage and contradictory overlapping observations.
             let detail = capture.detail_image().unwrap_or(capture.image());
-            finish_detail_review_with(
+            Ok(finish_detail_review_with(
                 review,
                 if capture.detail_image().is_some() {
                     "same_native_field_detail"
@@ -1551,10 +1551,10 @@ pub(crate) fn review_recorded_field(
                     }
                     review
                 },
-            )
+            ))
         }
-        Ok(Err(_)) => (RecordedVisionOutcome::Failed, None),
-        Err(_) => (RecordedVisionOutcome::Stopped, None),
+        Ok(Err(_)) => Ok((RecordedVisionOutcome::Failed, None)),
+        Err(reason) => Err(reason),
     }
 }
 

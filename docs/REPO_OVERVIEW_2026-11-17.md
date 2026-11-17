@@ -20,6 +20,13 @@ coverage, an error-free product, or safe interaction with arbitrary live employe
 forms. Application and application-email submission remain prohibited in this
 development run.
 
+The subsequent [grounded-answer checkpoint](g1/GROUNDED_ANSWERS_2026-11-17.md)
+verified native contact decisions and passed one of two authored field gates.
+It also exposed an interrupted visual review in the mixed-materials case.
+Attempt history now builds detailed rows after selecting the page, with
+measured lower peak commit for a populated fictional archive. End-to-end
+workflow, installer and real-form isolation gates remain open.
+
 ## Source and evidence scope
 
 - Local branch: `main`; review base `ec415d566d9410da774f56aa7eebecc46cf15c8f`

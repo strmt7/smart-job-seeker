@@ -9,11 +9,12 @@ claimed. Older dated results below are historical rather than current global
 acceptance.
 
 The [grounded-answer checkpoint](docs/g1/GROUNDED_ANSWERS_2026-11-17.md)
-verified the current employer and exact duration in the managed Qwen replay.
-The run verified 7/9 known fields and left both unknowns blank. The contact
-contract and later saved-view evidence have passing local regressions. Native
-Qwen contact requalification and the varied case await admitted RAM. No whole
-workflow or held-out case was qualified in this checkpoint.
+verified the current employer and exact duration in the first managed Qwen
+replay (7/9 known fields). The paired replay verified both previously missed
+contacts, stopped visual verification after the cover-letter entry under
+host memory pressure (3/9), and passed the varied history/duration case
+(3/3). One of the two authored field gates passed. Whole-workflow and
+held-out qualification remain open.
 
 The 17 November native 256k F16 allocation failure also exposed a peak-job
 observation above its configured ceiling and an initial teardown observation

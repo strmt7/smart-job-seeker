@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 use std::{
     fs,
     io::{Read, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 use waypoint_domain::{JobIdentityId, Sha256Digest};
 use waypoint_workspace::Workspace;
@@ -1083,6 +1083,33 @@ fn source_page_copy_summary(
     json!({"status":value["status"],"archive_written":value["result"]["archive_written"],"needs_review":value["result"]["needs_review"],"resources":value["result"]["report"]["recorded_resources"],"requests":value["result"]["report"]["requests"],"form_outline":outline})
 }
 
+fn read_attempt_metadata(directory: &Path) -> Result<Value, String> {
+    const LIMIT: u64 = 64 * 1024;
+    let path = directory.join("attempt.json");
+    let metadata =
+        fs::symlink_metadata(&path).map_err(|_| "Application record metadata not found")?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() > LIMIT {
+        return Err("Invalid application record metadata".into());
+    }
+    let file = fs::File::open(path).map_err(|_| "Cannot read application record")?;
+    let mut bytes = Vec::new();
+    file.take(LIMIT + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "Cannot read application record")?;
+    if bytes.len() as u64 > LIMIT {
+        return Err("Application record metadata exceeds its limit".into());
+    }
+    serde_json::from_slice(&bytes).map_err(|_| "Invalid application record metadata".into())
+}
+
+fn valid_attempt_id(attempt: &str) -> bool {
+    !attempt.is_empty()
+        && attempt.len() <= 64
+        && attempt
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+}
+
 /// Return one bounded page from the first 2,000 directory entries inspected.
 pub fn list_page(ws: &Workspace, id: &JobIdentityId, page: usize) -> Result<Value, String> {
     if page >= 40 {
@@ -1107,7 +1134,7 @@ pub fn list_page(ws: &Workspace, id: &JobIdentityId, page: usize) -> Result<Valu
     let current_facts = ws.active_facts_digest().ok();
     let hash = Sha256Digest::of(id.as_str());
     let prefix = format!("{}-", &hash.as_str()[..16]);
-    let mut attempts = Vec::new();
+    let mut indices = Vec::new();
     let mut unreadable = 0;
     let mut truncated = false;
     for (index, entry) in fs::read_dir(&root).map_err(|e| e.to_string())?.enumerate() {
@@ -1122,67 +1149,102 @@ pub fn list_page(ws: &Workspace, id: &JobIdentityId, page: usize) -> Result<Valu
                 continue;
             }
         };
-        if !entry.file_name().to_string_lossy().starts_with(&prefix) {
+        let filename = entry.file_name();
+        let Some(attempt_id) = filename
+            .to_str()
+            .and_then(|name| name.strip_prefix(&prefix))
+        else {
             continue;
-        }
-        let metadata = match entry.file_type() {
-            Ok(kind) if kind.is_dir() && !kind.is_symlink() => entry.path().join("attempt.json"),
-            _ => {
-                unreadable += 1;
-                continue;
-            }
         };
-        let file = match fs::metadata(&metadata) {
-            Ok(meta) if meta.is_file() && meta.len() <= 65536 => metadata,
-            _ => {
-                unreadable += 1;
-                continue;
-            }
-        };
-        let value: Value = match fs::read(file)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        if !valid_attempt_id(attempt_id)
+            || !entry
+                .file_type()
+                .is_ok_and(|kind| kind.is_dir() && !kind.is_symlink())
         {
-            Some(value) => value,
-            None => {
-                unreadable += 1;
-                continue;
-            }
-        };
-        if value["job_id"].as_str() != Some(id.as_str()) {
             unreadable += 1;
             continue;
         }
-        let (Some(attempt_id), Some(status), Some(started)) = (
-            value["attempt_id"].as_str(),
-            value["status"].as_str(),
-            value["started_at"].as_i64(),
-        ) else {
+        let dir = entry.path();
+        let Ok(value) = read_attempt_metadata(&dir) else {
             unreadable += 1;
             continue;
         };
-        let gmail_review =
-            fs::symlink_metadata(entry.path().join("gmail-review.json")).is_ok_and(|meta| {
-                meta.is_file() && !meta.file_type().is_symlink() && meta.len() <= 65536
-            });
-        let has_record = |name| {
-            fs::symlink_metadata(entry.path().join(name)).is_ok_and(|meta| {
-                meta.is_file() && !meta.file_type().is_symlink() && meta.len() <= 65536
-            })
+        if value["job_id"].as_str() != Some(id.as_str())
+            || value["attempt_id"].as_str() != Some(attempt_id)
+            || !value["status"].is_string()
+        {
+            unreadable += 1;
+            continue;
+        }
+        let Some(started) = value["started_at"].as_i64() else {
+            unreadable += 1;
+            continue;
         };
-        attempts.push(json!({"attempt_id":attempt_id,"status":status,"started_at":started,"folder":entry.path().to_string_lossy(),"submitted":value["submitted"],"submitted_by_waypoint":value["submitted_by_waypoint"],"material_manifest_incomplete":value["material_manifest_incomplete"],"page_capture_available":value["page_capture_available"],"page_capture_coverage":value["page_capture_coverage"],"followup_capture_available":value["followup_capture_available"],"followup_capture_files":listing_capture_files(&entry.path(), &value, true),"page_capture_files":listing_capture_files(&entry.path(), &value, false),"page_capture_segment_count":value["page_capture_segment_count"],"followup_capture_segment_count":value["followup_capture_segment_count"],"page_capture_source_url":value["page_capture_source_url"],"page_capture_matches_current_url":value["page_capture_matches_current_url"],"source_page_copy":source_page_copy_summary(&entry.path(),current_profile.as_deref(),current_facts.as_deref()),"gmail_review":gmail_review,"email_outcome_file":has_record("email-handoff.json"),"email_reconciliation_file":has_record("email-reconciliation.json"),"export_document_id":reviewed_export_document_id(&entry.path()),"document_visual_review":fs::symlink_metadata(entry.path().join("document-visual-review.json")).is_ok_and(|m|m.is_file() && !m.file_type().is_symlink() && m.len() <= 512*1024)}));
+        indices.push((started, attempt_id.to_owned(), dir));
     }
-    attempts.sort_by(|a, b| {
-        b["started_at"]
-            .as_i64()
-            .cmp(&a["started_at"].as_i64())
-            .then_with(|| b["attempt_id"].as_str().cmp(&a["attempt_id"].as_str()))
+    indices.sort_unstable_by(|(a_time, a_id, _), (b_time, b_id, _)| {
+        b_time.cmp(a_time).then_with(|| b_id.cmp(a_id))
     });
     let scan_truncated = truncated;
     let start = page * 50;
-    let has_more = attempts.len() > start + 50;
+    let has_more = indices.len() > start + 50;
     truncated |= start > 0 || has_more;
-    let mut attempts: Vec<_> = attempts.into_iter().skip(start).take(50).collect();
+    let mut attempts = Vec::new();
+    for (started, attempt_id, dir) in indices.into_iter().skip(start).take(50) {
+        let Ok(value) = read_attempt_metadata(&dir) else {
+            unreadable += 1;
+            continue;
+        };
+        let Some(status) = value["status"].as_str() else {
+            unreadable += 1;
+            continue;
+        };
+        if value["job_id"].as_str() != Some(id.as_str())
+            || value["attempt_id"].as_str() != Some(attempt_id.as_str())
+            || value["started_at"].as_i64() != Some(started)
+        {
+            unreadable += 1;
+            continue;
+        }
+        let gmail_review = fs::symlink_metadata(dir.join("gmail-review.json")).is_ok_and(|meta| {
+            meta.is_file() && !meta.file_type().is_symlink() && meta.len() <= 65536
+        });
+        let has_record = |name| {
+            fs::symlink_metadata(dir.join(name)).is_ok_and(|meta| {
+                meta.is_file() && !meta.file_type().is_symlink() && meta.len() <= 65536
+            })
+        };
+        let document_visual_review = fs::symlink_metadata(dir.join("document-visual-review.json"))
+            .is_ok_and(|meta| {
+                meta.is_file() && !meta.file_type().is_symlink() && meta.len() <= 512 * 1024
+            });
+        attempts.push(json!({
+            "attempt_id": attempt_id,
+            "status": status,
+            "started_at": started,
+            "folder": dir.to_string_lossy(),
+            "submitted": value["submitted"],
+            "submitted_by_waypoint": value["submitted_by_waypoint"],
+            "material_manifest_incomplete": value["material_manifest_incomplete"],
+            "page_capture_available": value["page_capture_available"],
+            "page_capture_coverage": value["page_capture_coverage"],
+            "followup_capture_available": value["followup_capture_available"],
+            "followup_capture_files": listing_capture_files(&dir, &value, true),
+            "page_capture_files": listing_capture_files(&dir, &value, false),
+            "page_capture_segment_count": value["page_capture_segment_count"],
+            "followup_capture_segment_count": value["followup_capture_segment_count"],
+            "page_capture_source_url": value["page_capture_source_url"],
+            "page_capture_matches_current_url": value["page_capture_matches_current_url"],
+            "source_page_copy": source_page_copy_summary(
+                &dir, current_profile.as_deref(), current_facts.as_deref()
+            ),
+            "gmail_review": gmail_review,
+            "email_outcome_file": has_record("email-handoff.json"),
+            "email_reconciliation_file": has_record("email-reconciliation.json"),
+            "export_document_id": reviewed_export_document_id(&dir),
+            "document_visual_review": document_visual_review,
+        }));
+    }
     let mut integrity_budget = 32 * 1024 * 1024u64;
     let current_job = ws.job(id).ok().flatten();
     let current_description = ws.job_description(id).ok().flatten();
@@ -1212,12 +1274,7 @@ pub(crate) fn attempt_directory(
     job: &JobIdentityId,
     attempt: &str,
 ) -> Result<PathBuf, String> {
-    if attempt.is_empty()
-        || attempt.len() > 64
-        || !attempt
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-    {
+    if !valid_attempt_id(attempt) {
         return Err("Invalid attempt identity".into());
     }
     let root = ws
@@ -1233,15 +1290,7 @@ pub(crate) fn attempt_directory(
     if !metadata.is_dir() || metadata.file_type().is_symlink() {
         return Err("Invalid application record".into());
     }
-    let info = dir.join("attempt.json");
-    let info_meta =
-        fs::symlink_metadata(&info).map_err(|_| "Application record metadata not found")?;
-    if !info_meta.is_file() || info_meta.file_type().is_symlink() || info_meta.len() > 65536 {
-        return Err("Invalid application record metadata".into());
-    }
-    let info: Value =
-        serde_json::from_slice(&fs::read(info).map_err(|_| "Cannot read application record")?)
-            .map_err(|_| "Invalid application record metadata")?;
+    let info = read_attempt_metadata(&dir)?;
     if info["job_id"].as_str() != Some(job.as_str()) || info["attempt_id"].as_str() != Some(attempt)
     {
         return Err("Application record does not match the selected job".into());
@@ -3911,6 +3960,49 @@ mod tests {
         let result = list(&ws, &job).unwrap();
         assert_eq!(result["attempts"][0]["material_manifest_incomplete"], true);
         assert_eq!(result["attempts"][0]["status"], "manual_review");
+    }
+
+    #[test]
+    fn attempt_listing_pages_by_immutable_identity_and_start_time() {
+        let root = tempfile::tempdir().unwrap();
+        let ws = Workspace::open(root.path()).unwrap();
+        let job = JobIdentityId::new("fictional-paged-listing").unwrap();
+        let hash = Sha256Digest::of(job.as_str());
+        let attempts = root.path().join("application-records");
+        let prefix = &hash.as_str()[..16];
+        for index in 0..52 {
+            let attempt = format!("attempt-{index:02}");
+            let dir = attempts.join(format!("{prefix}-{attempt}"));
+            fs::create_dir_all(&dir).unwrap();
+            let metadata = json!({"job_id":job.as_str(),"attempt_id":attempt,
+                "status":"manual_review","started_at":index / 2});
+            fs::write(
+                dir.join("attempt.json"),
+                serde_json::to_vec(&metadata).unwrap(),
+            )
+            .unwrap();
+        }
+        let mismatch = attempts.join(format!("{prefix}-mismatch"));
+        fs::create_dir(&mismatch).unwrap();
+        let wrong = json!({"job_id":job.as_str(),"attempt_id":"attempt-51",
+            "status":"manual_review","started_at":100});
+        fs::write(
+            mismatch.join("attempt.json"),
+            serde_json::to_vec(&wrong).unwrap(),
+        )
+        .unwrap();
+        let first = list_page(&ws, &job, 0).unwrap();
+        assert_eq!(first["attempts"].as_array().unwrap().len(), 50);
+        assert_eq!(first["attempts"][0]["attempt_id"], "attempt-51");
+        assert_eq!(first["attempts"][49]["attempt_id"], "attempt-02");
+        assert_eq!(first["has_more"], true);
+        assert_eq!(first["unreadable"], 1);
+        let second = list_page(&ws, &job, 1).unwrap();
+        assert_eq!(second["attempts"].as_array().unwrap().len(), 2);
+        assert_eq!(second["attempts"][0]["attempt_id"], "attempt-01");
+        assert_eq!(second["attempts"][1]["attempt_id"], "attempt-00");
+        assert_eq!(second["has_more"], false);
+        assert_eq!(second["unreadable"], 1);
     }
 
     #[test]

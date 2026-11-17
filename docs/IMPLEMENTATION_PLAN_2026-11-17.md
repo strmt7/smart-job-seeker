@@ -89,11 +89,13 @@ fictional forms to measure interactions and unexpected transitions.
 
 ## Execution order and work admission
 
-1. **Finish the current Qwen answer requalification.** Replay the frozen mixed
-   and varied cases with the disjoint contact response. Retain the initial
-   7/9 field result, the evaluator binding failure and the prelaunch resource
-   refusals. Use the same model/context and require owned teardown before
-   comparing results. Keep 256k capacity evidence separate from task accuracy.
+1. **Qualify recovery from an interrupted visual check.** The paired
+   [grounded-answer replay](g1/GROUNDED_ANSWERS_2026-11-17.md) verified both
+   previously missed contacts and passed the varied case. The mixed case
+   stopped while free RAM had fallen below inference admission. Retain the
+   exact refusal, apply a bounded read-only review retry when resources
+   recover, and require fresh document and value evidence before proceeding.
+   Keep the previous attempt and 256k capacity evidence intact.
 2. **R04.1 and R03.1: repair coverage and structural perception.** First account
    for every offered question and add bounded deliberative repair for grounded
    omissions. The current-record and quantity changes have scoped regression
@@ -280,6 +282,15 @@ coherent change. Reuse unchanged exact-source evidence with its original scope.
 6. Update the visual schema, prompts, comparison adapters, archived schema and
    grader together. Legacy evidence remains readable and visibly versioned;
    migration must not retrospectively change an old result.
+
+The October 2026 W3C draft specifies a flat accessible name whose contributors
+can include hidden referenced text. The DevTools Accessibility protocol offers
+a DOM-bound partial tree and name-source metadata. Use those sources for
+association and provenance. Keep the actual visible label and section path as
+separate observations, including an explicit unavailable state for labels the
+model cannot read in the image. Add paired cases for visible, hidden-referenced, duplicate
+and replaced contributors to verify the distinction. [W3C AccName draft](https://www.w3.org/TR/2026/WD-accname-1.2-20261021/),
+[DevTools protocol schema](https://raw.githubusercontent.com/ChromeDevTools/devtools-protocol/master/json/browser_protocol.json).
 
 **Acceptance:** the current separator failure is resolved by native-bound typed
 identity, and adversarial repeated/literal-punctuation cases remain refused.
@@ -544,6 +555,12 @@ must be refused without suppressing current intelligence.
 2. Write manifests/checkpoints atomically. Preserve immutable attempt history,
    correction annotations and incomplete artifacts. Recover from partial writes,
    crashes, missing files and disk pressure without falsely reporting success.
+   First scan bounded identity and ordering metadata. Select the requested page
+   before constructing detailed rows. Serve heavyweight saved results through a
+   bound selected-attempt read with a shared writer/reader ceiling and explicit
+   unavailable states. Preserve existing archives and freshness annotations.
+   Test records above the existing 256 KiB list limit and measure peak memory
+   with a populated history, including stale responses during selection changes.
 3. Build email-only application packets through the same facts/documents/identity
    pipeline. Parse addresses and requested subject/body/attachments from the ad,
    retaining uncertainties and exact destination bindings.

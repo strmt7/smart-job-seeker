@@ -73,10 +73,65 @@ browser zoom. The 65 rendered checks passed. The narrow and zoomed screenshots
 were reviewed, and the owned application and browser exited. These are
 fictional UI checks with a controlled image response.
 
-The paired native model follow-up was refused before launch at both the
-original test-job ceiling and a lower ceiling based on the measured peak.
-The current host admission and reserve stayed active. The new contact contract
-therefore has local integration and browser UI evidence, with native Qwen
-contact behavior and the varied answer case still pending. The history
-deliberative recheck has controlled regression coverage and still needs a
-matched native case that exercises the recheck.
+## Paired native replay
+
+Admission initially refused both test-job ceilings. The follow-up launched
+after host memory recovered, with the same model digest and 16,384-token
+context and a 13.5 GiB inner application-job limit. The corrected evaluator
+matched both layouts to their own frozen control inventory.
+
+| Authored development layout | Verified known fields | Unknowns entered | Field gate |
+| --- | ---: | ---: | --- |
+| Original mixed materials | 3/9 | 0/2 | Failed |
+| Varied history and duration | 3/3 | 0/1 | Passed |
+
+The recorded model response contained one decision for each of the 11
+offered fields in the original layout. The name and email both passed
+native and visual checks after their earlier contradictory decisions.
+The résumé passed. The cover letter had native readback and a saved image,
+then its independent visual check became unavailable. The remainder of
+that case was unreached. Both layouts had zero incorrect values or
+source-binding failures among scored entries. The varied layout verified
+18 months against its reviewed source, the current organization and the
+most recent completed role. Both runs resolved history without the
+deliberative recheck, whose native recovery path still needs an exercised case.
+No case was assigned final-review truth.
+
+Whole-host free RAM bottomed out at **4.36 GiB**. Several samples around
+the cover-letter checkpoint were below the app's 8 GiB inference continuation
+threshold. The earlier field report omitted the exact refusal, so this is
+time-correlated resource evidence. The app job peaked at 13.41 GiB committed.
+Both model PIDs and the owned process tree exited. Shared model state remained
+unchanged. The scoped post-run audit observed 27.42 GiB free RAM and zero
+matching processes, registrations or resident models.
+
+Both offline replays reported zero cached non-read responses, unmanaged
+child sessions and unreplayed transports. No applications or application
+emails were submitted.
+
+## Attempt history and failure reasons
+
+When a post-entry visual check cannot start or its runtime guard refuses the
+observation, the application now preserves the bounded reason with the saved
+field. The existing stop still applies. This records future failures and
+leaves the original cover-letter evidence intact.
+
+History reads lightweight identity and ordering metadata before selecting a
+page. It builds details for the selected rows only, rechecking job identity,
+attempt identity and start time. The focused archive checks passed 37 tests.
+A compiled loopback benchmark with 600 fictional entries and 96 KiB of saved
+detail per entry repeated three pages across baseline, paged, paged and
+baseline launches. All four runs returned identical response hashes. The
+baseline app jobs peaked at 66.9 MiB committed and the paged jobs at
+23.9–24.9 MiB. These are owned job peaks for this workload. The larger
+on-demand archive route and sustained resource qualification remain open.
+
+The final scoped source passed 1,463 workspace tests with 618 ignored,
+warnings-denied Clippy and the Windows web build. The paired replay used the
+earlier source-bound binary, whose hash and results are preserved separately.
+
+For the visual identity plan, the W3C draft yielded the expected native
+content. The DevTools HTML route rendered the documentation home and was
+rejected. The official protocol JSON supplied the exact command and
+name-source metadata instead. [W3C AccName draft](https://www.w3.org/TR/2026/WD-accname-1.2-20261021/),
+[DevTools protocol schema](https://raw.githubusercontent.com/ChromeDevTools/devtools-protocol/master/json/browser_protocol.json).
