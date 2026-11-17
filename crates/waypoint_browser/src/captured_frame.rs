@@ -56,7 +56,16 @@ pub enum RecordedFieldKind {
 
 #[cfg(windows)]
 pub enum RecordedSectionOutcome {
-    Advanced { label: String, form: LiveForm },
+    Advanced {
+        label: String,
+        form: LiveForm,
+    },
+    /// Read-only evidence after a guarded click that did not establish progress.
+    ReviewRequired {
+        reason: RecordedSectionStop,
+        form: LiveForm,
+        image: String,
+    },
     Stopped(RecordedSectionStop),
 }
 
@@ -76,6 +85,7 @@ pub enum RecordedSectionStop {
     FieldChanged,
     ReplayGap,
     NoNewSection,
+    NoEditableFields,
 }
 
 #[cfg(any(windows, test))]
@@ -509,7 +519,7 @@ impl CdpDriver {
         budget_available: bool,
         mut review_target: impl FnMut(&RecordedTargetCapture) -> Result<(), DriverError>,
     ) -> Result<RecordedSectionOutcome, DriverError> {
-        use RecordedSectionOutcome::{Advanced, Stopped};
+        use RecordedSectionOutcome::{Advanced, ReviewRequired, Stopped};
         use RecordedSectionStop::*;
         self.require_recorded_frames()?;
         if !before.walls.is_empty() || before.schema.fields.is_empty() {
@@ -624,6 +634,7 @@ impl CdpDriver {
         }
         let before_fields = section_fields(before);
         let seen: Vec<_> = visited.iter().map(section_fields).collect();
+        let mut observation = None;
         for _ in 0..3 {
             self.cdp
                 .pump_checked(Duration::from_millis(300))
@@ -639,7 +650,8 @@ impl CdpDriver {
                 return Ok(Stopped(DocumentChanged));
             }
             if !after.walls.is_empty() {
-                return Ok(Stopped(PageNeedsReview));
+                observation = Some((after, PageNeedsReview));
+                break;
             }
             let fields = section_fields(&after);
             if !fields.is_subset(&before_fields) && !seen.contains(&fields) {
@@ -651,8 +663,32 @@ impl CdpDriver {
                     form: after,
                 });
             }
+            let reason = if after.schema.fields.is_empty() {
+                NoEditableFields
+            } else {
+                NoNewSection
+            };
+            observation = Some((after, reason));
         }
-        Ok(Stopped(NoNewSection))
+        let Some((form, reason)) = observation else {
+            return Ok(Stopped(NoNewSection));
+        };
+        let image = if self.captured_scope.is_some() {
+            self.screenshot_captured_frame()?
+        } else {
+            self.screenshot_base64()?
+        };
+        if self.inspect_current()? != form || self.recorded_document()? != document {
+            return Ok(Stopped(DocumentChanged));
+        }
+        if !replay_intact(self)? {
+            return Ok(Stopped(ReplayGap));
+        }
+        Ok(ReviewRequired {
+            reason,
+            form,
+            image,
+        })
     }
 
     /// Exercise an unambiguous text or native choice control. Bind pixels to
@@ -900,12 +936,23 @@ impl CdpDriver {
         }
         let post_form = if progressive {
             let current = self.inspect_current()?;
-            if self.recorded_document()? != document
-                || (current != *form
-                    && !crate::conditional_field::additive_recorded_form(form, &current))
-                || self.recorded_field_backend(selector)? != backend.ok_or_else(review)?
+            if self.recorded_document()? != document {
+                return Err(DriverError(
+                    "The saved document changed during field entry".into(),
+                ));
+            }
+            if current != *form && !crate::conditional_field::additive_recorded_form(form, &current)
             {
-                return Err(DriverError("The saved form changed beyond a verified additive field transition; review it before continuing".into()));
+                return Err(DriverError(format!(
+                    "The saved form changed during entry and could not be verified as an addition (fields: {} to {}, schema changed: {}, review notes changed: {}, same native scope: {}).",
+                    form.schema.fields.len(), current.schema.fields.len(), current.schema != form.schema,
+                    current.walls != form.walls, form.shares_inspected_native_scope(&current),
+                )));
+            }
+            if self.recorded_field_backend(selector)? != backend.ok_or_else(review)? {
+                return Err(DriverError(
+                    "The edited control changed its native identity during entry".into(),
+                ));
             }
             for capture in verified_fields {
                 self.verify_recorded_field(capture)?;

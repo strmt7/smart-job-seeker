@@ -199,6 +199,51 @@ async function bounded(promise,label,ms=15000){let timer;try{return await Promis
   const tabs=await chrome.tabs.query({url:origin+'/*'});
   await chrome.tabs.setZoom(tabs[0].id,1);
  },{origin});
+ await page.evaluate(()=>{
+  const host=element('section','','answer-draft');host.id='terminal-review-evidence';host.style.padding='20px';
+  host.append(window.WaypointSourceCopies.previewView({
+   views:[
+    {kind:'page',section:5,field_count:1,fields:[{label:'Applicant name',required:true}]},
+    {kind:'page',section:5,field_count:0,review_observation:true,observed_after_view:1,final_review:false},
+   ],
+   rehearsal:{scope:'fictional_saved_form',halted:true,fields:[],sections:[{view:1,status:'stopped',reason:'no_editable_fields',review_view:2}]},
+  },element,{inline:true}));
+  document.querySelector('#workspace-pane').append(host);
+  const refusal=element('section','','answer-draft');refusal.id='model-refusal-evidence';refusal.style.padding='20px';
+  refusal.append(window.WaypointSourceCopies.previewView({
+   views:[{kind:'page',field_count:1,fields:[{label:'Applicant name',required:true}]}],
+   model_admission:{mode:'unavailable',reason:'The selected model needs 22,642 MiB of available memory to start.'},
+   rehearsal:{scope:'fictional_saved_form',halted:true,visual_gate:{required:true,available:false},fields:[]},
+  },element,{inline:true}));
+  document.querySelector('#workspace-pane').append(refusal);
+ });
+ const terminalReview=page.locator('#terminal-review-evidence');
+ const modelRefusal=page.locator('#model-refusal-evidence');
+ const terminalSelect=terminalReview.getByRole('combobox',{name:'Saved page view'});
+ await resizeViewport({width:320,height:1000});
+ await terminalReview.getByRole('button',{name:'Open review view',exact:true}).click();
+ assert.equal(await terminalSelect.inputValue(),'1');
+ assert.equal(await terminalSelect.evaluate(select=>select===document.activeElement),true);
+ assert.equal(await terminalReview.getByText('The rehearsal stopped here. Inspect this saved view before continuing.',{exact:true}).count(),1);
+ assert.equal(await terminalReview.evaluate(el=>el.scrollWidth>el.clientWidth+1||document.documentElement.scrollWidth>innerWidth+1),false);
+ await captureViewport('terminal-review-320.png');
+ evidence.cases.push('captured manual-review view at 320px');
+ await modelRefusal.scrollIntoViewIfNeeded();
+ assert.equal(await modelRefusal.getByText('Model startup stopped. The selected model needs 22,642 MiB of available memory to start.',{exact:true}).count(),1);
+ assert.equal(await modelRefusal.evaluate(el=>el.scrollWidth>el.clientWidth+1||document.documentElement.scrollWidth>innerWidth+1),false);
+ await captureViewport('model-refusal-320.png');
+ evidence.cases.push('read-only view after model refusal at 320px');
+ await resizeViewport({width:1440,height:1000});
+ await controller.evaluate(async({origin})=>{const tabs=await chrome.tabs.query({url:origin+'/*'});await chrome.tabs.setZoom(tabs[0].id,2);},{origin});
+ await terminalReview.scrollIntoViewIfNeeded();
+ assert.equal(await terminalSelect.inputValue(),'1');
+ assert.equal(await terminalReview.evaluate(el=>el.scrollWidth>el.clientWidth+1||document.documentElement.scrollWidth>innerWidth+1),false);
+ await captureViewport('terminal-review-zoom-2.png');
+ evidence.cases.push('captured manual-review view at zoom 2');
+ await modelRefusal.scrollIntoViewIfNeeded();
+ assert.equal(await modelRefusal.evaluate(el=>el.scrollWidth>el.clientWidth+1||document.documentElement.scrollWidth>innerWidth+1),false);
+ evidence.cases.push('read-only view after model refusal at zoom 2');
+ await controller.evaluate(async({origin})=>{const tabs=await chrome.tabs.query({url:origin+'/*'});await chrome.tabs.setZoom(tabs[0].id,1);},{origin});
  const correctionId=await page.evaluate(async()=>{
   const value=await api('/api/facts',{text:'Fictional Rust tooling skill'});
   const host=element('section','','answer-draft');host.id='correction-qualification';host.style.padding='20px';

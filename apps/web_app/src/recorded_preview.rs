@@ -186,12 +186,19 @@ fn render_at(
     } else {
         None
     };
-    let mut model_session = if source.rehearse {
+    let model_session = if source.rehearse {
         selection
             .map(|selected| crate::private_inference::Session::admit(selected, python, screenshots))
-            .transpose()?
+            .transpose()
     } else {
-        None
+        Ok(None)
+    };
+    let (mut model_session, model_refusal) = match model_session {
+        Ok(session) => (session, None),
+        Err(crate::private_inference::AdmissionError::Unavailable(reason)) => {
+            (None, Some(bounded_text(&reason)))
+        }
+        Err(crate::private_inference::AdmissionError::CleanupFailed(reason)) => return Err(reason),
     };
     let vision_addr = model_session
         .as_ref()
@@ -211,6 +218,7 @@ fn render_at(
             vision_addr,
             selection.and_then(|value| value.choice.as_ref()),
             runtime,
+            model_refusal.is_none(),
             source.public_research,
             candidate,
             (deadline, session_duration),
@@ -295,6 +303,9 @@ fn render_at(
         .execute(&BrowserCommand::Close)
         .map_err(|error| error.to_string());
     let mut result = result;
+    if let (Ok(result), Some(reason)) = (&mut result, model_refusal) {
+        result["model_admission"] = json!({"mode":"unavailable","reason":reason});
+    }
     if let Some(rehearsal) = rehearsal {
         let record = rehearsal.finish(evidence.bytes);
         if let Ok(result) = &mut result {
@@ -461,6 +472,30 @@ fn record_scope(
                 form = next;
                 rehearsal.captures.clear();
             }
+            Ok(RecordedSectionOutcome::ReviewRequired {
+                reason,
+                form,
+                image,
+            }) => {
+                let mut transition = json!({"view":view,"status":"stopped","reason":reason});
+                match save_review_observation(
+                    evidence,
+                    label,
+                    form,
+                    image,
+                    embedded,
+                    (first_view, section, view),
+                ) {
+                    Ok(captured) => {
+                        views.push(captured);
+                        transition["review_view"] = json!(views.len());
+                    }
+                    Err(error) => transition["capture_reason"] = json!(bounded_text(&error)),
+                }
+                rehearsal.sections.push(transition);
+                rehearsal.halted = true;
+                return Ok(());
+            }
             Ok(RecordedSectionOutcome::Stopped(reason)) => {
                 if matches!(reason, RecordedSectionStop::FieldChanged) {
                     for (index, _, _) in rehearsal.captures.drain(..) {
@@ -610,6 +645,7 @@ impl RehearsalVision {
         addr: std::net::SocketAddr,
         choice: Option<&crate::model_preferences::Choice>,
         runtime: Option<crate::private_inference::RuntimeBinding>,
+        allow_inference: bool,
         deadline: std::time::Instant,
     ) -> Self {
         let memory = if runtime.is_some() {
@@ -617,11 +653,15 @@ impl RehearsalVision {
         } else {
             crate::InferenceMemoryPolicy::Shared
         };
-        let identity = memory
-            .check()
-            .ok()
-            .and_then(|()| crate::resident_model_identity_at(addr).ok().flatten())
-            .filter(|identity| choice.is_none_or(|choice| choice.matches(identity)));
+        let identity = if allow_inference {
+            memory
+                .check()
+                .ok()
+                .and_then(|()| crate::resident_model_identity_at(addr).ok().flatten())
+                .filter(|identity| choice.is_none_or(|choice| choice.matches(identity)))
+        } else {
+            None
+        };
         let metadata = identity
             .as_ref()
             .map(|value| json!({"name":value.name,"digest":value.digest}));
@@ -1020,12 +1060,13 @@ impl Rehearsal {
         addr: std::net::SocketAddr,
         choice: Option<&crate::model_preferences::Choice>,
         runtime: Option<crate::private_inference::RuntimeBinding>,
+        allow_inference: bool,
         public_research: bool,
         candidate: Option<(crate::rehearsal_candidate::Snapshot, String)>,
         session: (std::time::Instant, std::time::Duration),
     ) -> Self {
         let (deadline, session_duration) = session;
-        let vision = RehearsalVision::new(addr, choice, runtime, deadline);
+        let vision = RehearsalVision::new(addr, choice, runtime, allow_inference, deadline);
         let candidate_metadata = candidate.as_ref().map(|(snapshot,binding)|snapshot.metadata(binding)).unwrap_or_else(||json!({"scope":"bundled_fictional_contact_profile","profile_sha256":waypoint_domain::sha256_hex(include_bytes!("../data/rehearsal-profile.json")),"documents":"bundled_fictional_pdfs"}));
         let candidate_selected = candidate.is_some();
         let candidate_documents = candidate
@@ -1820,6 +1861,24 @@ fn bounded_text(text: &str) -> String {
 }
 
 #[cfg(windows)]
+fn save_review_observation(
+    evidence: &mut ScreenshotArchive<'_>,
+    label: &str,
+    form: waypoint_applications::driver::LiveForm,
+    image: String,
+    embedded: bool,
+    (scope_view, section, from): (usize, usize, usize),
+) -> Result<Value, String> {
+    let mut saved = save_view(evidence, label, form, image, embedded)?;
+    saved["scope_view"] = json!(scope_view);
+    saved["section"] = json!(section);
+    saved["review_observation"] = json!(true);
+    saved["observed_after_view"] = json!(from);
+    saved["final_review"] = json!(false);
+    Ok(saved)
+}
+
+#[cfg(windows)]
 fn save_view(
     evidence: &mut ScreenshotArchive<'_>,
     label: &str,
@@ -2600,6 +2659,161 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    #[ignore = "explicit hashed fictional replay and owned headless browser"]
+    fn recorded_terminal_view_is_saved_for_manual_review() {
+        use waypoint_applications::{driver::BrowserDriver, form_mapping::BrowserCommand};
+        use waypoint_browser::{
+            rehearsal::RehearsalConfig, CdpDriver, RecordedSectionOutcome, RecordedSectionStop,
+        };
+
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Fixture {
+            python: PathBuf,
+            config: RehearsalConfig,
+            sections: Vec<Vec<(String, String)>>,
+        }
+        let target = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target")
+            .canonicalize()
+            .unwrap();
+        let input = PathBuf::from(std::env::var_os("WAYPOINT_REVIEW_VIEW_FIXTURE").unwrap())
+            .canonicalize()
+            .unwrap();
+        assert!(input.starts_with(&target));
+        let bytes = read(&input, 128 * 1024).unwrap();
+        assert_eq!(
+            waypoint_domain::sha256_hex(&bytes),
+            std::env::var("WAYPOINT_REVIEW_VIEW_FIXTURE_SHA256").unwrap()
+        );
+        let fixture: Fixture = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(fixture.config.schema, 2);
+        assert!(fixture.config.replay_manifest.is_some());
+        assert!(fixture
+            .config
+            .content_root
+            .canonicalize()
+            .unwrap()
+            .starts_with(&target));
+        let output = input.parent().unwrap().join("review-observation");
+        fs::create_dir(&output).unwrap();
+        let (mut driver, ready) =
+            CdpDriver::launch_rehearsal(&fixture.python, fixture.config).unwrap();
+        let started = std::time::Instant::now();
+        let observed = (|| -> Result<Value, String> {
+            let mut form = driver
+                .open(&ready.entry_url)
+                .map_err(|error| error.to_string())?;
+            let mut prior = Vec::new();
+            let mut verified_entries = 0;
+            for (index, expected) in fixture.sections.iter().enumerate() {
+                assert_eq!(form.schema.fields.len(), expected.len());
+                let mut entries = Vec::new();
+                for (field, (label, value)) in form.schema.fields.iter().zip(expected) {
+                    assert_eq!(&field.label, label);
+                    let previous: Vec<_> = entries.iter().collect();
+                    let entry = driver
+                        .rehearse_recorded_field_progressive(
+                            &form,
+                            &field.selector,
+                            value,
+                            &previous,
+                            |target| {
+                                assert_eq!(target.label(), label);
+                                Ok(())
+                            },
+                        )
+                        .map_err(|error| error.to_string())?;
+                    assert_eq!(entry.observed_value(), value);
+                    assert!(entry.continuation().is_none());
+                    entries.push(entry);
+                    verified_entries += 1;
+                }
+                eprintln!(
+                    "Verified all {} fields in fictional section {} after {:.1}s",
+                    entries.len(),
+                    index + 1,
+                    started.elapsed().as_secs_f64(),
+                );
+                let fields: Vec<_> = entries.iter().collect();
+                let outcome = driver
+                    .advance_recorded_section_reviewed(&form, &prior, &fields, true, |target| {
+                        assert_eq!(target.label(), "Continue");
+                        assert_eq!(target.kind(), "button");
+                        Ok(())
+                    })
+                    .map_err(|error| error.to_string())?;
+                if index + 1 < fixture.sections.len() {
+                    let RecordedSectionOutcome::Advanced { form: next, .. } = outcome else {
+                        return Err(format!(
+                            "The replay did not advance from section {}",
+                            index + 1
+                        ));
+                    };
+                    prior.push(form);
+                    form = next;
+                    continue;
+                }
+                let RecordedSectionOutcome::ReviewRequired {
+                    reason: RecordedSectionStop::NoEditableFields,
+                    form,
+                    image,
+                } = outcome
+                else {
+                    return Err("The terminal observation was unavailable".into());
+                };
+                let controls = driver.page_controls().map_err(|error| error.to_string())?;
+                assert!(!controls.incomplete);
+                assert_eq!(controls.controls.len(), 1);
+                assert_eq!(controls.controls[0].label, "Submit application");
+                let replay = driver
+                    .rehearsal_replay_report()
+                    .map_err(|error| error.to_string())?;
+                for key in [
+                    "blocked",
+                    "cached_non_read_replies",
+                    "unreplayed_transports",
+                    "unmanaged_child_sessions",
+                ] {
+                    assert_eq!(replay[key], 0, "{key}");
+                }
+                assert_eq!(replay["unsupported_targets"], json!({}));
+                let mut evidence = ScreenshotArchive::new(&output);
+                let view = save_review_observation(
+                    &mut evidence,
+                    "Page",
+                    form,
+                    image,
+                    false,
+                    (1, index + 1, index + 1),
+                )?;
+                assert_eq!(view["field_count"], 0);
+                assert_eq!(view["review_observation"], true);
+                assert_eq!(view["final_review"], false);
+                let path = output.join(view["image"].as_str().unwrap());
+                assert_eq!(
+                    waypoint_domain::sha256_hex(&fs::read(path).unwrap()),
+                    view["sha256"]
+                );
+                return Ok(
+                    json!({"entry_fields":verified_entries,"sections":index+1,"view":view,"replay":replay,"delivery_control_unchanged":true}),
+                );
+            }
+            Err("The fictional fixture supplied no terminal section".into())
+        })();
+        let close = driver.execute(&BrowserCommand::Close);
+        let mut saved = observed.unwrap_or_else(|error| panic!("{error}; close: {close:?}"));
+        close.unwrap();
+        saved["browser_closed"] = json!(true);
+        fs::write(
+            output.join("report.private.json"),
+            serde_json::to_vec_pretty(&saved).unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn staged_document_roles_have_distinct_bytes_and_never_overwrite() {
         let folder = tempfile::tempdir().unwrap();
         let screenshots = folder.path().join("screenshots");
@@ -2632,6 +2846,7 @@ mod tests {
             "127.0.0.1:0".parse().unwrap(),
             None,
             None,
+            true,
             false,
             None,
             (std::time::Instant::now(), std::time::Duration::ZERO),
@@ -2642,6 +2857,92 @@ mod tests {
         assert_eq!(result["visual_gate"]["available"], false);
         assert_eq!(result["visual_gate"]["targets"], json!([]));
         assert_eq!(result["fields"], json!([]));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "explicit hashed fictional replay and owned headless browser"]
+    fn refused_model_keeps_a_read_only_saved_view() {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Fixture {
+            source: Source,
+            url: String,
+            python: PathBuf,
+            config: waypoint_browser::rehearsal::RehearsalConfig,
+        }
+        let target = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target")
+            .canonicalize()
+            .unwrap();
+        let input = PathBuf::from(std::env::var_os("WAYPOINT_MODEL_REFUSAL_FIXTURE").unwrap())
+            .canonicalize()
+            .unwrap();
+        assert!(input.starts_with(&target));
+        let bytes = read(&input, 128 * 1024).unwrap();
+        assert_eq!(
+            waypoint_domain::sha256_hex(&bytes),
+            std::env::var("WAYPOINT_MODEL_REFUSAL_FIXTURE_SHA256").unwrap()
+        );
+        let fixture: Fixture = serde_json::from_slice(&bytes).unwrap();
+        assert!(fixture.source.rehearse);
+        assert!(fixture
+            .source
+            .directory
+            .canonicalize()
+            .unwrap()
+            .starts_with(&target));
+        let folder = input.parent().unwrap();
+        let screenshots = folder.join("model-refusal-screenshots");
+        fs::create_dir(&screenshots).unwrap();
+        let fallback = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        fallback.set_nonblocking(true).unwrap();
+        let selected = crate::private_inference::Selection {
+            choice: Some(crate::model_preferences::Choice {
+                name: "invalid-fixture-selection".into(),
+                digest: String::new(),
+                size_bytes: 0,
+                directory: None,
+            }),
+            cache_root: folder.join("unused-model-cache"),
+        };
+        let result = render_at(
+            &fixture.source,
+            &fixture.url,
+            &fixture.python,
+            fixture.config,
+            &screenshots,
+            fallback.local_addr().unwrap(),
+            Some(&selected),
+        )
+        .unwrap();
+        assert_eq!(
+            result["model_admission"],
+            json!({"mode":"unavailable","reason":"Saved model settings are invalid"})
+        );
+        assert_eq!(result["rehearsal"]["halted"], true);
+        assert_eq!(result["rehearsal"]["fields"], json!([]));
+        assert_eq!(result["rehearsal"]["visual_gate"]["targets"], json!([]));
+        assert_eq!(result["rehearsal"]["visual_gate"]["available"], false);
+        assert_eq!(
+            fallback.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+        let view = &result["views"][0];
+        assert!(view["field_count"].as_u64().unwrap() > 0);
+        let png = read(
+            &screenshots.join(view["image"].as_str().unwrap()),
+            6 * 1024 * 1024,
+        )
+        .unwrap();
+        assert_eq!(view["sha256"], waypoint_domain::sha256_hex(&png));
+        assert_eq!(result["replay"]["blocked"], 0);
+        assert_eq!(result["replay"]["cached_non_read_replies"], 0);
+        fs::write(
+            folder.join("model-refusal.private.json"),
+            serde_json::to_vec_pretty(&result).unwrap(),
+        )
+        .unwrap();
     }
 
     #[cfg(windows)]

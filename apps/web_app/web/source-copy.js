@@ -98,6 +98,10 @@
   function previewView(preview, el, options) {
     const section = el(options.inline ? 'div' : 'details', '', 'source-copy-result');
     const rehearsal = ['fictional_text_only', 'fictional_saved_form', 'saved_candidate_contacts', 'saved_candidate_materials'].includes(preview?.rehearsal?.scope) ? preview.rehearsal : null;
+    const modelRefusal = preview?.model_admission?.mode === 'unavailable' && typeof preview.model_admission.reason === 'string'
+      ? preview.model_admission.reason.slice(0, 500) : '';
+    const stopMessage = modelRefusal ? `Model startup stopped. ${modelRefusal}` : 'The rehearsal stopped for review.';
+    const stopNotice = rehearsal?.halted ? el('p', stopMessage, 'review-label') : null;
     if (!options.inline) section.append(el('summary', rehearsal ? 'Saved-page autofill rehearsal' : 'Recorded page preview'));
     const currentProfile=options.currentCandidateProfile!==undefined?options.currentCandidateProfile:preview?.candidate_profile_current;
     const currentFacts=options.currentCandidateFacts!==undefined?options.currentCandidateFacts:preview?.candidate_facts_current;
@@ -153,8 +157,8 @@
       for(const doc of (Array.isArray(rehearsal.candidate_source?.documents)?rehearsal.candidate_source.documents:[]).slice(0,16)) {
         if(typeof doc.filename==='string')section.append(el('p',`${doc.selection?.role === 'cv' ? 'CV' : doc.selection?.role === 'cover_letter' ? 'Cover letter' : 'Supporting document'} · ${doc.filename}`, 'footnote'));
       }
-      if (rehearsal.halted) section.append(el('p', 'The rehearsal stopped for review.', 'review-label'));
-      if (rehearsal.visual_gate?.required && !rehearsal.visual_gate.available) {
+      if (stopNotice) section.append(stopNotice);
+      if (rehearsal.visual_gate?.required && !rehearsal.visual_gate.available && !modelRefusal) {
         section.append(el('p', 'A loaded local vision model is required before autofill. Check the model settings.', 'review-label'));
       }
     }
@@ -175,7 +179,8 @@
       const heading = view.kind === 'page' ? 'Page' : `Frame ${frames.get(scope)} · ${view.label || view.origin || 'Embedded page'}`;
       const stage = count(view.section);
       const caption = stage > 1 ? `${heading} · Section ${stage}` : heading;
-      const option = el('option', view.after_dialog === true ? `${caption} · Updated` : caption);
+      const title = view.review_observation === true ? `${caption} · Review` : caption;
+      const option = el('option', view.after_dialog === true ? `${title} · Updated` : title);
       option.value = String(index);
       select.append(option);
     }
@@ -213,11 +218,15 @@
       show.disabled = false;
       details.replaceChildren();
       if (!supportedView(view)) return;
+      const reviewOnly = view.review_observation === true;
+      if (stopNotice) {
+        stopNotice.textContent = reviewOnly ? 'The rehearsal stopped here. Inspect this saved view before continuing.' : stopMessage;
+      }
       if (view.origin) details.append(el('p', view.origin, 'footnote'));
       const fields = Array.isArray(view.fields) ? view.fields.filter(field => field && typeof field.label === 'string').slice(0, 40) : [];
       const total = count(view.field_count);
       if (total > fields.length) details.append(el('p', `Showing ${fields.length} of ${total} fields.`, 'footnote'));
-      else if (!fields.length) details.append(el('p', 'No form fields were detected in this view.', 'footnote'));
+      else if (!fields.length && !reviewOnly) details.append(el('p', 'No form fields were detected in this view.', 'footnote'));
       if (fields.length) {
         const list = el('ul');
         for (const field of fields) list.append(el('li', `${field.label || 'Unlabelled field'}${field.label_truncated === true ? '…' : ''}${field.required ? ' · Required' : ''}`));
@@ -296,7 +305,7 @@
           if (unresolved) details.append(el('p', `${unresolved} upload control${unresolved === 1 ? ' needs' : 's need'} a document choice.`, 'review-label'));
         }
         const checks = Array.isArray(rehearsal.fields) ? rehearsal.fields.filter(field => field?.view === viewNumber) : [];
-        if (!checks.length) details.append(el('p', 'No fields were tested in this view.', 'footnote'));
+        if (!checks.length && !reviewOnly) details.append(el('p', 'No fields were tested in this view.', 'footnote'));
         for (const check of checks) {
           const stateLabel = check.kind === 'file' ? 'Attachment' : ['select', 'radio'].includes(check.kind) ? 'Selection' : 'Text';
           const states = {
@@ -371,10 +380,23 @@
             field_changed: 'A field could not be reverified before continuing.',
             replay_gap: 'The next action needed a request the rehearsal could not replay safely.',
             no_new_section: 'The forward action exposed no new form fields.',
+            no_editable_fields: 'The next screen has no editable fields and needs review.',
             section_capture_failed: 'The next section image could not be saved.',
           };
           details.append(el('p', reasons[transition.reason] || 'The next section needs review.', transition.reason === 'no_forward_control' ? 'footnote' : 'review-label'));
           if (typeof transition.capture_reason === 'string') details.append(el('p', transition.capture_reason, 'footnote'));
+          const reviewIndex = count(transition.review_view) - 1;
+          const observed = captures[reviewIndex];
+          if (supportedView(observed) && observed.review_observation === true && observed.observed_after_view === viewNumber) {
+            const review = el('button', 'Open review view', 'button-secondary');
+            review.type = 'button';
+            review.addEventListener('click', () => {
+              select.value = String(reviewIndex);
+              describeSelection();
+              select.focus();
+            });
+            details.append(review);
+          }
         }
       }
     }

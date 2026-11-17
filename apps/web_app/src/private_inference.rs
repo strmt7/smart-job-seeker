@@ -289,6 +289,24 @@ mod windows {
         pub runner: waypoint_inference::generation_profile::OwnedRunnerOptions,
     }
 
+    #[derive(Debug)]
+    pub(crate) enum AdmissionError {
+        Unavailable(String),
+        CleanupFailed(String),
+    }
+
+    impl From<String> for AdmissionError {
+        fn from(error: String) -> Self {
+            Self::Unavailable(error)
+        }
+    }
+
+    impl From<&str> for AdmissionError {
+        fn from(error: &str) -> Self {
+            Self::Unavailable(error.to_owned())
+        }
+    }
+
     pub(crate) struct Session {
         pub addr: SocketAddr,
         pub runtime: Option<RuntimeBinding>,
@@ -306,7 +324,7 @@ mod windows {
             selection: &Selection,
             python: &Path,
             screenshots: &Path,
-        ) -> Result<Self, String> {
+        ) -> Result<Self, AdmissionError> {
             let resolved;
             let selection = if selection.choice.is_none() {
                 let temporary = tempfile::Builder::new()
@@ -382,8 +400,10 @@ mod windows {
             let result = session.initialize(selection, python);
             if let Err(error) = result {
                 return match session.stop() {
-                    Ok(()) => Err(error),
-                    Err(cleanup) => Err(format!("{error}; model cleanup failed: {cleanup}")),
+                    Ok(()) => Err(error.into()),
+                    Err(cleanup) => Err(AdmissionError::CleanupFailed(format!(
+                        "{error}; model cleanup failed: {cleanup}"
+                    ))),
                 };
             }
             Ok(session)
@@ -778,7 +798,7 @@ mod windows {
 }
 
 #[cfg(windows)]
-pub(crate) use windows::{RuntimeBinding, Session};
+pub(crate) use windows::{AdmissionError, RuntimeBinding, Session};
 
 #[cfg(test)]
 mod tests {

@@ -362,6 +362,12 @@ visual barrier.
 
 ### R04.4 — Independent final review
 
+The [post-navigation checkpoint](g1/POST_NAVIGATION_REVIEW_2026-11-17.md)
+records the terminal image as evidence for manual review and preserves a
+read-only page when model admission fails. The five-step native fixture
+exercised capture. Use the retained dense-form timing and refusal evidence to
+qualify the verification steps below.
+
 1. Enumerate every required section/control and relevant repeated record again.
    Establish which controls are currently applicable, hidden, unresolved or
    intentionally unanswered.

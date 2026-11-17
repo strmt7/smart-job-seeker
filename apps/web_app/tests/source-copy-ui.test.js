@@ -9,6 +9,7 @@ class Node {
   replaceChildren(...nodes) { this.children = nodes; }
   setAttribute(key, value) { this.attributes[key] = value; }
   addEventListener(type, listener) { this.listeners[type] = listener; }
+  focus() { this.focused = true; }
 }
 function find(root, predicate) { if (predicate(root)) return root; for (const node of root.children) { const result = find(node, predicate); if (result) return result; } }
 const button = (root, text) => find(root, node => node.tag === 'button' && node.textContent === text);
@@ -255,6 +256,38 @@ function harness(api, onFinished) {
   await show.listeners.click();
   assert(find(panel,node => node.textContent==='The saved image differs from its record.'));
   assert.equal(find(panel,node => node.tag==='img'),undefined);
+
+  const terminal = {kind:'page',review_observation:true,observed_after_view:1,field_count:0,
+    image:'0003.png',sha256:digest,final_review:false};
+  const review = harness(async () => {}).preview({views:[preview.views[0], terminal],rehearsal:{
+    scope:'fictional_saved_form',halted:true,sections:[{view:1,status:'stopped',reason:'no_editable_fields',review_view:2}],
+  }},{jobId:'job',attemptId:'attempt',api:async (route, body) => {
+    assert.equal(route,'/api/attempts/screenshot');
+    assert.equal(body.attempt_id,'attempt');
+    assert.equal(body.name,terminal.image);
+    return {name:body.name,sha256:digest,image_base64:'fictional-image'};
+  }});
+  assert(find(review,node => node.textContent==='The next screen has no editable fields and needs review.'));
+  button(review,'Open review view').listeners.click();
+  const reviewSelect = find(review,node => node.tag==='select');
+  assert.equal(reviewSelect.value,'1');
+  assert.equal(reviewSelect.focused,true);
+  assert(find(review,node => node.textContent==='The rehearsal stopped here. Inspect this saved view before continuing.'));
+  assert.equal(find(review,node => node.textContent==='The rehearsal stopped for review.'),undefined);
+  assert.equal(find(review,node => node.textContent==='No fields were tested in this view.'),undefined);
+  await button(review,'View image').listeners.click();
+  assert(find(review,node => node.tag==='img'));
+  const unbound = harness(async () => {}).preview({views:[preview.views[0],{...terminal,observed_after_view:3}],rehearsal:{
+    scope:'fictional_saved_form',sections:[{view:1,status:'stopped',reason:'no_editable_fields',review_view:2}],
+  }},{});
+  assert.equal(button(unbound,'Open review view'),undefined);
+
+  const modelStopped = harness(async () => {}).preview({...preview,
+    model_admission:{mode:'unavailable',reason:'Saved model settings are invalid'},
+    rehearsal:{scope:'fictional_saved_form',halted:true,visual_gate:{required:true,available:false},fields:[]},
+  },{});
+  assert(find(modelStopped,node => node.textContent==='Model startup stopped. Saved model settings are invalid'));
+  assert.equal(find(modelStopped,node => node.textContent==='The rehearsal stopped for review.'),undefined);
 
   const gated = harness(async () => {}).preview({...preview, rehearsal:{scope:'fictional_saved_form',halted:true,fields:[],visual_gate:{required:true,available:false,targets:[{view:1,phase:'before_entry',label:'Parent name',status:'visual_unobserved',image:'0020.png',sha256:digest}]}}},{});
   assert(find(gated,node=>node.textContent==='A loaded local vision model is required before autofill. Check the model settings.'));
