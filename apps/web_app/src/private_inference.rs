@@ -283,9 +283,15 @@ mod windows {
         idle_shared_runtime_at(python, &script, addr).unwrap();
     }
 
+    #[derive(Clone)]
+    pub(crate) struct RuntimeBinding {
+        pub guard: RequestGuard,
+        pub runner: waypoint_inference::generation_profile::OwnedRunnerOptions,
+    }
+
     pub(crate) struct Session {
         pub addr: SocketAddr,
-        pub guard: Option<RequestGuard>,
+        pub runtime: Option<RuntimeBinding>,
         pub metadata: Value,
         owner: Option<Arc<OwnedRuntime>>,
         profile: Option<tempfile::TempDir>,
@@ -339,7 +345,7 @@ mod windows {
                 }
                 return Ok(Self {
                     addr: DEFAULT,
-                    guard: None,
+                    runtime: None,
                     metadata: json!({"mode":"borrowed","model":identity.name,"digest":identity.digest}),
                     owner: None,
                     profile: None,
@@ -364,7 +370,7 @@ mod windows {
                 .map_err(|_| "Cannot create private model runtime folder")?;
             let mut session = Self {
                 addr: DEFAULT,
-                guard: None,
+                runtime: None,
                 metadata: Value::Null,
                 owner: None,
                 profile: Some(profile),
@@ -566,7 +572,6 @@ mod windows {
                 }
                 crate::InferenceMemoryPolicy::Owned.check()
             });
-            self.guard = Some(guard.clone());
             guard()?;
             let binding =
                 crate::model_start::startup_binding(&get(addr, "/api/tags")?, &choice.name)?;
@@ -596,10 +601,9 @@ mod windows {
             }
             profile.validate_details(&details)?;
             let context = profile.context_tokens();
-            let mut body = json!({"model":choice.name,"prompt":"","stream":false,"keep_alive":"5m","options":{"num_ctx":context,"num_thread":2,"num_batch":128}});
-            if profile == waypoint_inference::generation_profile::GenerationProfile::Generic {
-                body["options"]["num_gpu"] = json!(999);
-            }
+            let runner =
+                waypoint_inference::generation_profile::OwnedRunnerOptions::for_profile(profile);
+            let body = json!({"model":choice.name,"prompt":"","stream":false,"keep_alive":"5m","options":runner});
             let body = serde_json::to_vec(&body).map_err(|_| "Cannot prepare model startup")?;
             let (code, response) = http_request_with_guard(
                 addr,
@@ -627,6 +631,9 @@ mod windows {
                 return Err("Private resident identity differs from the saved model".into());
             }
             let resident = crate::resident_model_status_at(addr)?;
+            if resident["context_length"].as_u64() != Some(u64::from(context)) {
+                return Err("The private model context differs from the admitted runner".into());
+            }
             let owner = self
                 .owner
                 .as_ref()
@@ -636,6 +643,8 @@ mod windows {
                 json!(crate::InferenceMemoryPolicy::OWNED_RESERVE_BYTES);
             self.metadata["session_state"] = json!("ready");
             self.metadata["reasoning_control"] = profile.thinking();
+            self.metadata["requested_runner_options"] = json!(runner);
+            self.runtime = Some(RuntimeBinding { guard, runner });
             self.persist_metadata()?;
             Ok(())
         }
@@ -664,7 +673,7 @@ mod windows {
             if let Some(result) = &self.cleanup_result {
                 return result.clone();
             }
-            self.guard = None;
+            self.runtime = None;
             let stopped = if let Some(owner) = self.owner.take() {
                 match Arc::try_unwrap(owner) {
                     Ok(mut owner) => owner.stop(),
@@ -769,7 +778,7 @@ mod windows {
 }
 
 #[cfg(windows)]
-pub(crate) use windows::Session;
+pub(crate) use windows::{RuntimeBinding, Session};
 
 #[cfg(test)]
 mod tests {

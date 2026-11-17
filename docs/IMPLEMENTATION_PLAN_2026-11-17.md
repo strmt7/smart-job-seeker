@@ -89,14 +89,14 @@ fictional forms to measure interactions and unexpected transitions.
 
 ## Execution order and work admission
 
-1. **Restore reliable owned generation before the longer replay.** The
+1. **Verify owned generation in the longer replay.** The
    [saved-page rehearsal](g1/PROGRESS_BASED_REHEARSAL_2026-11-17.md)
    now uses verified progress, cycle detection and session and evidence budgets.
-   Reproduce the initial Ollama HTTP 500 with the retained fixture and native
-   error capture. Measure startup and generation runner settings, actual RAM
-   and job cleanup, then rerun varied layouts with independent full-workflow
-   truth. Qualify in-flight interruption with native request drain and fresh
-   readback.
+   [Owned generation](g1/OWNED_RUNNER_BINDING_2026-11-17.md) now sends the
+   preload options throughout the rehearsal. Run the retained fixture when
+   RAM permits and retain native allocation, error and cleanup observations.
+   Then rerun varied layouts with independent full-workflow truth. Qualify
+   in-flight interruption with native request drain and fresh readback.
 2. **R04.1 and R03.1: repair coverage and structural perception.** First account
    for every offered question and add bounded deliberative repair for grounded
    omissions. The current-record and quantity changes have scoped regression

@@ -20,6 +20,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+use crate::generation_profile::{OwnedRunnerOptions, MAX_CONTEXT_TOKENS};
 use crate::{CapabilityReport, Inference, InferenceError, UsageReport};
 
 /// Registered local JSON schemas include handoff and task-specific schemas.
@@ -125,11 +126,18 @@ const GENERATE_TIMEOUT_MS: u64 = 300_000;
 
 type ResponseObserver = Box<dyn FnMut(&str, &Value) + Send>;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Context {
+    Default,
+    Explicit(u32),
+    Resident,
+    Owned(OwnedRunnerOptions),
+}
+
 pub struct OllamaInference {
     addr: SocketAddr,
     model: String,
-    context_window: Option<u32>,
-    resident_context: bool,
+    context: Context,
     pub think: bool,
     cancel_flag: Arc<AtomicBool>,
     request_guard: Option<Arc<dyn Fn() -> Result<(), String> + Send + Sync>>,
@@ -160,8 +168,7 @@ impl OllamaInference {
         Ok(Self {
             addr,
             model,
-            context_window: None,
-            resident_context: false,
+            context: Context::Default,
             think: true,
             cancel_flag: Arc::new(AtomicBool::new(false)),
             request_guard: None,
@@ -174,19 +181,23 @@ impl OllamaInference {
     /// Request an explicit context size. The caller is responsible for checking
     /// that the resident model and machine have sufficient resources.
     pub fn with_context_window(mut self, tokens: u32) -> Result<Self, InferenceError> {
-        if !(1024..=crate::generation_profile::MAX_CONTEXT_TOKENS).contains(&tokens) {
+        if !(1024..=MAX_CONTEXT_TOKENS).contains(&tokens) {
             return Err(InferenceError::BudgetExceeded);
         }
-        self.context_window = Some(tokens);
-        self.resident_context = false;
+        self.context = Context::Explicit(tokens);
         Ok(self)
     }
 
     /// Reuse the context of the single eligible resident model for each
     /// request. This is a snapshot, not a reservation against other clients.
     pub fn with_resident_context(mut self) -> Self {
-        self.context_window = None;
-        self.resident_context = true;
+        self.context = Context::Resident;
+        self
+    }
+
+    /// Bind generation to a runner preloaded and supervised by the caller.
+    pub fn with_owned_runner(mut self, options: OwnedRunnerOptions) -> Self {
+        self.context = Context::Owned(options);
         self
     }
 
@@ -269,6 +280,26 @@ impl OllamaInference {
         serde_json::from_slice(&bytes)
             .map_err(|e| InferenceError::StructuredOutputFailed(e.to_string()))
     }
+    fn generation_options(&self, thinking: bool, budget: u32) -> Result<Value, InferenceError> {
+        let mut options = self.profile.options(thinking, budget);
+        let context = match self.context {
+            Context::Default => return Ok(options),
+            Context::Explicit(context) => context,
+            Context::Resident | Context::Owned(_) => {
+                resident_context_from_ps(&self.get_json("/api/ps", 3000)?, &self.model)
+                    .map_err(InferenceError::RuntimeUnreachable)?
+            }
+        };
+        if let Context::Owned(runner) = self.context {
+            runner
+                .bind(&mut options, context)
+                .map_err(InferenceError::RuntimeUnreachable)?;
+        } else {
+            options["num_ctx"] = context.into();
+        }
+        Ok(options)
+    }
+
     fn generate_formatted(
         &mut self,
         schema_name: &str,
@@ -290,25 +321,14 @@ impl OllamaInference {
         // plain prompts where the thinking field is expected. Callers who
         // want reasoning before a structured result run two steps and pass
         // their own synthesized context.
-        let mut body = serde_json::json!({
+        let body = serde_json::json!({
             "model": self.model,
             "prompt": prompt,
             "stream": false,
             "format": format,
             "think": false,
-            "options": self.profile.options(false, max_output_tokens),
+            "options": self.generation_options(false, max_output_tokens)?,
         });
-        let context = if self.resident_context {
-            Some(
-                resident_context_from_ps(&self.get_json("/api/ps", 3000)?, &self.model)
-                    .map_err(InferenceError::RuntimeUnreachable)?,
-            )
-        } else {
-            self.context_window
-        };
-        if let Some(tokens) = context {
-            body["options"]["num_ctx"] = tokens.into();
-        }
         let out = self.post_json("/api/generate", &body, GENERATE_TIMEOUT_MS)?;
         if let Some(observer) = &mut self.response_observer {
             observer(schema_name, &out);
@@ -361,6 +381,13 @@ impl Inference for OllamaInference {
             .ok_or_else(|| {
                 InferenceError::StructuredOutputFailed("runtime did not report a version".into())
             })?;
+        let probe_options = |thinking, budget| {
+            if matches!(self.context, Context::Owned(_)) {
+                self.generation_options(thinking, budget)
+            } else {
+                Ok(self.profile.options(thinking, budget))
+            }
+        };
 
         // 2. Structured-output probe (strict JSON mode, no reasoning tokens).
         let structured = self.post_json(
@@ -371,7 +398,7 @@ impl Inference for OllamaInference {
                 "stream": false,
                 "format": "json",
                 "think": false,
-                "options": self.profile.options(false, 48),
+                "options": probe_options(false, 48)?,
             }),
             GENERATION_PROBE_TIMEOUT_MS,
         )?;
@@ -394,7 +421,7 @@ impl Inference for OllamaInference {
                 "prompt": "Compute 17 * 23. Think briefly. Put only the final integer in your final answer.",
                 "stream": false,
                 "think": self.profile.thinking(),
-                "options": self.profile.options(true, 2048),
+                "options": probe_options(true, 2048)?,
             }),
             GENERATION_PROBE_TIMEOUT_MS,
         )?;
@@ -484,20 +511,9 @@ impl Inference for OllamaInference {
         self.verify_generation_profile()?;
         // Reason separately: combining thinking and a strict schema has
         // exhausted the output budget without a final answer on this runtime.
-        let mut body = serde_json::json!({"model":self.model,"prompt":prompt,
+        let body = serde_json::json!({"model":self.model,"prompt":prompt,
             "stream":false,"think":self.profile.thinking(),
-            "options":self.profile.options(true,max_output_tokens)});
-        let context = if self.resident_context {
-            Some(
-                resident_context_from_ps(&self.get_json("/api/ps", 3000)?, &self.model)
-                    .map_err(InferenceError::RuntimeUnreachable)?,
-            )
-        } else {
-            self.context_window
-        };
-        if let Some(tokens) = context {
-            body["options"]["num_ctx"] = tokens.into();
-        }
+            "options":self.generation_options(true,max_output_tokens)?});
         let timeout = if self.profile == crate::generation_profile::GenerationProfile::Qwen38 {
             900_000
         } else {
@@ -614,7 +630,7 @@ fn resident_context_from_ps(value: &Value, model: &str) -> Result<u32, String> {
     bounded_resident_allocation(&models[0])?;
     let context = models[0]["context_length"]
         .as_u64()
-        .filter(|n| (1024..=131_072).contains(n))
+        .filter(|n| (1024..=u64::from(MAX_CONTEXT_TOKENS)).contains(n))
         .ok_or("resident context unavailable or outside supported bounds")?;
     Ok(context as u32)
 }
@@ -1517,10 +1533,13 @@ mod tests {
                 let mut body = vec![0; length];
                 reader.read_exact(&mut body).unwrap();
                 let response = if step == 0 {
-                    serde_json::json!({"models":[{"name":"local","size":1000,"size_vram":1000,"context_length":4096}]})
+                    serde_json::json!({"models":[{"name":"local","size":1000,"size_vram":1000,"context_length":MAX_CONTEXT_TOKENS}]})
                 } else {
                     let body: Value = serde_json::from_slice(&body).unwrap();
-                    assert_eq!(body["options"]["num_ctx"], 4096);
+                    assert_eq!(body["options"]["num_ctx"], MAX_CONTEXT_TOKENS);
+                    for option in ["num_batch", "num_thread", "num_gpu"] {
+                        assert!(body["options"].get(option).is_none());
+                    }
                     serde_json::json!({"done":true,"done_reason":"stop","response":"{\"ok\":true}"})
                 }.to_string();
                 write!(
@@ -1546,12 +1565,75 @@ mod tests {
     }
 
     #[test]
+    fn owned_generation_keeps_runner_settings_and_refuses_changed_context() {
+        use crate::generation_profile::GenerationProfile;
+        let runner = OwnedRunnerOptions::for_profile(GenerationProfile::Generic);
+        let preload = serde_json::json!(runner);
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            for (index, context) in [4096, 4096, 8192].into_iter().enumerate() {
+                let mut lookup = accept_fixture(&listener);
+                assert!(read_fixture_request(&mut lookup).starts_with(b"GET /api/ps "));
+                let reply = serde_json::json!({"models":[{"name":"local","size":1000,"size_vram":1000,"context_length":context}]}).to_string();
+                write!(
+                    lookup,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}",
+                    reply.len()
+                )
+                .unwrap();
+                if index == 2 {
+                    break;
+                }
+                let mut generation = accept_fixture(&listener);
+                let request = read_fixture_request(&mut generation);
+                assert!(request.starts_with(b"POST /api/generate "));
+                let end = find_headers_end(&request).unwrap();
+                let body: Value = serde_json::from_slice(&request[end + 4..]).unwrap();
+                for (key, value) in preload.as_object().unwrap() {
+                    assert_eq!(&body["options"][key], value);
+                }
+                assert_eq!(body["think"], index == 1);
+                let reply = serde_json::json!({"done":true,"done_reason":"stop","response":if index == 0 { "{\"ok\":true}" } else { "Fictional advice" }}).to_string();
+                write!(
+                    generation,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}",
+                    reply.len()
+                )
+                .unwrap();
+            }
+        });
+        let mut model = OllamaInference::new(&format!("http://{addr}"), "local")
+            .unwrap()
+            .with_owned_runner(runner);
+        assert_eq!(
+            model
+                .generate_structured("fixture", "fictional", 100)
+                .unwrap()
+                .0["ok"],
+            true
+        );
+        assert_eq!(
+            model
+                .generate_advice("fixture", "fictional", 768)
+                .unwrap()
+                .unwrap()
+                .0,
+            "Fictional advice"
+        );
+        assert!(matches!(
+            model.generate_structured("fixture", "fictional", 100),
+            Err(InferenceError::RuntimeUnreachable(message)) if message.contains("differs from the admitted runner")
+        ));
+        server.join().unwrap();
+    }
+
+    #[test]
     fn explicit_context_window_is_bounded() {
         let model = || OllamaInference::new("http://127.0.0.1:11434", "test").unwrap();
         for size in [1024, 4096, 16_384, 131_072, 262_144] {
             let adapter = model().with_context_window(size).unwrap();
-            assert_eq!(adapter.context_window, Some(size));
-            assert!(!adapter.resident_context);
+            assert_eq!(adapter.context, Context::Explicit(size));
         }
         for size in [0, 1023, 262_145, u32::MAX] {
             assert!(model().with_context_window(size).is_err());

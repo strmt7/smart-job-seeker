@@ -53,7 +53,7 @@
         "docs/g1/CHECKED_HISTORY_REHEARSAL_2026-11-14.md",
         "docs/g1/REVIEWED_QUALIFICATION_ANSWERS_2026-11-14.md"
       ],
-      "next_action": "Unify effective runtime profiles across inference consumers. The owned rehearsal runtime now uses its job-backed 4 GiB continuation threshold after a measured refusal near 8 GiB. Keep the startup reserve and emergency stop. Record native startup errors and aggregate job peaks, then align context, KV type, reasoning and caller/session budgets before qualifying longer profiles.",
+      "next_action": "Run the prepared eight-field replay with sufficient host RAM. Match native runner identity and allocation before and after preload and generation, retain the full bounded error if HTTP 500 recurs, and record aggregate job peaks and teardown. Private rehearsal now binds preload and generation settings in text, reasoning and vision. The Windows build and loopback contracts pass; the live runner and whole-product profile integration still need verification.",
       "execution_batch": "A",
       "steps": [
         "Measure native observations and browser-operation cancellation/cleanup latency without blocking owner controls.",

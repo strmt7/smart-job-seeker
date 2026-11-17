@@ -197,9 +197,9 @@ fn render_at(
         .as_ref()
         .map(|session| session.addr)
         .unwrap_or(vision_addr);
-    let runtime_guard = model_session
+    let runtime = model_session
         .as_ref()
-        .and_then(|session| session.guard.clone());
+        .and_then(|session| session.runtime.clone());
     let session_duration = std::time::Duration::from_secs(config.seconds);
     let deadline = std::time::Instant::now()
         .checked_add(session_duration)
@@ -210,7 +210,7 @@ fn render_at(
         Rehearsal::new(
             vision_addr,
             selection.and_then(|value| value.choice.as_ref()),
-            runtime_guard,
+            runtime,
             source.public_research,
             candidate,
             (deadline, session_duration),
@@ -609,10 +609,10 @@ impl RehearsalVision {
     fn new(
         addr: std::net::SocketAddr,
         choice: Option<&crate::model_preferences::Choice>,
-        guard: Option<crate::visual_review::RequestGuard>,
+        runtime: Option<crate::private_inference::RuntimeBinding>,
         deadline: std::time::Instant,
     ) -> Self {
-        let memory = if guard.is_some() {
+        let memory = if runtime.is_some() {
             crate::InferenceMemoryPolicy::Owned
         } else {
             crate::InferenceMemoryPolicy::Shared
@@ -625,20 +625,21 @@ impl RehearsalVision {
         let metadata = identity
             .as_ref()
             .map(|value| json!({"name":value.name,"digest":value.digest}));
+        let runner = runtime.as_ref().map(|runtime| runtime.runner);
         let request_guard: crate::visual_review::RequestGuard = std::sync::Arc::new(move || {
             if std::time::Instant::now() >= deadline {
                 return Err("The rehearsal time budget was reached".into());
             }
-            guard
+            runtime
                 .as_ref()
-                .map_or_else(|| memory.check(), |guard| guard())
+                .map_or_else(|| memory.check(), |runtime| (runtime.guard)())
         });
         Self {
             addr,
             memory,
             model: identity.map(|identity| {
                 crate::visual_review::VisionIdentityGuard::from_identity(identity)
-                    .with_request_guard(Some(request_guard))
+                    .with_rehearsal_runtime(request_guard, runner)
             }),
             identity: metadata.unwrap_or(Value::Null),
             targets: Vec::new(),
@@ -1018,13 +1019,13 @@ impl Rehearsal {
     fn new(
         addr: std::net::SocketAddr,
         choice: Option<&crate::model_preferences::Choice>,
-        guard: Option<crate::visual_review::RequestGuard>,
+        runtime: Option<crate::private_inference::RuntimeBinding>,
         public_research: bool,
         candidate: Option<(crate::rehearsal_candidate::Snapshot, String)>,
         session: (std::time::Instant, std::time::Duration),
     ) -> Self {
         let (deadline, session_duration) = session;
-        let vision = RehearsalVision::new(addr, choice, guard, deadline);
+        let vision = RehearsalVision::new(addr, choice, runtime, deadline);
         let candidate_metadata = candidate.as_ref().map(|(snapshot,binding)|snapshot.metadata(binding)).unwrap_or_else(||json!({"scope":"bundled_fictional_contact_profile","profile_sha256":waypoint_domain::sha256_hex(include_bytes!("../data/rehearsal-profile.json")),"documents":"bundled_fictional_pdfs"}));
         let candidate_selected = candidate.is_some();
         let candidate_documents = candidate

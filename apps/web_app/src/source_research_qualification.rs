@@ -185,6 +185,10 @@ fn owned_runtime_evaluates_research_decisions_without_browser_work() {
                 "Qualification requires its own runtime, never a borrowed shared model".into(),
             );
         }
+        let runtime = session
+            .runtime
+            .as_ref()
+            .ok_or("The private runtime binding is unavailable")?;
         let mut inference = OllamaInference::new(
             &format!("http://{}", session.addr),
             &crate::resident_model_identity_at(session.addr)?
@@ -192,10 +196,8 @@ fn owned_runtime_evaluates_research_decisions_without_browser_work() {
                 .name,
         )
         .map_err(|e| e.to_string())?
-        .with_resident_context();
-        if let Some(guard) = &session.guard {
-            inference.set_request_guard(guard.clone());
-        }
+        .with_owned_runner(runtime.runner);
+        inference.set_request_guard(runtime.guard.clone());
         let observed = native.clone();
         inference.set_response_observer(move |schema, response| {
             let mut rows = observed.lock().unwrap();
@@ -276,7 +278,7 @@ fn owned_runtime_evaluates_research_decisions_without_browser_work() {
                 &screenshots,
                 &json!({}),
                 &context,
-                session.guard.clone(),
+                Some(runtime.guard.clone()),
             )
             .map(|value| value["result"].clone());
         }

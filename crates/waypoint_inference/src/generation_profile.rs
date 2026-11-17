@@ -12,6 +12,46 @@ pub enum GenerationProfile {
     Qwen38,
 }
 
+/// Allocation options for a runner launched and guarded by the caller.
+/// Generation must carry the same options as preload.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct OwnedRunnerOptions {
+    num_ctx: u32,
+    num_batch: u32,
+    num_thread: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    num_gpu: Option<u32>,
+}
+
+impl OwnedRunnerOptions {
+    pub fn for_profile(profile: GenerationProfile) -> Self {
+        Self {
+            num_ctx: profile.context_tokens(),
+            num_batch: 128,
+            num_thread: 2,
+            num_gpu: (profile == GenerationProfile::Generic).then_some(999),
+        }
+    }
+
+    pub fn bind(self, options: &mut Value, resident_context: u32) -> Result<(), String> {
+        if resident_context != self.num_ctx {
+            return Err("The private model context differs from the admitted runner".into());
+        }
+        let options = options
+            .as_object_mut()
+            .ok_or("Invalid generation options")?;
+        options.insert("num_ctx".into(), json!(self.num_ctx));
+        options.insert("num_batch".into(), json!(self.num_batch));
+        options.insert("num_thread".into(), json!(self.num_thread));
+        if let Some(layers) = self.num_gpu {
+            options.insert("num_gpu".into(), json!(layers));
+        } else {
+            options.remove("num_gpu");
+        }
+        Ok(())
+    }
+}
+
 impl GenerationProfile {
     pub fn for_model(name: &str) -> Self {
         if name == DEFAULT_MODEL {
