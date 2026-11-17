@@ -2189,33 +2189,54 @@ impl std::fmt::Display for InferenceMemoryRefusal {
 }
 
 #[cfg(any(windows, test))]
-/// Reserve a conservative share of RAM before beginning another inference.
-/// This is a snapshot, not a reservation or a guarantee against later pressure.
-fn inference_memory_gate(available: u64, total: u64) -> Result<(), InferenceMemoryRefusal> {
-    const GIB: u64 = 1024 * 1024 * 1024;
-    if total == 0 || available > total {
-        return Err(InferenceMemoryRefusal::Unavailable);
-    }
-    let floor = (total / 4).clamp(4 * GIB, model_start::HOST_CONTINUATION_RESERVE_CAP_BYTES);
-    if available < floor {
-        return Err(InferenceMemoryRefusal::Pressure {
-            available,
-            required: floor,
-        });
-    }
-    Ok(())
+#[derive(Clone, Copy)]
+enum InferenceMemoryPolicy {
+    Shared,
+    Owned,
 }
 
-#[cfg(windows)]
-fn sample_inference_memory() -> Result<(), InferenceMemoryRefusal> {
-    let mut system = sysinfo::System::new().map_err(|_| InferenceMemoryRefusal::Unavailable)?;
-    system.refresh_memory();
-    inference_memory_gate(system.available_memory(), system.total_memory())
+#[cfg(any(windows, test))]
+impl InferenceMemoryPolicy {
+    const OWNED_RESERVE_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+
+    /// Owned processes also have a job commit limit and continuous host
+    /// headroom supervision. Borrowed runtimes require a larger observed cushion.
+    fn check_sample(self, available: u64, total: u64) -> Result<(), InferenceMemoryRefusal> {
+        if total == 0 || available > total {
+            return Err(InferenceMemoryRefusal::Unavailable);
+        }
+        let floor = match self {
+            Self::Owned => Self::OWNED_RESERVE_BYTES,
+            Self::Shared => (total / 4).clamp(
+                Self::OWNED_RESERVE_BYTES,
+                model_start::HOST_CONTINUATION_RESERVE_CAP_BYTES,
+            ),
+        };
+        if available < floor {
+            return Err(InferenceMemoryRefusal::Pressure {
+                available,
+                required: floor,
+            });
+        }
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    fn sample(self) -> Result<(), InferenceMemoryRefusal> {
+        let mut system = sysinfo::System::new().map_err(|_| InferenceMemoryRefusal::Unavailable)?;
+        system.refresh_memory();
+        self.check_sample(system.available_memory(), system.total_memory())
+    }
+
+    #[cfg(windows)]
+    fn check(self) -> Result<(), String> {
+        self.sample().map_err(|error| error.to_string())
+    }
 }
 
 #[cfg(windows)]
 fn check_inference_memory() -> Result<(), String> {
-    sample_inference_memory().map_err(|error| error.to_string())
+    InferenceMemoryPolicy::Shared.check()
 }
 
 /// Only use one already-resident model within the reported GPU and CPU budgets.
@@ -11239,6 +11260,8 @@ mod tests {
     #[test]
     fn inference_memory_gate_rejects_pressure_and_invalid_samples() {
         const GIB: u64 = 1024 * 1024 * 1024;
+        let inference_memory_gate =
+            |available, total| InferenceMemoryPolicy::Shared.check_sample(available, total);
         assert!(inference_memory_gate(8 * GIB, 64 * GIB).is_ok());
         assert!(inference_memory_gate(10125 * 1024 * 1024, 64 * GIB).is_ok());
         assert_eq!(
@@ -11260,6 +11283,20 @@ mod tests {
         );
         assert!(inference_memory_gate(6 * GIB, 24 * GIB).is_ok());
         assert!(inference_memory_gate(6 * GIB - 1, 24 * GIB).is_err());
+        let owned = InferenceMemoryPolicy::Owned;
+        assert!(owned.check_sample(8133 * 1024 * 1024, 64 * GIB).is_ok());
+        assert!(owned.check_sample(4 * GIB, 64 * GIB).is_ok());
+        assert_eq!(
+            owned.check_sample(4 * GIB - 1, 64 * GIB),
+            Err(InferenceMemoryRefusal::Pressure {
+                available: 4 * GIB - 1,
+                required: 4 * GIB,
+            })
+        );
+        assert_eq!(
+            owned.check_sample(0, 0),
+            Err(InferenceMemoryRefusal::Unavailable)
+        );
         for capacity in [16, 24, 32, 64, 128] {
             assert!(
                 inference_memory_gate(model_start::HOST_START_RESERVE_BYTES, capacity * GIB)

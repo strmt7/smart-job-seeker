@@ -362,6 +362,13 @@ struct RecordedDocument {
 }
 
 impl RecordedFieldCapture {
+    /// Release pixels after archiving and visual review. Native readback
+    /// verification continues to use the retained command and binding.
+    pub fn release_archived_pixels(&mut self) {
+        self.image = String::new();
+        self.detail_image = None;
+    }
+
     pub fn associated_label_detail(&self) -> bool {
         self.associated_label_detail
     }

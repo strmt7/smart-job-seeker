@@ -236,8 +236,8 @@ impl OllamaInference {
             }
         })?;
         if !(200..300).contains(&status) {
-            return Err(InferenceError::RuntimeUnreachable(format!(
-                "local runtime returned HTTP {status}"
+            return Err(InferenceError::RuntimeUnreachable(runtime_status_error(
+                status, &bytes,
             )));
         }
         serde_json::from_slice(&bytes)
@@ -262,8 +262,8 @@ impl OllamaInference {
             }
         })?;
         if !(200..300).contains(&status) {
-            return Err(InferenceError::RuntimeUnreachable(format!(
-                "local runtime returned HTTP {status}"
+            return Err(InferenceError::RuntimeUnreachable(runtime_status_error(
+                status, &bytes,
             )));
         }
         serde_json::from_slice(&bytes)
@@ -544,6 +544,30 @@ impl Inference for OllamaInference {
     }
 }
 
+/// Preserve a bounded diagnostic from a failed loopback runtime call.
+pub fn runtime_status_error(status: u16, body: &[u8]) -> String {
+    let message = format!("local runtime returned HTTP {status}");
+    if body.len() > 4096 {
+        return message;
+    }
+    let Ok(value) = serde_json::from_slice::<Value>(body) else {
+        return message;
+    };
+    let Some(error) = value["error"].as_str() else {
+        return message;
+    };
+    let detail: String = error
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .take(180)
+        .collect();
+    let detail = detail.trim();
+    if detail.is_empty() {
+        return message;
+    }
+    format!("{message} ({detail})")
+}
+
 /// Query the local runtime immediately before generation. Refuse missing,
 /// ambiguous, over-budget, or contextless resident models.
 pub fn resident_context(addr: SocketAddr, model: &str) -> Result<u32, String> {
@@ -552,7 +576,7 @@ pub fn resident_context(addr: SocketAddr, model: &str) -> Result<u32, String> {
     }
     let (status, bytes) = http_request(addr, "GET", "/api/ps", None, 3000)?;
     if status != 200 {
-        return Err(format!("local runtime returned HTTP {status}"));
+        return Err(runtime_status_error(status, &bytes));
     }
     let value: Value =
         serde_json::from_slice(&bytes).map_err(|_| "invalid resident model response")?;
@@ -880,6 +904,23 @@ fn decode_chunked(body: &[u8]) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn runtime_status_retains_bounded_native_error() {
+        let detail = serde_json::json!({"error":"Runner allocation failed\nRetry later"});
+        assert_eq!(
+            runtime_status_error(500, &serde_json::to_vec(&detail).unwrap()),
+            "local runtime returned HTTP 500 (Runner allocation failed Retry later)"
+        );
+        assert_eq!(
+            runtime_status_error(502, b"not JSON"),
+            "local runtime returned HTTP 502"
+        );
+        assert_eq!(
+            runtime_status_error(503, &[b'x'; 4097]),
+            "local runtime returned HTTP 503"
+        );
+    }
 
     #[test]
     fn default_qwen_offload_is_bounded_and_does_not_expand_other_model_budgets() {

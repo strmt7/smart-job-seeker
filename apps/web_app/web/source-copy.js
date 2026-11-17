@@ -352,7 +352,7 @@
           details.append(row);
           appendDetailEvidence(target);
         }
-        const transition = Array.isArray(rehearsal.sections) ? rehearsal.sections.find(item => item?.view === viewNumber) : null;
+        const transition = Array.isArray(rehearsal.sections) ? rehearsal.sections.findLast(item => item?.view === viewNumber) : null;
         if (transition?.status === 'advanced' && typeof transition.control === 'string') {
           const target = captures[(count(transition.to) || 0) - 1];
           if (supportedView(target) && target.section) details.append(el('p', `${transition.control} opened section ${target.section} in the saved copy.`, 'footnote'));
@@ -364,6 +364,7 @@
             unsupported_control: 'The forward control could not be used safely in rehearsal.',
             required_fields_unverified: 'Required fields need review before continuing.',
             limit_reached: 'The rehearsal reached its section or field limit.',
+            time_budget_reached: 'The rehearsal used its available session time.',
             control_changed: 'The forward control changed during inspection.',
             document_changed: 'The saved document changed during navigation.',
             page_needs_review: 'This section needs review before continuing.',
@@ -373,6 +374,7 @@
             section_capture_failed: 'The next section image could not be saved.',
           };
           details.append(el('p', reasons[transition.reason] || 'The next section needs review.', transition.reason === 'no_forward_control' ? 'footnote' : 'review-label'));
+          if (typeof transition.capture_reason === 'string') details.append(el('p', transition.capture_reason, 'footnote'));
         }
       }
     }
@@ -383,7 +385,7 @@
       button.disabled = true;
       imageArea.replaceChildren(el('p', 'Loading saved image…', 'footnote'));
       try {
-        if (!view || !/^\d{4}\.png$/.test(view.image) || !/^[0-9a-f]{64}$/.test(view.sha256)) throw new Error('The saved image reference is invalid.');
+        if (!view || !/^(?:\d{4}|[1-9]\d{4,9})\.png$/.test(view.image) || !/^[0-9a-f]{64}$/.test(view.sha256)) throw new Error('The saved image reference is invalid.');
         const image = await options.api('/api/attempts/screenshot', { id: options.jobId, attempt_id: options.attemptId, name: view.image });
         if (requested !== revision) return;
         if (image.name !== view.image || image.sha256 !== view.sha256 || typeof image.image_base64 !== 'string' || image.image_base64.length > 8388612) throw new Error('The saved image differs from its record.');

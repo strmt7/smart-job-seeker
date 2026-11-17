@@ -564,7 +564,7 @@ mod windows {
                     idle_shared_runtime_at(&python, &script, DEFAULT)?;
                     *checked = Instant::now();
                 }
-                crate::check_inference_memory()
+                crate::InferenceMemoryPolicy::Owned.check()
             });
             self.guard = Some(guard.clone());
             guard()?;
@@ -609,10 +609,16 @@ mod windows {
                 120_000,
                 guard.as_ref(),
             )?;
+            if code != 200 {
+                return Err(format!(
+                    "Private model startup failed: {}",
+                    waypoint_inference::ollama::runtime_status_error(code, &response)
+                ));
+            }
             let response: Value = serde_json::from_slice(&response)
                 .map_err(|_| "Invalid private model startup response")?;
-            if code != 200 || response["done"] != true {
-                return Err("Private model startup was not confirmed".into());
+            if response["done"] != true {
+                return Err("The private model runtime did not confirm startup completion".into());
             }
             guard()?;
             let identity = crate::resident_model_identity_at(addr)?
@@ -626,6 +632,8 @@ mod windows {
                 .as_ref()
                 .ok_or("Private model owner was released")?;
             self.metadata = json!({"mode":"private","model":identity.name,"digest":identity.digest,"context_length":context,"cache_reused":prepared["reused"],"cache_repaired":prepared["retained_cache"].is_string(),"runtime_version":version,"reported_vram_bytes":resident["reported_vram_bytes"],"reported_cpu_bytes":resident["reported_cpu_bytes"],"pid":pid,"port":addr.port(),"creation_token":owner.identity().start_time(),"parent_pid":owner.identity().ppid(),"process_memory_limit":memory});
+            self.metadata["continuation_reserve_bytes"] =
+                json!(crate::InferenceMemoryPolicy::OWNED_RESERVE_BYTES);
             self.metadata["session_state"] = json!("ready");
             self.metadata["reasoning_control"] = profile.thinking();
             self.persist_metadata()?;

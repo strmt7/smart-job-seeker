@@ -89,13 +89,14 @@ fictional forms to measure interactions and unexpected transitions.
 
 ## Execution order and work admission
 
-1. **Replace fixed workflow counts with measured progress.** The
-   [field recovery replay](g1/REVIEW_RECOVERY_AND_CAPTURE_RESULTS_2026-11-17.md)
-   verified three fictional entries after a simulated refusal before visual
-   inference. Remove premature section and entry stops using verified state
-   changes, cycle detection, retained evidence and one coherent worker deadline.
-   Qualify in-flight interruption separately with native request drain and
-   fresh readback.
+1. **Restore reliable owned generation before the longer replay.** The
+   [saved-page rehearsal](g1/PROGRESS_BASED_REHEARSAL_2026-11-17.md)
+   now uses verified progress, cycle detection and session and evidence budgets.
+   Reproduce the initial Ollama HTTP 500 with the retained fixture and native
+   error capture. Measure startup and generation runner settings, actual RAM
+   and job cleanup, then rerun varied layouts with independent full-workflow
+   truth. Qualify in-flight interruption with native request drain and fresh
+   readback.
 2. **R04.1 and R03.1: repair coverage and structural perception.** First account
    for every offered question and add bounded deliberative repair for grounded
    omissions. The current-record and quantity changes have scoped regression

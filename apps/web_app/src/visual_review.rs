@@ -1137,7 +1137,7 @@ const CONTROL_COVERAGE_GUIDANCE: &str = " Inspect the entire image systematicall
 
 #[cfg(any(windows, test))]
 fn blind_value_coverage_prompt() -> String {
-    format!("{VALUE_TRANSCRIPTION_PROMPT}{CONTROL_COVERAGE_GUIDANCE} For a file chooser, copy the visible attached filename including its extension. A button caption or an empty-selection message is not an attached filename.")
+    format!("{VALUE_TRANSCRIPTION_PROMPT}{CONTROL_COVERAGE_GUIDANCE} For editable controls, use visible styling to identify placeholders. The wording or plausibility of visible text cannot establish that it is a placeholder. Copy clearly displayed values verbatim, even when they resemble a sample. Omit an observation when you cannot distinguish the displayed value from a placeholder. Use an empty value only for a control with no visible characters. For a file chooser, copy the visible attached filename including its extension. A button caption or an empty-selection message is not an attached filename.")
 }
 
 #[cfg(any(windows, test))]

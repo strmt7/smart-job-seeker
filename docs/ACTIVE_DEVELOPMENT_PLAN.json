@@ -5,7 +5,7 @@
   "goal": "Continue the existing active Smart Jobseeker product-development goal",
   "plan": "docs/IMPLEMENTATION_PLAN_2026-11-17.md",
   "assessment": "docs/REPO_OVERVIEW_2026-11-17.md",
-  "next_task": "R04",
+  "next_task": "R01",
   "boundaries": [
     "main only",
     "headless development only",
@@ -53,7 +53,7 @@
         "docs/g1/CHECKED_HISTORY_REHEARSAL_2026-11-14.md",
         "docs/g1/REVIEWED_QUALIFICATION_ANSWERS_2026-11-14.md"
       ],
-      "next_action": "Unify shared/private model ownership and effective runtime profiles across every inference consumer. Align context, KV type, reasoning, caller/session/controller budgets and memory admission; reproduce native OOM peak/teardown discrepancies before declaring lifecycle complete.",
+      "next_action": "Unify effective runtime profiles across inference consumers. The owned rehearsal runtime now uses its job-backed 4 GiB continuation threshold after a measured refusal near 8 GiB. Keep the startup reserve and emergency stop. Record native startup errors and aggregate job peaks, then align context, KV type, reasoning and caller/session budgets before qualifying longer profiles.",
       "execution_batch": "A",
       "steps": [
         "Measure native observations and browser-operation cancellation/cleanup latency without blocking owner controls.",
@@ -312,7 +312,7 @@
         "Measure the local model on the frozen corpus; provide actionable review records rather than invented answers.",
         "Qualify native-supported inference profiles per role, including projector/renderer/parser and advertised effort. Retain actual thinking/final/tool observations and sufficient admitted budgets; do not force maximum effort onto every primitive or promote from component probes. Incorporate current primary-source research and the adapted catalog guidance without treating instructions as runtime implementation."
       ],
-      "next_action": "Replace fixed section and entry counts with verified progress, cycle detection, an evidence budget and a worker deadline. Then qualify unfamiliar multistep workflows with independent final-review truth. One Qwen replay recovered all 3 fictional fields after a simulated pre-request memory refusal without repeating the original entry. Recovery during an in-flight request still needs independent worker-drain evidence.",
+      "next_action": "Qualify larger saved-page journeys and generic navigation after removal of the 16-entry, two-advance and four-reinspection limits. Preserve the required-field, observed-progress and visual disagreement stops. Freeze independent final-review truth and measure answerable-field and complete-workflow denominators separately. Recovery during an in-flight request still needs independent worker-drain evidence.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "start_requirements": [
         "The frozen schema2 known-source initial-control case and native mutation fixture admit investigation of the observed actuator failure. This does not admit broad planner promotion; that still requires the varied held-out tranche and full workflow truth.",

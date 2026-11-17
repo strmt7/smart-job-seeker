@@ -743,6 +743,7 @@ pub fn suggest_with_review(
     let mut unclassified_selectors = HashSet::new();
     let mut unidentified = false;
     let mut failed_batches = 0usize;
+    let mut first_batch_failure = None;
     let mut unclassified_batches = 0usize;
     // Keep recovery bounded across the entire inspection, not per model batch.
     let mut sensitivity_repair_budget = 4usize;
@@ -1055,8 +1056,9 @@ pub fn suggest_with_review(
                 }
                 unidentified |= unknown;
             }
-            Err(_) => {
+            Err(reason) => {
                 failed_batches += 1;
+                first_batch_failure.get_or_insert(reason);
             }
         }
     }
@@ -1200,6 +1202,14 @@ pub fn suggest_with_review(
     }
     if failed_batches > 0 {
         warnings.push(format!("{failed_batches} form mapping batch(es) could not be interpreted; affected fields may need manual review"));
+    }
+    if let Some(reason) = first_batch_failure {
+        let reason: String = reason
+            .chars()
+            .filter(|c| !c.is_control())
+            .take(240)
+            .collect();
+        warnings.push(format!("Local mapping stopped: {reason}"));
     }
     if unclassified_batches > 0 {
         warnings.push(format!("{unclassified_batches} form mapping batch(es) did not provide a valid model sensitivity review; inspect all fields manually"));

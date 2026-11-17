@@ -200,6 +200,10 @@ fn render_at(
     let runtime_guard = model_session
         .as_ref()
         .and_then(|session| session.guard.clone());
+    let session_duration = std::time::Duration::from_secs(config.seconds);
+    let deadline = std::time::Instant::now()
+        .checked_add(session_duration)
+        .ok_or("Invalid rehearsal duration")?;
     let (mut driver, ready) =
         CdpDriver::launch_rehearsal(python, config).map_err(|error| error.to_string())?;
     let mut rehearsal = source.rehearse.then(|| {
@@ -209,8 +213,10 @@ fn render_at(
             runtime_guard,
             source.public_research,
             candidate,
+            (deadline, session_duration),
         )
     });
+    let mut evidence = ScreenshotArchive::new(screenshots);
     let result: Result<Value, String> = (|| {
         if ready.entry_url != entry
             || ready
@@ -225,7 +231,7 @@ fn render_at(
         let mut views = Vec::new();
         record_scope(
             &mut driver,
-            screenshots,
+            &mut evidence,
             &mut views,
             "Page",
             parent,
@@ -244,7 +250,7 @@ fn render_at(
                         Ok(form) => {
                             let captured = record_scope(
                                 &mut driver,
-                                screenshots,
+                                &mut evidence,
                                 &mut views,
                                 frame.label(),
                                 form,
@@ -290,7 +296,7 @@ fn render_at(
         .map_err(|error| error.to_string());
     let mut result = result;
     if let Some(rehearsal) = rehearsal {
-        let record = rehearsal.finish();
+        let record = rehearsal.finish(evidence.bytes);
         if let Ok(result) = &mut result {
             result["rehearsal"] = record;
         }
@@ -324,8 +330,6 @@ fn render_at(
 }
 
 #[cfg(windows)]
-const REHEARSAL_LIMIT: usize = 16;
-#[cfg(windows)]
 const REVIEW_MEMORY_WAIT: std::time::Duration = std::time::Duration::from_secs(45);
 #[cfg(all(windows, test))]
 thread_local! {
@@ -338,16 +342,12 @@ thread_local! {
 pub(crate) const REHEARSAL_SECONDS: u64 = 2700;
 const VIEW_FIELD_LIMIT: usize = 40;
 #[cfg(windows)]
-const SECTION_ADVANCE_LIMIT: usize = 2;
-#[cfg(windows)]
 const DIALOG_ACTION_LIMIT: usize = 2;
-#[cfg(windows)]
-const CONDITIONAL_REPLAN_LIMIT: usize = 4;
 
 #[cfg(windows)]
 fn record_scope(
     driver: &mut waypoint_browser::CdpDriver,
-    directory: &Path,
+    evidence: &mut ScreenshotArchive<'_>,
     views: &mut Vec<Value>,
     label: &str,
     mut form: waypoint_applications::driver::LiveForm,
@@ -359,30 +359,32 @@ fn record_scope(
     let mut prior = Vec::new();
     let mut pending: Option<(usize, String)> = None;
     let mut pending_dialog: Option<usize> = None;
-    let mut section_capture_start = rehearsal.as_deref().map_or(0, |value| value.captures.len());
+    let mut section = 1;
+    if let Some(rehearsal) = rehearsal.as_deref_mut() {
+        rehearsal.captures.clear();
+    }
     loop {
         let view = views.len() + 1;
-        let capture = capture_view(driver, directory, view, label, form.clone(), embedded);
+        let capture = capture_view(driver, evidence, label, form.clone(), embedded);
         let mut capture = match capture {
             Ok(capture) => capture,
-            Err(error) if pending.is_none() && pending_dialog.is_none() => return Err(error),
-            Err(_) => {
+            Err(error) => {
+                let Some(rehearsal) = rehearsal.as_deref_mut().filter(|_| view > first_view) else {
+                    return Err(error);
+                };
+                let capture_reason = bounded_text(&error);
                 if pending_dialog.take().is_some() {
-                    if let Some(rehearsal) = rehearsal.as_deref_mut() {
-                        if let Some(record) = rehearsal.dialogs.last_mut() {
-                            record["followup_capture"] = json!("unavailable");
-                        }
-                        rehearsal.halted = true;
+                    if let Some(record) = rehearsal.dialogs.last_mut() {
+                        record["followup_capture"] = json!("unavailable");
+                        record["capture_reason"] = json!(capture_reason);
                     }
-                    return Ok(());
+                } else {
+                    rehearsal.sections.push(json!({
+                        "view":view-1,"status":"stopped","reason":"section_capture_failed",
+                        "capture_reason":capture_reason
+                    }));
                 }
-
-                if let (Some(rehearsal), Some((from, _))) = (rehearsal.as_deref_mut(), pending) {
-                    rehearsal.sections.push(
-                        json!({"view":from,"status":"stopped","reason":"section_capture_failed"}),
-                    );
-                    rehearsal.halted = true;
-                }
+                rehearsal.halted = true;
                 return Ok(());
             }
         };
@@ -394,7 +396,7 @@ fn record_scope(
                 }
             }
             capture["scope_view"] = json!(first_view);
-            capture["section"] = json!(prior.len() + 1);
+            capture["section"] = json!(section);
             if let Some((from, control)) = pending.take() {
                 rehearsal.sections.push(json!({"view":from,"status":"advanced","to":view,"control":bounded_text(&control)}));
             }
@@ -406,8 +408,11 @@ fn record_scope(
         if rehearsal.halted {
             return Ok(());
         }
+        if rehearsal.stop_at_deadline(view) {
+            return Ok(());
+        }
         if form.independent_field_entry_blocked() || form.schema.fields.is_empty() {
-            if let Some(next) = rehearsal.resolve_dialog(driver, directory, view, &form) {
+            if let Some(next) = rehearsal.resolve_dialog(driver, evidence, view, &form) {
                 pending_dialog = Some(view);
                 form = next;
                 continue;
@@ -419,50 +424,46 @@ fn record_scope(
             rehearsal.sections.push(json!({"view":view,"status":"stopped","reason":"page_needs_review","barriers":form.independent_field_barriers()}));
             return Ok(());
         }
-        let continuation =
-            rehearsal.exercise(driver, directory, view, &form, section_capture_start);
+        let continuation = rehearsal.exercise(driver, evidence, view, &form);
         if rehearsal.halted {
             return Ok(());
         }
         if let Some(next) = continuation {
-            if rehearsal.conditionals >= CONDITIONAL_REPLAN_LIMIT {
-                rehearsal.sections.push(json!({"view":view,"status":"stopped","reason":"conditional_replan_limit","unplanned_fields":next.schema.fields.len()}));
-                rehearsal.halted = true;
-                return Ok(());
-            }
             rehearsal.conditionals += 1;
             rehearsal.sections.push(json!({"view":view,"status":"conditional_reinspection","next_view":views.len()+1,
                 "previous_fields":form.schema.fields.len(),"inspected_fields":next.schema.fields.len(),
                 "schema_sha256":waypoint_domain::sha256_hex(next.schema.schema_hash_input().as_bytes())}));
+            prior.push(form);
             form = next;
             continue;
         }
-        let verified: Vec<_> = rehearsal.captures[section_capture_start..]
+        if rehearsal.stop_at_deadline(view) {
+            return Ok(());
+        }
+        let verified: Vec<_> = rehearsal
+            .captures
             .iter()
             .map(|(_, capture, _)| capture)
             .collect();
         let vision = &mut rehearsal.vision;
-        let advance = driver.advance_recorded_section_reviewed(
-            &form,
-            &prior,
-            &verified,
-            rehearsal.advances < SECTION_ADVANCE_LIMIT && rehearsal.fields.len() < REHEARSAL_LIMIT,
-            |target| vision.review_target(directory, view, "before_section", target),
-        );
+        let advance =
+            driver.advance_recorded_section_reviewed(&form, &prior, &verified, true, |target| {
+                vision.review_target(evidence, view, "before_section", target)
+            });
         match advance {
             Ok(RecordedSectionOutcome::Advanced {
                 label: control,
                 form: next,
             }) => {
-                rehearsal.advances += 1;
+                section += 1;
                 pending = Some((view, control));
                 prior.push(form);
                 form = next;
-                section_capture_start = rehearsal.captures.len();
+                rehearsal.captures.clear();
             }
             Ok(RecordedSectionOutcome::Stopped(reason)) => {
                 if matches!(reason, RecordedSectionStop::FieldChanged) {
-                    for (index, _, _) in rehearsal.captures.drain(section_capture_start..) {
+                    for (index, _, _) in rehearsal.captures.drain(..) {
                         rehearsal.fields[index]["status"] = json!("changed_after_entry");
                         rehearsal.fields[index]
                             .as_object_mut()
@@ -544,10 +545,12 @@ fn stage_sample_attachments(
 #[cfg(windows)]
 struct RehearsalVision {
     addr: std::net::SocketAddr,
+    memory: crate::InferenceMemoryPolicy,
     model: Option<crate::visual_review::VisionIdentityGuard>,
     identity: Value,
     targets: Vec<Value>,
     field_review_recovery_used: bool,
+    deadline: std::time::Instant,
 }
 
 #[cfg(windows)]
@@ -558,7 +561,7 @@ impl RehearsalVision {
         profile: &Value,
         context: &str,
     ) -> Result<Value, String> {
-        crate::check_inference_memory()?;
+        self.memory.check()?;
         let model = self.model.as_mut().ok_or("The local model needs review")?;
         crate::visual_review::research_recorded_issue(model, self.addr, directory, profile, context)
     }
@@ -567,7 +570,7 @@ impl RehearsalVision {
         fields: &[waypoint_applications::form_mapping::FormField],
         records: &[crate::candidate_history::SelectedRecord],
     ) -> Result<Value, String> {
-        crate::check_inference_memory()?;
+        self.memory.check()?;
         let model = self.model.as_mut().ok_or("The local model needs review")?;
         crate::visual_review::propose_recorded_history(model, self.addr, fields, records)
     }
@@ -576,7 +579,7 @@ impl RehearsalVision {
         form: &waypoint_applications::driver::LiveForm,
         profile: &Value,
     ) -> Result<crate::visual_review::RecordedFactPlan, String> {
-        crate::check_inference_memory()?;
+        self.memory.check()?;
         let model = self.model.as_mut().ok_or("The local model needs review")?;
         Ok(crate::visual_review::propose_recorded_facts(
             model, self.addr, form, profile,
@@ -588,7 +591,7 @@ impl RehearsalVision {
         fields: &[waypoint_applications::form_mapping::FormField],
         facts: &crate::rehearsal_facts::Snapshot,
     ) -> Result<Value, String> {
-        crate::check_inference_memory()?;
+        self.memory.check()?;
         let model = self.model.as_mut().ok_or("The local model needs review")?;
         crate::visual_review::propose_recorded_qualifications(model, self.addr, fields, facts)
     }
@@ -598,7 +601,7 @@ impl RehearsalVision {
         schema: &waypoint_applications::form_mapping::FormSchema,
         documents: &[crate::attachment_mapping::DocumentOption<'_>],
     ) -> Result<crate::attachment_mapping::Plan, String> {
-        crate::check_inference_memory()?;
+        self.memory.check()?;
         let model = self.model.as_mut().ok_or("The local model needs review")?;
         crate::visual_review::propose_recorded_attachments(model, self.addr, schema, documents)
     }
@@ -607,29 +610,46 @@ impl RehearsalVision {
         addr: std::net::SocketAddr,
         choice: Option<&crate::model_preferences::Choice>,
         guard: Option<crate::visual_review::RequestGuard>,
+        deadline: std::time::Instant,
     ) -> Self {
-        let identity = crate::check_inference_memory()
+        let memory = if guard.is_some() {
+            crate::InferenceMemoryPolicy::Owned
+        } else {
+            crate::InferenceMemoryPolicy::Shared
+        };
+        let identity = memory
+            .check()
             .ok()
             .and_then(|()| crate::resident_model_identity_at(addr).ok().flatten())
             .filter(|identity| choice.is_none_or(|choice| choice.matches(identity)));
         let metadata = identity
             .as_ref()
             .map(|value| json!({"name":value.name,"digest":value.digest}));
+        let request_guard: crate::visual_review::RequestGuard = std::sync::Arc::new(move || {
+            if std::time::Instant::now() >= deadline {
+                return Err("The rehearsal time budget was reached".into());
+            }
+            guard
+                .as_ref()
+                .map_or_else(|| memory.check(), |guard| guard())
+        });
         Self {
             addr,
+            memory,
             model: identity.map(|identity| {
                 crate::visual_review::VisionIdentityGuard::from_identity(identity)
-                    .with_request_guard(guard)
+                    .with_request_guard(Some(request_guard))
             }),
             identity: metadata.unwrap_or(Value::Null),
             targets: Vec::new(),
             field_review_recovery_used: false,
+            deadline,
         }
     }
 
     fn review_target(
         &mut self,
-        directory: &Path,
+        evidence: &mut ScreenshotArchive<'_>,
         view: usize,
         phase: &str,
         target: &waypoint_browser::RecordedTargetCapture,
@@ -640,31 +660,33 @@ impl RehearsalVision {
                 "Visual inspection needs review before this action".into(),
             )
         };
-        if self.targets.len() >= REHEARSAL_LIMIT + SECTION_ADVANCE_LIMIT + DIALOG_ACTION_LIMIT {
+        if std::time::Instant::now() >= self.deadline {
             return Err(refused());
         }
         let mut record = json!({"view":view,"phase":phase,"label":bounded_text(target.label()),"kind":target.kind(),"status":"visual_unavailable"});
         if let Some(group) = target.file_group_label() {
             record["native_file_group_label"] = json!(group);
         }
-        let saved = save_image(directory, 20 + self.targets.len(), target.image());
-        if let Ok((image, digest)) = &saved {
-            record["image"] = json!(image);
-            record["sha256"] = json!(digest);
+        let saved = evidence.save(target.image());
+        match &saved {
+            Ok((image, digest)) => {
+                record["image"] = json!(image);
+                record["sha256"] = json!(digest);
+            }
+            Err(reason) => record["retention_reason"] = json!(bounded_text(reason)),
         }
         if let Some(error) = target.detail_error() {
             record["detail_capture_error"] = json!(bounded_text(error));
         }
         let detail_saved = match target.detail_image() {
-            Some(image) => match save_image(directory, 60 + self.targets.len(), image) {
+            Some(image) => match evidence.save(image) {
                 Ok((image, digest)) => {
                     record["detail_image"] = json!(image);
                     record["detail_sha256"] = json!(digest);
                     true
                 }
-                Err(_) => {
-                    record["detail_capture_error"] =
-                        json!("The field detail image could not be saved");
+                Err(reason) => {
+                    record["detail_capture_error"] = json!(bounded_text(&reason));
                     false
                 }
             },
@@ -677,7 +699,7 @@ impl RehearsalVision {
             } else {
                 Err("Detail evidence unavailable".into())
             },
-            crate::check_inference_memory(),
+            self.memory.check(),
         ) {
             crate::visual_review::review_recorded_target(model, self.addr, target)
         } else {
@@ -700,7 +722,7 @@ impl RehearsalVision {
         &mut self,
         capture: &waypoint_browser::RecordedFieldCapture,
     ) -> Result<(&'static str, Option<Value>), String> {
-        crate::check_inference_memory()?;
+        self.memory.check()?;
         let model = self
             .model
             .as_mut()
@@ -714,18 +736,18 @@ impl RehearsalVision {
         &mut self,
         driver: &mut waypoint_browser::CdpDriver,
         capture: &mut waypoint_browser::RecordedFieldCapture,
-        directory: &Path,
+        evidence: &mut ScreenshotArchive<'_>,
         index: usize,
         replay_before: Option<&Value>,
         result: &mut Value,
     ) {
         let mut recovered = false;
         #[cfg(not(test))]
-        let admission = crate::sample_inference_memory();
+        let admission = self.memory.sample();
         #[cfg(test)]
         let admission = TEST_FIELD_MEMORY_REFUSAL
             .take()
-            .map_or_else(crate::sample_inference_memory, Err);
+            .map_or_else(|| self.memory.sample(), Err);
         if let Err(refusal) = admission {
             result["review_reason"] = json!(bounded_text(&refusal.to_string()));
             // A request that was already issued can still be running. Only
@@ -743,7 +765,7 @@ impl RehearsalVision {
                 "reason": "memory_pressure",
             });
             let initial_archive = match archive_candidate_answers(
-                directory,
+                evidence.directory,
                 "recovery",
                 index + 1,
                 "entries",
@@ -757,10 +779,11 @@ impl RehearsalVision {
                 }
             };
             let started = std::time::Instant::now();
+            let wait = REVIEW_MEMORY_WAIT.min(self.deadline.saturating_duration_since(started));
             let outcome = recover_field_observation(driver, capture, replay_before, || {
-                wait_for_review_memory(crate::sample_inference_memory, REVIEW_MEMORY_WAIT)
+                wait_for_review_memory(|| self.memory.sample(), wait)
             })
-            .and_then(|()| save_field_images(directory, 360 + index, capture, result));
+            .and_then(|()| save_field_images(evidence, capture, result));
             result["visual_recovery"] = json!({
                 "status": "stopped",
                 "initial_archive": initial_archive,
@@ -936,7 +959,7 @@ fn archive_candidate_answers(
     use std::io::Write;
     if !matches!(category, "history" | "facts" | "progress" | "recovery")
         || !matches!(kind, "plan" | "entries")
-        || !(1..=64).contains(&index)
+        || index == 0
     {
         return Err("Invalid history archive identity".into());
     }
@@ -949,20 +972,18 @@ fn archive_candidate_answers(
         fs::create_dir(&folder).map_err(|_| "Cannot create history answers folder")?;
     }
     directory(&folder)?;
-    let bytes =
-        serde_json::to_vec_pretty(value).map_err(|_| "Cannot encode history answer evidence")?;
+    let bytes = serde_json::to_vec(value).map_err(|_| "Cannot encode history answer evidence")?;
     if bytes.len() > 512 * 1024 {
         return Err("History answer evidence exceeds its limit".into());
     }
     let name = format!("{category}-{kind}-{index:03}.json");
-    let mut file = fs::OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(folder.join(&name))
-        .map_err(|_| "Cannot create immutable history answer evidence")?;
+    let mut file = tempfile::NamedTempFile::new_in(&folder)
+        .map_err(|_| "Cannot stage history answer evidence")?;
     file.write_all(&bytes)
-        .and_then(|_| file.sync_all())
+        .and_then(|_| file.as_file().sync_all())
         .map_err(|_| "Cannot retain history answer evidence")?;
+    file.persist_noclobber(folder.join(&name))
+        .map_err(|_| "Cannot create immutable history answer evidence")?;
     Ok(json!({"file":format!("answers/{name}"),"sha256":waypoint_domain::sha256_hex(&bytes)}))
 }
 
@@ -974,8 +995,8 @@ struct Rehearsal {
     halted: bool,
     sections: Vec<Value>,
     dialogs: Vec<Value>,
-    advances: usize,
     conditionals: usize,
+    session_duration: std::time::Duration,
     profile: Result<Value, String>,
     candidate_metadata: Value,
     history: Result<Vec<crate::candidate_history::SelectedRecord>, String>,
@@ -1000,8 +1021,10 @@ impl Rehearsal {
         guard: Option<crate::visual_review::RequestGuard>,
         public_research: bool,
         candidate: Option<(crate::rehearsal_candidate::Snapshot, String)>,
+        session: (std::time::Instant, std::time::Duration),
     ) -> Self {
-        let vision = RehearsalVision::new(addr, choice, guard);
+        let (deadline, session_duration) = session;
+        let vision = RehearsalVision::new(addr, choice, guard, deadline);
         let candidate_metadata = candidate.as_ref().map(|(snapshot,binding)|snapshot.metadata(binding)).unwrap_or_else(||json!({"scope":"bundled_fictional_contact_profile","profile_sha256":waypoint_domain::sha256_hex(include_bytes!("../data/rehearsal-profile.json")),"documents":"bundled_fictional_pdfs"}));
         let candidate_selected = candidate.is_some();
         let candidate_documents = candidate
@@ -1043,8 +1066,8 @@ impl Rehearsal {
             halted,
             sections: Vec::new(),
             dialogs: Vec::new(),
-            advances: 0,
             conditionals: 0,
+            session_duration,
             profile,
             candidate_metadata,
             history,
@@ -1062,23 +1085,30 @@ impl Rehearsal {
         }
     }
 
+    fn stop_at_deadline(&mut self, view: usize) -> bool {
+        if std::time::Instant::now() < self.vision.deadline {
+            return false;
+        }
+        self.sections
+            .push(json!({"view":view,"status":"stopped","reason":"time_budget_reached"}));
+        self.halted = true;
+        true
+    }
+
     fn exercise(
         &mut self,
         driver: &mut waypoint_browser::CdpDriver,
-        directory: &Path,
+        evidence: &mut ScreenshotArchive<'_>,
         view: usize,
         form: &waypoint_applications::driver::LiveForm,
-        carry_from: usize,
     ) -> Option<waypoint_applications::driver::LiveForm> {
         use waypoint_applications::driver::BrowserDriver;
         use waypoint_applications::form_mapping::{FormFieldType, PacketValue};
-        if self.halted
-            || self.fields.len() >= REHEARSAL_LIMIT
-            || form.independent_field_entry_blocked()
-        {
+        if self.halted || form.independent_field_entry_blocked() {
             return None;
         }
-        for (index, capture, _) in &self.captures[carry_from..] {
+        let directory = evidence.directory;
+        for (index, capture, _) in &self.captures {
             if driver.verify_recorded_field(capture).is_err() {
                 self.fields[*index]["status"] = json!("changed_after_entry");
                 self.fields[*index]["native_verified"] = json!(false);
@@ -1135,29 +1165,21 @@ impl Rehearsal {
                             && !mappings
                                 .iter()
                                 .any(|mapping| mapping.field_selector == field.selector)
-                            && !self.captures[carry_from..]
+                            && !self
+                                .captures
                                 .iter()
                                 .any(|(_, capture, _)| capture.matches_field(field))
                     })
                     .cloned()
                     .collect();
-                let offered: Vec<_> = eligible
-                    .iter()
-                    .take(REHEARSAL_LIMIT.saturating_sub(self.fields.len()))
-                    .cloned()
-                    .collect();
+                let offered = &eligible;
                 if !offered.is_empty() {
                     let index = self.history_plans.len() + 1;
                     let mut report = json!({"view":view,"source":self.candidate_metadata,"eligible_fields":eligible.len(),"offered_fields":offered.len(),"omitted_eligible_fields":eligible.len()-offered.len(),"status":"needs_review"});
-                    match self
-                        .vision
-                        .plan_history(&offered, records)
-                        .and_then(|plan| {
-                            crate::history_batch::resolve_checked_proposals(
-                                &offered, records, &plan,
-                            )
+                    match self.vision.plan_history(offered, records).and_then(|plan| {
+                        crate::history_batch::resolve_checked_proposals(offered, records, &plan)
                             .map(|resolved| (plan, resolved))
-                        }) {
+                    }) {
                         Ok((plan, resolved)) => {
                             report["status"] = json!("proposed");
                             report["plan"] = plan;
@@ -1212,7 +1234,8 @@ impl Rehearsal {
                         && !mappings
                             .iter()
                             .any(|mapping| mapping.field_selector == field.selector)
-                        && !self.captures[carry_from..]
+                        && !self
+                            .captures
                             .iter()
                             .any(|(_, capture, _)| capture.matches_field(field))
                         && form
@@ -1227,10 +1250,7 @@ impl Rehearsal {
                 .collect();
             let offered: Vec<_> = eligible
                 .iter()
-                .take(
-                    crate::rehearsal_facts::MAX_FIELDS
-                        .min(REHEARSAL_LIMIT.saturating_sub(self.fields.len())),
-                )
+                .take(crate::rehearsal_facts::MAX_FIELDS)
                 .cloned()
                 .collect();
             if !offered.is_empty() {
@@ -1339,15 +1359,18 @@ impl Rehearsal {
         let mut captures = Vec::new();
         let mut continuation = None;
         let mut settled_form = form.clone();
-        let field_limit = REHEARSAL_LIMIT;
         for field in &form.schema.fields {
-            if self.captures[carry_from..]
+            if self
+                .captures
                 .iter()
                 .any(|(_, capture, _)| capture.matches_field(field))
             {
                 continue;
             }
-            if self.fields.len() >= field_limit {
+            if std::time::Instant::now() >= self.vision.deadline {
+                self.sections
+                    .push(json!({"view":view,"status":"stopped","reason":"time_budget_reached"}));
+                self.halted = true;
                 break;
             }
             if field.sensitive
@@ -1405,7 +1428,8 @@ impl Rehearsal {
             }
             let mut target_refused = false;
             let mut witness = None;
-            let verified: Vec<_> = self.captures[carry_from..]
+            let verified: Vec<_> = self
+                .captures
                 .iter()
                 .chain(captures.iter())
                 .map(|(_, capture, _)| capture)
@@ -1421,7 +1445,7 @@ impl Rehearsal {
                     witness = target.witness();
                     let reviewed =
                         self.vision
-                            .review_target(directory, view, "before_entry", target);
+                            .review_target(evidence, view, "before_entry", target);
                     target_refused = reviewed.is_err();
                     reviewed
                 },
@@ -1434,26 +1458,23 @@ impl Rehearsal {
                     result["control"] = json!(capture.control());
                     result["kind"] = json!(capture.kind());
                     result["status"] = json!("visual_unavailable");
-                    // Keep entered field images separate from the target
-                    // range. The old 0010 range overlapped at field eleven.
-                    let image_saved =
-                        match save_field_images(directory, 300 + index, &capture, &mut result) {
-                            Ok(()) => {
-                                self.vision.review_entered_field(
-                                    driver,
-                                    &mut capture,
-                                    directory,
-                                    index,
-                                    replay_before.as_ref(),
-                                    &mut result,
-                                );
-                                true
-                            }
-                            Err(reason) => {
-                                result["review_reason"] = json!(bounded_text(&reason));
-                                false
-                            }
-                        };
+                    let image_saved = match save_field_images(evidence, &capture, &mut result) {
+                        Ok(()) => {
+                            self.vision.review_entered_field(
+                                driver,
+                                &mut capture,
+                                evidence,
+                                index,
+                                replay_before.as_ref(),
+                                &mut result,
+                            );
+                            true
+                        }
+                        Err(reason) => {
+                            result["review_reason"] = json!(bounded_text(&reason));
+                            false
+                        }
+                    };
                     if !image_saved || result["status"] != "visually_matched" {
                         self.halted = true;
                     }
@@ -1467,6 +1488,7 @@ impl Rehearsal {
                         result["intended_value"] = json!(capture.value());
                         result["value_comparison"] = json!(capture.value_comparison());
                     }
+                    capture.release_archived_pixels();
                     captures.push((index, capture, image_saved));
                 }
                 Err(error) => {
@@ -1480,19 +1502,17 @@ impl Rehearsal {
                             .as_ref()
                             .and_then(|witness| driver.observe_recorded_field(witness).ok())
                         {
-                            Some(observation) => {
-                                match save_image(directory, 100 + index, observation.image()) {
-                                    Ok((name, hash)) => {
-                                        result["image"] = json!(name);
-                                        result["sha256"] = json!(hash);
-                                        json!({"status":"observed","scope":"current_same_document_and_schema",
+                            Some(observation) => match evidence.save(observation.image()) {
+                                Ok((name, hash)) => {
+                                    result["image"] = json!(name);
+                                    result["sha256"] = json!(hash);
+                                    json!({"status":"observed","scope":"current_same_document_and_schema",
                                         "control":observation.control(),"native_value":observation.value(),"entry_verified":false})
-                                    }
-                                    Err(_) => {
-                                        json!({"status":"unavailable","reason":"image_not_retained","entry_verified":false})
-                                    }
                                 }
-                            }
+                                Err(_) => {
+                                    json!({"status":"unavailable","reason":"image_not_retained","entry_verified":false})
+                                }
+                            },
                             None => {
                                 json!({"status":"unavailable","reason":"current_bound_evidence_unavailable","entry_verified":false})
                             }
@@ -1534,8 +1554,8 @@ impl Rehearsal {
             // Preserve observed entries even if a later native call or the final
             // replay report fails. These immutable snapshots never establish
             // current/final review, continued validity or delivery.
-            let progress = json!({"schema":1,"scope":"partial_entry_checkpoint","final_review":false,"view":view,
-                "candidate_source":self.candidate_metadata,"fields":self.fields,"halted_at_capture":self.halted});
+            let progress = json!({"schema":2,"scope":"partial_entry_checkpoint","final_review":false,"view":view,
+                "candidate_source":self.candidate_metadata,"entry_index":index+1,"fields":[self.fields[index]],"halted_at_capture":self.halted});
             match archive_candidate_answers(
                 directory,
                 "progress",
@@ -1631,7 +1651,7 @@ impl Rehearsal {
     fn resolve_dialog(
         &mut self,
         driver: &mut waypoint_browser::CdpDriver,
-        directory: &Path,
+        evidence: &mut ScreenshotArchive<'_>,
         view: usize,
         form: &waypoint_applications::driver::LiveForm,
     ) -> Option<waypoint_applications::driver::LiveForm> {
@@ -1650,7 +1670,7 @@ impl Rehearsal {
         };
         let mut record = json!({"view":view,"status":"needs_review","scope":if self.candidate_selected{"offline_saved_copy_only"}else{"fictional_saved_copy_only"},"description":dialog.description()});
         let outcome = (|| -> Result<Option<waypoint_applications::driver::LiveForm>, String> {
-            crate::check_inference_memory()?;
+            self.vision.memory.check()?;
             let model = self
                 .vision
                 .model
@@ -1668,7 +1688,7 @@ impl Rehearsal {
             let result = driver
                 .dismiss_recorded_dialog_reviewed(&dialog, &choice, |target| {
                     self.vision
-                        .review_target(directory, view, "before_dialog", target)
+                        .review_target(evidence, view, "before_dialog", target)
                 })
                 .map_err(|error| error.to_string())?;
             let (capture, image) = match result {
@@ -1683,11 +1703,11 @@ impl Rehearsal {
                 }
             };
             if let Some(image) = image {
-                let (name, digest) = save_image(directory, 200 + self.dialogs.len(), &image)?;
+                let (name, digest) = evidence.save(&image)?;
                 record["image"] = json!(name);
                 record["sha256"] = json!(digest);
                 if let Some(capture) = capture {
-                    crate::check_inference_memory()?;
+                    self.vision.memory.check()?;
                     let model = self
                         .vision
                         .model
@@ -1732,9 +1752,9 @@ impl Rehearsal {
         }
     }
 
-    fn finish(self) -> Value {
-        json!({"scope":if self.candidate_selected{self.candidate_metadata["scope"].as_str().unwrap_or("saved_candidate_materials")}else{"fictional_saved_form"},"candidate_source":self.candidate_metadata,"profile_sha256":self.candidate_metadata["profile_sha256"],"profile_error":self.profile.as_ref().err(),"field_limit":REHEARSAL_LIMIT,"time_limit_seconds":REHEARSAL_SECONDS,"progress_checkpoints":self.progress_checkpoints,"section_advance_limit":SECTION_ADVANCE_LIMIT,"halted":self.halted,"fields":self.fields,"fact_plans":self.fact_plans,"history_plans":self.history_plans,"qualification_plans":self.qualification_plans,"history_error":self.history.as_ref().err(),"attachment_plans":self.attachment_plans,"sections":self.sections,"dialogs":self.dialogs,"dialog_action_limit":DIALOG_ACTION_LIMIT,"vision_model":self.vision.identity,
-            "conditional_replans":self.conditionals,"conditional_replan_limit":CONDITIONAL_REPLAN_LIMIT,
+    fn finish(self, screenshot_bytes: usize) -> Value {
+        json!({"scope":if self.candidate_selected{self.candidate_metadata["scope"].as_str().unwrap_or("saved_candidate_materials")}else{"fictional_saved_form"},"candidate_source":self.candidate_metadata,"profile_sha256":self.candidate_metadata["profile_sha256"],"profile_error":self.profile.as_ref().err(),"time_limit_seconds":self.session_duration.as_secs(),"progress_checkpoints":self.progress_checkpoints,"halted":self.halted,"fields":self.fields,"fact_plans":self.fact_plans,"history_plans":self.history_plans,"qualification_plans":self.qualification_plans,"history_error":self.history.as_ref().err(),"attachment_plans":self.attachment_plans,"sections":self.sections,"dialogs":self.dialogs,"dialog_action_limit":DIALOG_ACTION_LIMIT,"vision_model":self.vision.identity,
+            "conditional_replans":self.conditionals,"screenshot_bytes":screenshot_bytes,"screenshot_budget_bytes":SCREENSHOT_BUDGET_BYTES,
             "public_research_enabled":self.public_research,"public_research":self.research_notes,
             "visual_gate":{"required":true,"available":self.vision.model.is_some(),"targets":self.vision.targets}})
     }
@@ -1743,8 +1763,7 @@ impl Rehearsal {
 #[cfg(windows)]
 fn capture_view(
     driver: &mut waypoint_browser::CdpDriver,
-    directory: &Path,
-    sequence: usize,
+    evidence: &mut ScreenshotArchive<'_>,
     label: &str,
     mut form: waypoint_applications::driver::LiveForm,
     embedded: bool,
@@ -1779,7 +1798,7 @@ fn capture_view(
         .map(|field| driver.recorded_control_identity(&form, &field.selector))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| error.to_string())?;
-    let mut view = save_view(directory, sequence, label, form, image, embedded)?;
+    let mut view = save_view(evidence, label, form, image, embedded)?;
     for (field, control) in view["fields"]
         .as_array_mut()
         .ok_or("Saved control inventory is unavailable")?
@@ -1801,20 +1820,13 @@ fn bounded_text(text: &str) -> String {
 
 #[cfg(windows)]
 fn save_view(
-    directory: &Path,
-    sequence: usize,
+    evidence: &mut ScreenshotArchive<'_>,
     label: &str,
     form: waypoint_applications::driver::LiveForm,
     image: String,
     embedded: bool,
 ) -> Result<Value, String> {
-    // Full-view captures have a separate range from field/target/diagnostic
-    // evidence. Conditional replans can otherwise collide with field 0010.
-    let image_sequence = sequence
-        .checked_add(1000)
-        .filter(|value| *value <= 9999)
-        .ok_or("Saved page view limit exceeded")?;
-    let (name, sha256) = save_image(directory, image_sequence, &image)?;
+    let (name, sha256) = evidence.save(&image)?;
     let fields: Vec<_> = form
         .schema
         .fields
@@ -1852,37 +1864,65 @@ fn save_view(
 }
 
 #[cfg(windows)]
-fn save_image(directory: &Path, sequence: usize, image: &str) -> Result<(String, String), String> {
-    use base64::{engine::general_purpose::STANDARD, Engine};
-    use std::io::Write;
-    if image.len() > 8 * 1024 * 1024 {
-        return Err("Saved page image exceeds its limit".into());
+const SCREENSHOT_BUDGET_BYTES: usize = 256 * 1024 * 1024;
+
+#[cfg(windows)]
+struct ScreenshotArchive<'a> {
+    directory: &'a Path,
+    count: u32,
+    bytes: usize,
+}
+
+#[cfg(windows)]
+impl<'a> ScreenshotArchive<'a> {
+    fn new(directory: &'a Path) -> Self {
+        Self {
+            directory,
+            count: 0,
+            bytes: 0,
+        }
     }
-    let bytes = STANDARD
-        .decode(image)
-        .map_err(|_| "Invalid saved page image")?;
-    if !bytes.starts_with(b"\x89PNG\r\n\x1a\n") || bytes.len() > 6 * 1024 * 1024 {
-        return Err("Invalid saved page image".into());
+
+    fn save(&mut self, image: &str) -> Result<(String, String), String> {
+        use base64::{engine::general_purpose::STANDARD, Engine};
+        use std::io::Write;
+        if image.len() > 8 * 1024 * 1024 {
+            return Err("Saved page image exceeds its limit".into());
+        }
+        let bytes = STANDARD
+            .decode(image)
+            .map_err(|_| "Invalid saved page image")?;
+        if !bytes.starts_with(b"\x89PNG\r\n\x1a\n") || bytes.len() > 6 * 1024 * 1024 {
+            return Err("Invalid saved page image".into());
+        }
+        if bytes.len() > SCREENSHOT_BUDGET_BYTES.saturating_sub(self.bytes) {
+            return Err("The saved page reached its screenshot storage budget".into());
+        }
+        let sequence = self
+            .count
+            .checked_add(1)
+            .ok_or("Screenshot sequence exhausted")?;
+        let name = format!("{sequence:04}.png");
+        let mut file = tempfile::NamedTempFile::new_in(self.directory)
+            .map_err(|_| "Cannot stage saved page image")?;
+        file.write_all(&bytes)
+            .and_then(|_| file.as_file().sync_all())
+            .map_err(|_| "Cannot write saved page image")?;
+        file.persist_noclobber(self.directory.join(&name))
+            .map_err(|_| "Cannot preserve saved page image")?;
+        self.count = sequence;
+        self.bytes += bytes.len();
+        Ok((name, waypoint_domain::sha256_hex(&bytes)))
     }
-    let name = format!("{sequence:04}.png");
-    let mut file =
-        tempfile::NamedTempFile::new_in(directory).map_err(|_| "Cannot stage saved page image")?;
-    file.write_all(&bytes)
-        .and_then(|_| file.flush())
-        .map_err(|_| "Cannot write saved page image")?;
-    file.persist_noclobber(directory.join(&name))
-        .map_err(|_| "Cannot preserve saved page image")?;
-    Ok((name, waypoint_domain::sha256_hex(&bytes)))
 }
 
 #[cfg(windows)]
 fn save_field_images(
-    directory: &Path,
-    sequence: usize,
+    evidence: &mut ScreenshotArchive<'_>,
     capture: &waypoint_browser::RecordedFieldCapture,
     field: &mut Value,
 ) -> Result<(), String> {
-    let (name, digest) = save_image(directory, sequence, capture.image())?;
+    let (name, digest) = evidence.save(capture.image())?;
     let field = field
         .as_object_mut()
         .ok_or("Invalid field evidence record")?;
@@ -1895,7 +1935,7 @@ fn save_field_images(
         field.insert("detail_capture_error".into(), json!(bounded_text(reason)));
     }
     if let Some(image) = capture.detail_image() {
-        let (name, digest) = save_image(directory, sequence + 20, image)?;
+        let (name, digest) = evidence.save(image)?;
         field.insert("detail_image".into(), json!(name));
         field.insert("detail_sha256".into(), json!(digest));
     }
@@ -1968,6 +2008,14 @@ mod tests {
         assert_eq!(fs::read(progress_path).unwrap(), progress_bytes);
         assert!(super::archive_candidate_answers(
             &screenshots,
+            "progress",
+            65,
+            "entries",
+            &checkpoint
+        )
+        .is_ok());
+        assert!(super::archive_candidate_answers(
+            &screenshots,
             "../progress",
             2,
             "entries",
@@ -1982,6 +2030,27 @@ mod tests {
             &serde_json::json!({"value":"x".repeat(512*1024)})
         )
         .is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn screenshot_archive_counts_committed_bytes_and_keeps_prior_images() {
+        use base64::{engine::general_purpose::STANDARD, Engine};
+        let folder = tempfile::tempdir().unwrap();
+        let mut archive = ScreenshotArchive::new(folder.path());
+        let bytes = b"\x89PNG\r\n\x1a\nFictional image data";
+        let image = STANDARD.encode(bytes);
+        for number in 1..=85 {
+            let (name, digest) = archive.save(&image).unwrap();
+            assert_eq!(name, format!("{number:04}.png"));
+            assert_eq!(digest, waypoint_domain::sha256_hex(bytes));
+        }
+        assert_eq!(archive.bytes, 85 * bytes.len());
+        archive.bytes = SCREENSHOT_BUDGET_BYTES - bytes.len() + 1;
+        assert!(archive.save(&image).unwrap_err().contains("storage budget"));
+        assert_eq!(archive.count, 85);
+        assert!(!folder.path().join("0086.png").exists());
+        assert_eq!(fs::read(folder.path().join("0001.png")).unwrap(), bytes);
     }
 
     use super::*;
@@ -2234,7 +2303,7 @@ mod tests {
                 driver
                     .verify_recorded_field_observation(&capture)
                     .map_err(|e| e.to_string())?;
-                let refreshed = save_image(folder, 360, capture.image())?;
+                let refreshed = ScreenshotArchive::new(folder).save(capture.image())?;
                 // Even the same URL and schema can be a new document. Use a
                 // fresh replay baseline so that document/value validation
                 // independently refuses the old capture after reopening.
@@ -2558,8 +2627,15 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn rehearsal_without_a_qualified_visual_model_stops_before_entry() {
-        let result =
-            Rehearsal::new("127.0.0.1:0".parse().unwrap(), None, None, false, None).finish();
+        let result = Rehearsal::new(
+            "127.0.0.1:0".parse().unwrap(),
+            None,
+            None,
+            false,
+            None,
+            (std::time::Instant::now(), std::time::Duration::ZERO),
+        )
+        .finish(0);
         assert_eq!(result["halted"], true);
         assert_eq!(result["visual_gate"]["required"], true);
         assert_eq!(result["visual_gate"]["available"], false);
@@ -2582,6 +2658,13 @@ mod tests {
             selection: crate::private_inference::Selection,
             #[serde(default)]
             simulate_initial_review_pressure: bool,
+            journey: Option<Journey>,
+        }
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Journey {
+            sections: Vec<Vec<(String, String)>>,
+            stops_at_repeated_section: bool,
         }
         let path = PathBuf::from(
             std::env::var_os("WAYPOINT_AUTO_MODEL_FIXTURE")
@@ -2610,8 +2693,8 @@ mod tests {
         assert_eq!(existing["state"], "no_model");
         if fixture.simulate_initial_review_pressure {
             TEST_FIELD_MEMORY_REFUSAL.set(Some(crate::InferenceMemoryRefusal::Pressure {
-                available: 7 * 1024_u64.pow(3),
-                required: 8 * 1024_u64.pow(3),
+                available: 3 * 1024_u64.pow(3),
+                required: crate::InferenceMemoryPolicy::OWNED_RESERVE_BYTES,
             }));
         }
         let result = render(
@@ -2651,15 +2734,72 @@ mod tests {
         assert_eq!(admission["endpoint_after_stop"]["owners"], json!([]));
         assert_eq!(admission["connect_after_stop"]["connected"], false);
         assert_eq!(result["manifest_sha256"], fixture.manifest_sha256);
-        assert_eq!(result["rehearsal"]["halted"], false);
         let fields = result["rehearsal"]["fields"].as_array().unwrap();
-        assert_eq!(
-            fields
+        let targets = result["rehearsal"]["visual_gate"]["targets"]
+            .as_array()
+            .unwrap();
+        if let Some(journey) = &fixture.journey {
+            assert!(!journey.sections.is_empty());
+            let expected: Vec<_> = journey.sections.iter().flatten().collect();
+            assert_eq!(fields.len(), expected.len());
+            assert_eq!(
+                result["rehearsal"]["halted"],
+                journey.stops_at_repeated_section
+            );
+            let sections = result["rehearsal"]["sections"].as_array().unwrap();
+            assert_eq!(sections.len(), journey.sections.len());
+            assert!(sections[..sections.len() - 1]
                 .iter()
-                .map(|v| v["label"].as_str().unwrap())
-                .collect::<Vec<_>>(),
-            ["First name", "Email", "Country"]
-        );
+                .all(|section| section["status"] == "advanced"));
+            let last_reason = if journey.stops_at_repeated_section {
+                "no_new_section"
+            } else {
+                "no_forward_control"
+            };
+            assert_eq!(sections.last().unwrap()["reason"], last_reason);
+            assert_eq!(
+                targets.len(),
+                fields.len() + journey.sections.len()
+                    - usize::from(!journey.stops_at_repeated_section)
+            );
+            let checkpoints = result["rehearsal"]["progress_checkpoints"]
+                .as_array()
+                .unwrap();
+            assert_eq!(checkpoints.len(), fields.len());
+            let mut image_names = std::collections::HashSet::new();
+            for (index, ((field, (label, value)), checkpoint)) in
+                fields.iter().zip(expected).zip(checkpoints).enumerate()
+            {
+                assert_eq!(field["label"], *label);
+                assert_eq!(field["native_value"], *value);
+                assert_eq!(field["native_verified"], true);
+                let name = field["image"].as_str().unwrap();
+                assert!(image_names.insert(name));
+                let image = read(&screenshots.join(name), 6 * 1024 * 1024).unwrap();
+                assert_eq!(field["sha256"], waypoint_domain::sha256_hex(&image));
+                let saved = read(
+                    &attempt.join(checkpoint["file"].as_str().unwrap()),
+                    512 * 1024,
+                )
+                .unwrap();
+                assert_eq!(checkpoint["sha256"], waypoint_domain::sha256_hex(&saved));
+                let saved: Value = serde_json::from_slice(&saved).unwrap();
+                assert_eq!(saved["schema"], 2);
+                assert_eq!(saved["entry_index"], index + 1);
+                assert_eq!(saved["fields"].as_array().unwrap().len(), 1);
+                assert_eq!(saved["fields"][0]["native_value"], *value);
+            }
+        } else {
+            assert_eq!(result["rehearsal"]["halted"], false);
+            assert_eq!(
+                fields
+                    .iter()
+                    .map(|v| v["label"].as_str().unwrap())
+                    .collect::<Vec<_>>(),
+                ["First name", "Email", "Country"]
+            );
+            assert_eq!(targets.len(), 5);
+        }
         assert!(fields.iter().all(|v| v["status"] == "visually_matched"));
         if fixture.simulate_initial_review_pressure {
             assert!(TEST_FIELD_MEMORY_REFUSAL.take().is_none());
@@ -2687,10 +2827,15 @@ mod tests {
             assert_eq!(result["replay"]["cached_non_read_replies"], 0);
             assert_eq!(result["replay"]["unmanaged_child_sessions"], 0);
         }
-        let targets = result["rehearsal"]["visual_gate"]["targets"]
-            .as_array()
-            .unwrap();
-        assert_eq!(targets.len(), 5);
+        for counter in [
+            "blocked",
+            "cached_non_read_replies",
+            "unreplayed_transports",
+            "unmanaged_child_sessions",
+        ] {
+            assert_eq!(result["replay"][counter], 0, "{counter}");
+        }
+        assert_eq!(result["replay"]["unsupported_targets"], json!({}));
         assert!(targets.iter().all(|v| v["status"] == "visually_matched"));
         assert_eq!(crate::resident_model_status().unwrap(), existing);
         assert!(!attempt.join("model-runtime").exists());
