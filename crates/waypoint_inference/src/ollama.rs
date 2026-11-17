@@ -134,28 +134,47 @@ pub struct OllamaInference {
     cancel_flag: Arc<AtomicBool>,
     request_guard: Option<Arc<dyn Fn() -> Result<(), String> + Send + Sync>>,
     response_observer: Option<ResponseObserver>,
+    profile: crate::generation_profile::GenerationProfile,
+    profile_verified: bool,
 }
 
 impl OllamaInference {
+    fn verify_generation_profile(&mut self) -> Result<(), InferenceError> {
+        if !self.profile_verified
+            && self.profile != crate::generation_profile::GenerationProfile::Generic
+        {
+            let details =
+                self.post_json("/api/show", &serde_json::json!({"model":self.model}), 3000)?;
+            self.profile
+                .validate_details(&details)
+                .map_err(InferenceError::StructuredOutputFailed)?;
+        }
+        self.profile_verified = true;
+        Ok(())
+    }
     /// `origin` must be exactly `http://127.0.0.1:<port>`.
     pub fn new(origin: &str, model: impl Into<String>) -> Result<Self, InferenceError> {
         let addr = parse_loopback_origin(origin)?;
+        let model = model.into();
+        let profile = crate::generation_profile::GenerationProfile::for_model(&model);
         Ok(Self {
             addr,
-            model: model.into(),
+            model,
             context_window: None,
             resident_context: false,
             think: true,
             cancel_flag: Arc::new(AtomicBool::new(false)),
             request_guard: None,
             response_observer: None,
+            profile,
+            profile_verified: false,
         })
     }
 
     /// Request an explicit context size. The caller is responsible for checking
     /// that the resident model and machine have sufficient resources.
     pub fn with_context_window(mut self, tokens: u32) -> Result<Self, InferenceError> {
-        if !(1024..=131_072).contains(&tokens) {
+        if !(1024..=crate::generation_profile::MAX_CONTEXT_TOKENS).contains(&tokens) {
             return Err(InferenceError::BudgetExceeded);
         }
         self.context_window = Some(tokens);
@@ -263,6 +282,7 @@ impl OllamaInference {
         if max_output_tokens == 0 {
             return Err(InferenceError::BudgetExceeded);
         }
+        self.verify_generation_profile()?;
         // Measured pitfall (2026-09-26): with think:true + schema format on
         // this runtime, reasoning consumed the entire budget (2238 thinking
         // chars, response empty, done_reason=length). Structured generation
@@ -276,7 +296,7 @@ impl OllamaInference {
             "stream": false,
             "format": format,
             "think": false,
-            "options": {"num_predict": max_output_tokens, "temperature": 0.0},
+            "options": self.profile.options(false, max_output_tokens),
         });
         let context = if self.resident_context {
             Some(
@@ -321,10 +341,18 @@ impl OllamaInference {
 }
 
 impl Inference for OllamaInference {
+    fn advice_token_budget(&self) -> u32 {
+        if self.profile == crate::generation_profile::GenerationProfile::Qwen38 {
+            8192
+        } else {
+            1536
+        }
+    }
     fn set_request_guard(&mut self, guard: Arc<dyn Fn() -> Result<(), String> + Send + Sync>) {
         self.request_guard = Some(guard);
     }
     fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+        self.verify_generation_profile()?;
         // 1. Runtime reachable.
         let version = self.get_json("/api/version", PROBE_TIMEOUT_MS)?;
         let _ = version
@@ -343,7 +371,7 @@ impl Inference for OllamaInference {
                 "stream": false,
                 "format": "json",
                 "think": false,
-                "options": {"num_predict": 48, "temperature": 0.0},
+                "options": self.profile.options(false, 48),
             }),
             GENERATION_PROBE_TIMEOUT_MS,
         )?;
@@ -365,8 +393,8 @@ impl Inference for OllamaInference {
                 "model": self.model,
                 "prompt": "Compute 17 * 23. Think briefly. Put only the final integer in your final answer.",
                 "stream": false,
-                "think": true,
-                "options": {"num_predict": 2048, "temperature": 0.0},
+                "think": self.profile.thinking(),
+                "options": self.profile.options(true, 2048),
             }),
             GENERATION_PROBE_TIMEOUT_MS,
         )?;
@@ -445,14 +473,20 @@ impl Inference for OllamaInference {
         if self.cancelled() {
             return Err(InferenceError::Cancelled);
         }
-        if !(768..=2048).contains(&max_output_tokens) || prompt.len() > 8000 {
+        let limit = if self.profile == crate::generation_profile::GenerationProfile::Qwen38 {
+            8192
+        } else {
+            2048
+        };
+        if !(768..=limit).contains(&max_output_tokens) || prompt.len() > 8000 {
             return Err(InferenceError::BudgetExceeded);
         }
+        self.verify_generation_profile()?;
         // Reason separately: combining thinking and a strict schema has
         // exhausted the output budget without a final answer on this runtime.
         let mut body = serde_json::json!({"model":self.model,"prompt":prompt,
-            "stream":false,"think":true,
-            "options":{"num_predict":max_output_tokens,"temperature":0.0}});
+            "stream":false,"think":self.profile.thinking(),
+            "options":self.profile.options(true,max_output_tokens)});
         let context = if self.resident_context {
             Some(
                 resident_context_from_ps(&self.get_json("/api/ps", 3000)?, &self.model)
@@ -464,7 +498,12 @@ impl Inference for OllamaInference {
         if let Some(tokens) = context {
             body["options"]["num_ctx"] = tokens.into();
         }
-        let out = self.post_json("/api/generate", &body, GENERATE_TIMEOUT_MS)?;
+        let timeout = if self.profile == crate::generation_profile::GenerationProfile::Qwen38 {
+            900_000
+        } else {
+            GENERATE_TIMEOUT_MS
+        };
+        let out = self.post_json("/api/generate", &body, timeout)?;
         if let Some(observer) = &mut self.response_observer {
             observer(purpose, &out);
         }
@@ -532,7 +571,10 @@ pub fn bounded_resident_allocation(model: &Value) -> Result<(u64, u64), String> 
         .filter(|gpu| *gpu > 0 && *gpu <= size)
         .ok_or("resident GPU allocation unavailable")?;
     let cpu = size - gpu;
-    if gpu > 16 * GIB || cpu > 2 * GIB {
+    let profile = crate::generation_profile::GenerationProfile::for_model(
+        model["name"].as_str().unwrap_or_default(),
+    );
+    if gpu > 16 * GIB || cpu > profile.max_cpu_offload_bytes() {
         return Err("resident model allocation exceeds the GPU or system memory budget".into());
     }
     Ok((gpu, cpu))
@@ -838,6 +880,29 @@ fn decode_chunked(body: &[u8]) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_qwen_offload_is_bounded_and_does_not_expand_other_model_budgets() {
+        let gib = 1024u64.pow(3);
+        let mut model = serde_json::json!({"name":crate::generation_profile::DEFAULT_MODEL,"size":14*gib,"size_vram":10*gib});
+        assert_eq!(
+            bounded_resident_allocation(&model).unwrap(),
+            (10 * gib, 4 * gib)
+        );
+        model["size_vram"] = (8 * gib).into();
+        assert_eq!(
+            bounded_resident_allocation(&model).unwrap(),
+            (8 * gib, 6 * gib)
+        );
+        model["size_vram"] = (8 * gib - 1).into();
+        assert!(bounded_resident_allocation(&model).is_err());
+        model["size_vram"] = (10 * gib).into();
+        model["name"] = "future:local".into();
+        assert!(bounded_resident_allocation(&model).is_err());
+        model["name"] = crate::generation_profile::DEFAULT_MODEL.into();
+        model["size_vram"] = 0.into();
+        assert!(bounded_resident_allocation(&model).is_err());
+    }
 
     #[test]
     fn capability_probes_require_completed_expected_outputs() {
@@ -1442,12 +1507,14 @@ mod tests {
     #[test]
     fn explicit_context_window_is_bounded() {
         let model = || OllamaInference::new("http://127.0.0.1:11434", "test").unwrap();
-        assert!(model().with_context_window(1023).is_err());
-        assert_eq!(
-            model().with_context_window(4096).unwrap().context_window,
-            Some(4096)
-        );
-        assert!(model().with_context_window(131_073).is_err());
+        for size in [1024, 4096, 16_384, 131_072, 262_144] {
+            let adapter = model().with_context_window(size).unwrap();
+            assert_eq!(adapter.context_window, Some(size));
+            assert!(!adapter.resident_context);
+        }
+        for size in [0, 1023, 262_145, u32::MAX] {
+            assert!(model().with_context_window(size).is_err());
+        }
     }
 
     #[test]

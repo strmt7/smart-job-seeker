@@ -2325,8 +2325,9 @@ fn model_inventory_memory_snapshot(
             let Some(name) = model["name"].as_str() else {
                 continue;
             };
-            let check = model_start::startup_binding(tags, name)
-                .and_then(|(size, _)| model_start::resource_gate(size, system_available, gpu));
+            let check = model_start::startup_binding(tags, name).and_then(|(size, _)| {
+                model_start::resource_gate_for_model(name, size, system_available, gpu)
+            });
             model["memory_check"] = match check {
                 Ok(()) => json!({"state":"fits_snapshot"}),
                 Err(reason) => json!({"state":"not_ready","reason":reason}),

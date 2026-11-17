@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod generation_profile;
 /// Production inference adapter: Ollama over loopback-only HTTP, std-only.
 pub mod ollama;
 pub use ollama::OllamaInference;
@@ -76,6 +77,11 @@ impl std::fmt::Display for InferenceError {
 impl std::error::Error for InferenceError {}
 
 pub trait Inference {
+    /// Explicit budget for a separate reasoning pass; callers retain the
+    /// complete native usage and keep final structured extraction separate.
+    fn advice_token_budget(&self) -> u32 {
+        1536
+    }
     /// Advisory tags for the next bounded request. Backends may ignore them.
     fn set_context_tags(&mut self, _tags: &[&str]) {}
 
@@ -133,6 +139,9 @@ pub trait Inference {
 
 // Borrow an existing owned/guarded runtime instead of starting another model.
 impl<T: Inference + ?Sized> Inference for &mut T {
+    fn advice_token_budget(&self) -> u32 {
+        (**self).advice_token_budget()
+    }
     fn set_context_tags(&mut self, tags: &[&str]) {
         (**self).set_context_tags(tags)
     }

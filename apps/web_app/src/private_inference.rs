@@ -5,7 +5,7 @@ use std::path::PathBuf;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Selection {
-    pub choice: crate::model_preferences::Choice,
+    pub choice: Option<crate::model_preferences::Choice>,
     pub cache_root: PathBuf,
 }
 
@@ -301,10 +301,40 @@ mod windows {
             python: &Path,
             screenshots: &Path,
         ) -> Result<Self, String> {
-            selection.choice.validate()?;
+            let resolved;
+            let selection = if selection.choice.is_none() {
+                let temporary = tempfile::Builder::new()
+                    .prefix("model-selection-")
+                    .tempdir()
+                    .map_err(|_| "Cannot create a model metadata worker folder")?;
+                let script = temporary.path().join("model-worker.py");
+                std::fs::write(&script, include_bytes!("local_model_worker.py"))
+                    .map_err(|_| "Cannot stage model metadata worker")?;
+                let value = helper(
+                    python,
+                    &script,
+                    &json!({"action":"resolve","model":waypoint_inference::generation_profile::DEFAULT_MODEL,"directory":null}),
+                    10,
+                )?;
+                let choice = serde_json::from_value::<crate::model_preferences::Choice>(value)
+                    .map_err(|_| "Default Qwen model identity could not be read")?;
+                crate::model_install::validate_default(&choice)?;
+                resolved = Selection {
+                    choice: Some(choice),
+                    cache_root: selection.cache_root.clone(),
+                };
+                &resolved
+            } else {
+                selection
+            };
+            let choice = selection
+                .choice
+                .as_ref()
+                .ok_or("Model selection is unavailable")?;
+            choice.validate()?;
             crate::check_inference_memory()?;
             if let Ok(Some(identity)) = crate::resident_model_identity() {
-                if !selection.choice.matches(&identity) {
+                if !choice.matches(&identity) {
                     return Err("The loaded model differs from the saved rehearsal selection; it was left unchanged".into());
                 }
                 return Ok(Self {
@@ -354,7 +384,10 @@ mod windows {
         }
 
         fn initialize(&mut self, selection: &Selection, python: &Path) -> Result<(), String> {
-            let choice = &selection.choice;
+            let choice = selection
+                .choice
+                .as_ref()
+                .ok_or("Model selection is unavailable")?;
             let profile = self
                 .profile
                 .as_ref()
@@ -403,7 +436,8 @@ mod windows {
             let mut system =
                 sysinfo::System::new().map_err(|_| "Cannot sample model startup memory")?;
             system.refresh_memory();
-            crate::model_start::resource_gate(
+            crate::model_start::resource_gate_for_model(
+                &choice.name,
                 choice.size_bytes,
                 system.available_memory(),
                 &crate::gpu_resources::sample(),
@@ -427,7 +461,14 @@ mod windows {
                 .env("OLLAMA_MODELS", &models)
                 .env("OLLAMA_NOPRUNE", "1")
                 .env("OLLAMA_MAX_QUEUE", "1")
-                .env("OLLAMA_CONTEXT_LENGTH", "4096")
+                .env(
+                    "OLLAMA_CONTEXT_LENGTH",
+                    waypoint_inference::generation_profile::GenerationProfile::for_model(
+                        &choice.name,
+                    )
+                    .context_tokens()
+                    .to_string(),
+                )
                 .env("OLLAMA_KEEP_ALIVE", "5m")
                 .env("LLAMA_ARG_CACHE_RAM", "512")
                 .env("LLAMA_ARG_CTX_CHECKPOINTS", "1");
@@ -532,7 +573,34 @@ mod windows {
             if binding != (choice.size_bytes, choice.digest.clone()) {
                 return Err("Private model inventory differs from the saved selection".into());
             }
-            let body=serde_json::to_vec(&json!({"model":choice.name,"prompt":"","stream":false,"keep_alive":"5m","options":{"num_ctx":4096,"num_gpu":999,"num_thread":2,"num_batch":128}})).map_err(|_| "Cannot prepare model startup")?;
+            let profile =
+                waypoint_inference::generation_profile::GenerationProfile::for_model(&choice.name);
+            let details = serde_json::to_vec(&json!({"model":choice.name}))
+                .map_err(|_| "Cannot inspect model capabilities")?;
+            let (code, details) = http_request_with_guard(
+                addr,
+                "POST",
+                "/api/show",
+                Some(&details),
+                3000,
+                guard.as_ref(),
+            )?;
+            let details: Value = serde_json::from_slice(&details)
+                .map_err(|_| "Invalid model capability response")?;
+            if code != 200
+                || !details["capabilities"]
+                    .as_array()
+                    .is_some_and(|items| items.iter().any(|item| item == "vision"))
+            {
+                return Err("The selected model does not report vision capability".into());
+            }
+            profile.validate_details(&details)?;
+            let context = profile.context_tokens();
+            let mut body = json!({"model":choice.name,"prompt":"","stream":false,"keep_alive":"5m","options":{"num_ctx":context,"num_thread":2,"num_batch":128}});
+            if profile == waypoint_inference::generation_profile::GenerationProfile::Generic {
+                body["options"]["num_gpu"] = json!(999);
+            }
+            let body = serde_json::to_vec(&body).map_err(|_| "Cannot prepare model startup")?;
             let (code, response) = http_request_with_guard(
                 addr,
                 "POST",
@@ -557,8 +625,9 @@ mod windows {
                 .owner
                 .as_ref()
                 .ok_or("Private model owner was released")?;
-            self.metadata = json!({"mode":"private","model":identity.name,"digest":identity.digest,"context_length":4096,"cache_reused":prepared["reused"],"cache_repaired":prepared["retained_cache"].is_string(),"runtime_version":version,"reported_vram_bytes":resident["reported_vram_bytes"],"reported_cpu_bytes":resident["reported_cpu_bytes"],"pid":pid,"port":addr.port(),"creation_token":owner.identity().start_time(),"parent_pid":owner.identity().ppid(),"process_memory_limit":memory});
+            self.metadata = json!({"mode":"private","model":identity.name,"digest":identity.digest,"context_length":context,"cache_reused":prepared["reused"],"cache_repaired":prepared["retained_cache"].is_string(),"runtime_version":version,"reported_vram_bytes":resident["reported_vram_bytes"],"reported_cpu_bytes":resident["reported_cpu_bytes"],"pid":pid,"port":addr.port(),"creation_token":owner.identity().start_time(),"parent_pid":owner.identity().ppid(),"process_memory_limit":memory});
             self.metadata["session_state"] = json!("ready");
+            self.metadata["reasoning_control"] = profile.thinking();
             self.persist_metadata()?;
             Ok(())
         }

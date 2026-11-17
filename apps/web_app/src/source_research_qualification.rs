@@ -76,6 +76,9 @@ struct Trace<'a> {
     calls: &'a mut Vec<Value>,
 }
 impl Inference for Trace<'_> {
+    fn advice_token_budget(&self) -> u32 {
+        self.inner.advice_token_budget()
+    }
     fn probe(
         &mut self,
     ) -> Result<waypoint_inference::CapabilityReport, waypoint_inference::InferenceError> {
@@ -184,7 +187,9 @@ fn owned_runtime_evaluates_research_decisions_without_browser_work() {
         }
         let mut inference = OllamaInference::new(
             &format!("http://{}", session.addr),
-            &config.selection.choice.name,
+            &crate::resident_model_identity_at(session.addr)?
+                .ok_or("The private model is unavailable")?
+                .name,
         )
         .map_err(|e| e.to_string())?
         .with_resident_context();

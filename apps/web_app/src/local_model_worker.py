@@ -146,6 +146,43 @@ def inventory(store, choice):
     return files
 
 
+def resolve_choice(request):
+    """Resolve metadata locally; preparation later hashes every weight blob."""
+    name = request['model']
+    location = request['directory'] or os.environ.get('OLLAMA_MODELS') or str(Path.home() / '.ollama/models')
+    store = root(location)
+    manifests = [bounded(under(store, path), 1024**2)
+                 for path in manifest_paths(name) if (store / path).exists()]
+    if not manifests:
+        raise ValueError('Selected model is not installed in this folder; install it in Settings')
+    if any(raw != manifests[0] for raw in manifests[1:]):
+        raise ValueError('Conflicting model manifests need repair before selection')
+    def unique(pairs):
+        value = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError('Duplicate model metadata key')
+            value[key] = item
+        return value
+    raw = manifests[0]
+    manifest = json.loads(raw, object_pairs_hook=unique)
+    digest = hashlib.sha256(raw).hexdigest()
+    files = inventory(store, {'name': name, 'digest': digest})
+    descriptor = manifest['config']
+    path = 'blobs/' + descriptor['digest'].replace(':', '-')
+    config_raw = bounded(under(store, path), 1024**2)
+    if hashlib.sha256(config_raw).hexdigest() != files[path]['sha256']:
+        raise ValueError('Model configuration content differs from its descriptor')
+    config = json.loads(config_raw, object_pairs_hook=unique)
+    if (not isinstance(config, dict) or config.get('model_format') != 'gguf'
+            or any(config.get(key) not in (None, '') for key in ['remote_host', 'remote_model'])):
+        raise ValueError('Only local GGUF models without remote forwarding are supported')
+    size = sum(item['size'] for item in [descriptor, *manifest['layers']])
+    if not GIB <= size <= 16 * GIB:
+        raise ValueError('Installed model size is outside the supported 1-16 GiB range')
+    return {'name': name, 'digest': digest, 'size_bytes': size, 'directory': request['directory']}
+
+
 def transfer(source, descriptor, deadline, destination=None):
     digest = hashlib.sha256()
     count = 0
@@ -346,6 +383,8 @@ def main():
     action = request.get('action')
     if action == 'prepare' and set(request) == {'action', 'choice', 'cache_root'}:
         return prepare(request)
+    if action == 'resolve' and set(request) == {'action', 'model', 'directory'}:
+        return resolve_choice(request)
     if action == 'listener' and set(request) == {'action', 'port', 'pid'}:
         return listener(request)
     if action == 'endpoint' and set(request) == {'action', 'port'}:

@@ -111,6 +111,55 @@ class LocalModelWorkerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             WORKER.under(self.store, '../outside')
 
+    def local_metadata(self, config):
+        raw = json.dumps(config).encode()
+        digest = hashlib.sha256(raw).hexdigest()
+        (self.store / 'blobs' / ('sha256-' + digest)).write_bytes(raw)
+        manifest = json.loads(self.manifest.read_bytes())
+        manifest['config'] = {'digest':'sha256:' + digest, 'size':len(raw)}
+        self.manifest.write_bytes(json.dumps(manifest).encode())
+        return manifest
+
+    def test_resolve_local_identity_without_a_daemon_or_loading_weights(self):
+        manifest = self.local_metadata({'model_format':'gguf'})
+        before = {str(p.relative_to(self.store)):p.read_bytes() for p in self.store.rglob('*') if p.is_file()}
+        with patch.object(WORKER, 'GIB', 32):
+            choice = WORKER.resolve_choice({'model':'fictional:vision','directory':str(self.store)})
+        self.assertEqual(choice, {'name':'fictional:vision','directory':str(self.store),
+            'digest':hashlib.sha256(self.manifest.read_bytes()).hexdigest(),
+            'size_bytes':sum(x['size'] for x in [manifest['config'], *manifest['layers']])})
+        self.assertEqual(before, {str(p.relative_to(self.store)):p.read_bytes() for p in self.store.rglob('*') if p.is_file()})
+
+    def test_resolve_refuses_remote_unknown_or_corrupt_configuration(self):
+        for config in [{'model_format':'gguf','remote_host':'https://example.invalid'},
+                       {'model_format':'gguf','remote_model':'remote'}, {'model_format':'unknown'}]:
+            self.local_metadata(config)
+            with self.assertRaisesRegex(ValueError,'local GGUF'):
+                WORKER.resolve_choice({'model':'fictional:vision','directory':str(self.store)})
+        manifest = self.local_metadata({'model_format':'gguf'})
+        path = self.store / 'blobs' / manifest['config']['digest'].replace(':','-')
+        path.write_bytes(b' ' * path.stat().st_size)
+        with self.assertRaisesRegex(ValueError,'configuration content'):
+            WORKER.resolve_choice({'model':'fictional:vision','directory':str(self.store)})
+
+    def test_resolve_refuses_conflicting_manifests_and_out_of_budget_sizes(self):
+        self.local_metadata({'model_format':'gguf'})
+        legacy = self.store / 'manifests/registry.ollama.ai/library/fictional/vision'
+        legacy.parent.mkdir(parents=True)
+        legacy.write_bytes(self.manifest.read_bytes() + b' ')
+        with self.assertRaisesRegex(ValueError,'Conflicting'):
+            WORKER.resolve_choice({'model':'fictional:vision','directory':str(self.store)})
+        legacy.unlink()
+        with self.assertRaisesRegex(ValueError,'outside the supported'):
+            WORKER.resolve_choice({'model':'fictional:vision','directory':str(self.store)})
+
+    def test_resolve_defaults_to_the_configured_store_without_changing_it(self):
+        self.local_metadata({'model_format':'gguf'})
+        with patch.dict(os.environ, {'OLLAMA_MODELS':str(self.store)}), patch.object(WORKER, 'GIB', 32):
+            choice = WORKER.resolve_choice({'model':'fictional:vision','directory':None})
+        self.assertIsNone(choice['directory'])
+        self.assertEqual(choice['name'], 'fictional:vision')
+
     @unittest.skipUnless(os.name == 'nt', 'native Windows listener table')
     def test_listener_requires_the_exact_process(self):
         with socket.socket() as listener:

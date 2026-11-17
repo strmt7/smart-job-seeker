@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
-  "reviewed_on": "2026-11-15",
-  "reviewed_source": "90b5b1063af546e2544195394fec9b466f107060",
+  "reviewed_on": "2026-11-17",
+  "reviewed_source": "ec415d566d9410da774f56aa7eebecc46cf15c8f",
   "goal": "Continue the existing active Smart Jobseeker product-development goal",
-  "plan": "docs/COMPLETION_PLAN_2026-11-11.md",
-  "assessment": "docs/REPO_STATE_REVIEW_2026-11-11.md",
+  "plan": "docs/IMPLEMENTATION_PLAN_2026-11-17.md",
+  "assessment": "docs/REPO_OVERVIEW_2026-11-17.md",
   "next_task": "R04",
   "boundaries": [
     "main only",
@@ -53,7 +53,7 @@
         "docs/g1/CHECKED_HISTORY_REHEARSAL_2026-11-14.md",
         "docs/g1/REVIEWED_QUALIFICATION_ANSWERS_2026-11-14.md"
       ],
-      "next_action": "Prepare and qualify lazy private model/cache admission after native eligibility and efficient verified qualification-cache reuse. Retain native worker failure diagnostics and sufficient RAM-admitted aggregate job capacity measured with model/browser/helpers. Native-call interruption, cleanup latency and uncollected-session idle expiry remain open.",
+      "next_action": "Unify shared/private model ownership and effective runtime profiles across every inference consumer. Align context, KV type, reasoning, caller/session/controller budgets and memory admission; reproduce native OOM peak/teardown discrepancies before declaring lifecycle complete.",
       "execution_batch": "A",
       "steps": [
         "Measure native observations and browser-operation cancellation/cleanup latency without blocking owner controls.",
@@ -296,7 +296,9 @@
         "docs/g1/REVIEWED_QUALIFICATION_ANSWERS_2026-11-14.md",
         "docs/g1/TYPED_QUALIFICATION_QUANTITIES_2026-11-14.md",
         "docs/g1/MIXED_MATERIALS_REHEARSAL_2026-11-14.md",
-        "docs/g1/MODEL_CAPABILITIES_2026-11-15.md"
+        "docs/g1/MODEL_CAPABILITIES_2026-11-15.md",
+        "docs/g1/QWEN_DEFAULT_2026-11-17.md",
+        "docs/g1/QWEN_256K_CONTEXT_2026-11-17.md"
       ],
       "execution_batch": "C",
       "steps": [
@@ -310,7 +312,7 @@
         "Measure the local model on the frozen corpus; provide actionable review records rather than invented answers.",
         "Qualify native-supported inference profiles per role, including projector/renderer/parser and advertised effort. Retain actual thinking/final/tool observations and sufficient admitted budgets; do not force maximum effort onto every primitive or promote from component probes. Incorporate current primary-source research and the adapted catalog guidance without treating instructions as runtime implementation."
       ],
-      "next_action": "Prioritize correctness and autonomous complete-workflow coverage for a universal tool. Implement generic native-bound review/navigation intent and independent final native/visual summary verification, then full UI/discovery/tailored-PDF/history/qualification journeys across varied platform/control families and frozen unfamiliar held-out cases. The mixed development case9/9 field pass is not universal or workflow proof. Keep manual walls, incomplete cases and all prior failures visible. Latency profiling is secondary unless deadlines prevent completion or resource behavior threatens the host; never trade source/native/visual/authorization checks for speed.",
+      "next_action": "Address the current source-bound Qwen7/9 known-field result: per-question coverage and bounded high-effort repair for uniquely current record selection and missing question-unit projections, without oracle hints or weakened guards. Then typed native-bound visual identity, unified runtime profiles including Q8/256k, and generic navigation/final review. Field-case0/1, no workflow promotion.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "start_requirements": [
         "The frozen schema2 known-source initial-control case and native mutation fixture admit investigation of the observed actuator failure. This does not admit broad planner promotion; that still requires the varied held-out tranche and full workflow truth.",
@@ -574,7 +576,7 @@
         "Qualify SQLCipher/DPAPI migration, backup/restore, wrong-user/machine and deliberate export contracts.",
         "Measure model/context RAM/VRAM/cache footprint, low-memory admission, cancellation and owned exit; record unavailable clean-host gates honestly."
       ],
-      "next_action": "Exercise clean non-admin Windows missing-dependency, interrupted/offline, custom-path, repair/update/rollback/uninstall cases.",
+      "next_action": "Integrate the actually observed Q8 256k capacity through owned profile/cache/context/memory contracts, then measure long-input quality and full workflows. Current managed rehearsal remains 16k. Preserve host reserve, explicit custom choices and borrowed services; clean-host install/repair/rollback remains unqualified.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package."
     },
     {
@@ -984,5 +986,70 @@
     "model_promotion": false,
     "whole_workflow_qualification": false,
     "all_packages_complete": false
+  },
+  "reviewed_source_scope": "Base commit plus current Qwen development batch; native reports bind their exact source/binary. The commit containing this plan identifies the public checkpoint.",
+  "immediate_sequence": [
+    "R04.1/R03.1: per-question coverage/guarded repair, whole-record temporal intent and typed native-bound visual identities",
+    "R01.1/R11.1: unified runtime profiles and product Q8/256k integration",
+    "R02.1: freeze independent complete-journey development/held-out truth",
+    "R04.2-R04.5 with R05: generic navigation, controls, final review and recovery",
+    "R06-R08/R10: actual UI discovery-to-materials-to-review/archive journeys"
+  ],
+  "current_model_integration_checkpoint": {
+    "date": "2026-11-17",
+    "report": "docs/g1/QWEN_DEFAULT_2026-11-17.md",
+    "context_report": "docs/g1/QWEN_256K_CONTEXT_2026-11-17.md",
+    "default_model": "smart-jobseeker/qwen3.8:27b-ud-q3_k_xl",
+    "default_reason": "User-selected Qwen family; not evidence of general superiority",
+    "integrated_rehearsal_context": 16384,
+    "adapter_context_ceiling": 262144,
+    "native_256k_q8_short_request": "completed; not full-context accuracy or product default integration",
+    "workspace": {
+      "passed": 1460,
+      "ignored": 618,
+      "groups": 43
+    },
+    "workspace_clippy": "passed",
+    "canonical_debug_build": "passed",
+    "whole_workflow_qualification": false,
+    "all_packages_complete": false,
+    "latest_completed_field_case": {
+      "known_verified": 7,
+      "known_total": 9,
+      "unknown_entered": 0,
+      "unknown_total": 2,
+      "critical_entry_or_uncertainty": 0,
+      "source_binding_failures": 0,
+      "field_cases_passed": 0,
+      "field_cases_total": 1,
+      "workflow_completion": "not_qualified",
+      "held_out": false
+    },
+    "owned_checkpoint": {
+      "matching_processes": 0,
+      "services": 0,
+      "tasks": 0,
+      "startup": 0,
+      "resident_models": 0,
+      "available_ram_bytes": 34506153984,
+      "scope": "Native tree/listener outcomes plus scoped audit; not sustained leak qualification."
+    }
+  },
+  "latest_hosted_review": {
+    "date": "2026-11-17",
+    "remote_main": "90b5b1063af546e2544195394fec9b466f107060",
+    "dependabot": {
+      "fixed": 6,
+      "open": 0
+    },
+    "code_scanning": {
+      "fixed": 12,
+      "open": 0,
+      "dismissed": 0
+    },
+    "secret_scanning_returned_alerts": 0,
+    "open_issues_and_prs": 0,
+    "manual_finding_changes": false,
+    "scope": "Complete returned GitHub alert inventories; latest five main workflow runs successful for remote or older sources. Other detectors/newer local source are not thereby qualified."
   }
 }

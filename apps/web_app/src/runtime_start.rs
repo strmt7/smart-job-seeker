@@ -189,6 +189,12 @@ fn run() -> Result<Value, String> {
     Err("Starting the local runtime is supported on Windows only".into())
 }
 
+/// Model installation is an explicit user action and reuses the same private
+/// dependency provisioning and app-owned runtime lifecycle as the Start button.
+pub(crate) fn ensure_started() -> Result<(), String> {
+    run().map(|_| ())
+}
+
 pub fn start(id: String) -> Result<(), String> {
     let mut task = TASK.lock().map_err(|_| "Runtime startup unavailable")?;
     if task.is_some() {

@@ -14,7 +14,7 @@
     revision = value.revision;
     choice = value.choice;
     if (!dirty) folder.value = choice?.directory || '';
-    selected.textContent = choice ? `Rehearsal model: ${choice.name}. Bound to this installed model version.` : 'No rehearsal model selected. A qualified loaded model can be used.';
+    selected.textContent = choice ? `Rehearsal model: ${choice.name}. Bound to this installed model version.` : 'Default rehearsal model: Qwen 3.8 27B. Use Local model setup to install or check it.';
   }
   function controls() {
     if (!root) return;
@@ -55,7 +55,7 @@
     const pathHint = el('p', 'For a custom installation, choose the local folder containing Ollama manifests and blobs.', 'footnote');
     const actions = el('div', '', 'source-copy-actions');
     refreshButton = el('button', 'Refresh selection', 'button-secondary'); refreshButton.type = 'button';
-    clearButton = el('button', 'Clear selection', 'button-secondary'); clearButton.type = 'button';
+    clearButton = el('button', 'Use default Qwen', 'button-secondary'); clearButton.type = 'button';
     refreshButton.addEventListener('click', refresh); clearButton.addEventListener('click', () => save(null));
     actions.append(refreshButton, clearButton); root.append(heading, hint, selected, label, pathHint, actions);
     void refresh();

@@ -1,3 +1,12 @@
+## Current development entry points — 2026-11-17
+
+See the [repository overview](docs/REPO_OVERVIEW_2026-11-17.md),
+[detailed implementation plan](docs/IMPLEMENTATION_PLAN_2026-11-17.md) and
+[Qwen integration evidence](docs/g1/QWEN_DEFAULT_2026-11-17.md). They distinguish
+working components, failed/incomplete local-model journeys and open product
+gates. Native 256k Q8 capacity does not establish long-input quality or a completed
+application runtime. Earlier dated statements below retain their original scope.
+
 ## Mixed materials and native numbers — 2026-11-14
 
 The [mixed-materials continuation](docs/g1/MIXED_MATERIALS_REHEARSAL_2026-11-14.md) connects native number

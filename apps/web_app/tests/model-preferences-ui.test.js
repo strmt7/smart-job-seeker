@@ -16,7 +16,7 @@ const settle=()=>new Promise(resolve=>setImmediate(resolve));
   const api=async(route,body)=>{calls.push({route,body});if(!body)return value;if(reject)throw Error('Model settings changed in another window');assert.equal(body.revision,value.revision);value={revision:value.revision+1,choice:body.model?{name:body.model,digest:'a'.repeat(64),size_bytes:2*1073741824,directory:body.directory}:null};return value;};
   vm.runInNewContext(fs.readFileSync('apps/web_app/web/model-preferences.js','utf8'),{window,document:{querySelectorAll:()=>buttons}});
   window.WaypointModelPreferences.mount(root,{api,element});await settle();
-  const clear=find(root,n=>n.textContent==='Clear selection'),refresh=find(root,n=>n.textContent==='Refresh selection'),folder=find(root,n=>n.tag==='input');
+  const clear=find(root,n=>n.textContent==='Use default Qwen'),refresh=find(root,n=>n.textContent==='Refresh selection'),folder=find(root,n=>n.tag==='input');
   assert.equal(clear.disabled,true);
   const choose=window.WaypointModelPreferences.forModel({name:'fictional:vision'},true,element);buttons.push(choose);
   folder.value='C:/fictional/models';folder.listeners.input();

@@ -64,6 +64,9 @@ where
     I: Inference,
     F: FnMut() -> Result<Option<ResidentIdentity>, String>,
 {
+    fn advice_token_budget(&self) -> u32 {
+        self.inner.advice_token_budget()
+    }
     fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
         self.check()?;
         let result = self.inner.probe()?;

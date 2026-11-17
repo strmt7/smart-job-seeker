@@ -205,7 +205,7 @@ fn render_at(
     let mut rehearsal = source.rehearse.then(|| {
         Rehearsal::new(
             vision_addr,
-            selection.map(|value| &value.choice),
+            selection.and_then(|value| value.choice.as_ref()),
             runtime_guard,
             source.public_research,
             candidate,
@@ -325,9 +325,10 @@ fn render_at(
 
 #[cfg(windows)]
 const REHEARSAL_LIMIT: usize = 16;
-/// Shared by launch and accounting; mixed materials exceed the old 300s demo budget.
+/// Shared by launch and accounting. Larger local reasoning models need enough
+/// time to complete mixed materials; RAM, cancellation and action guards remain.
 #[cfg(windows)]
-pub(crate) const REHEARSAL_SECONDS: u64 = 900;
+pub(crate) const REHEARSAL_SECONDS: u64 = 2700;
 const VIEW_FIELD_LIMIT: usize = 40;
 #[cfg(windows)]
 const SECTION_ADVANCE_LIMIT: usize = 2;
@@ -2379,8 +2380,14 @@ mod tests {
         let admission = &result["model_admission"];
         assert_eq!(admission["mode"], "private");
         assert_eq!(admission["session_closed"], true);
-        assert_eq!(admission["model"], fixture.selection.choice.name);
-        assert_eq!(admission["digest"], fixture.selection.choice.digest);
+        assert_eq!(
+            admission["model"],
+            fixture.selection.choice.as_ref().unwrap().name
+        );
+        assert_eq!(
+            admission["digest"],
+            fixture.selection.choice.as_ref().unwrap().digest
+        );
         let pid = admission["pid"].as_u64().unwrap() as u32;
         let legacy_presence =
             processkit::process_is_alive(pid, admission["creation_token"].as_u64()).unwrap();

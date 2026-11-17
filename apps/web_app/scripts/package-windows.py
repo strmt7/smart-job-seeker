@@ -25,8 +25,8 @@ OFFICE_MSI_URL = 'https://download.documentfoundation.org/libreoffice/stable/26.
 OFFICE_MSI_SHA256 = 'ff4b911403b67ee9e6249f820f9782c44bb32c94fdaa45b0da53a8e419e5307a'
 OFFICE_MSI_MAX_BYTES = 512 * 1024 * 1024
 OLLAMA_ARCHIVES = (
-    ('ollama-windows-amd64.zip', 'https://github.com/ollama/ollama/releases/download/v0.40.15/ollama-windows-amd64.zip', 1614941966, '9ca74a7ab66ec86870b1eecac7df160df08dc4e3a291ab5d2d59bcf9310221c6', 4 * 1024**3),
-    ('ollama-windows-amd64-rocm.zip', 'https://github.com/ollama/ollama/releases/download/v0.40.15/ollama-windows-amd64-rocm.zip', 258790357, '2f5e81675329a5de2477a4a25823d55d5c3ead8d59522e92eac1664ab492faeb', 2 * 1024**3),
+    ('ollama-windows-amd64.zip', 'https://github.com/ollama/ollama/releases/download/v0.40.16/ollama-windows-amd64.zip', 1618244995, '50fcf5ad54277f2fa5d173ebfc93bcb017adbc0c9ef2314daabc96ca9e6aa64e', 4 * 1024**3),
+    ('ollama-windows-amd64-rocm.zip', 'https://github.com/ollama/ollama/releases/download/v0.40.16/ollama-windows-amd64-rocm.zip', 258665009, '0daf19f77f678a02264b5fa398d6988dece19832ca1682f1f7b8f81450d1f574', 2 * 1024**3),
 )
 OLLAMA_LICENSE_SHA256 = '5934ed2ce0d15154bcdb9c85203210abac0da4314af34081e36df4599f90b226'
 

@@ -14,7 +14,17 @@ repo up cold. Read this first, then `README.md`, then the references below.
   tools, reasoning/validation, bounded internet-assisted repair, validated learning
   and recovery should improve any compatible local model. Qualify capabilities
   explicitly; do not tie the architecture to one model or pretend unavailable
-  vision/tools work. A stronger model is an optional, measured upgrade.
+  vision/tools work. The user-selected default family is Qwen; optimize and
+  qualify its current suitable local release, while preserving explicit custom
+  selections and generic adapters for other and future models. Do not silently
+  fall back to an older model. A default choice is not evidence of superiority;
+  retain all comparative failures and qualify actual workflow outcomes.
+- Keep requested context capacity separate from effective native context and
+  measured task quality. Larger windows/cache quantization need actual allocation,
+  host-headroom and long-input outcome evidence. Keep cache, context, effort,
+  task budgets and ownership consistent across consumers; changing one constant
+  is not product integration. Never modify an unrelated shared daemon to make a
+  profile fit.
 - When changing local-model capabilities, prompts, inference profiles or learned
   procedures, use [local model qualification](.agents/skills/local-model-qualification/SKILL.md).
   Verify the effective native renderer/parser, actual visual/tool responses and
@@ -75,6 +85,11 @@ repo up cold. Read this first, then `README.md`, then the references below.
   environment are unchanged; label older evidence and narrower scopes honestly.
   Token savings must come from irrelevant work and repeated context, never from
   reducing model reasoning, weakening review or silently lowering test criteria.
+- Use the [current overview](docs/REPO_OVERVIEW_2026-11-17.md),
+  [detailed implementation plan](docs/IMPLEMENTATION_PLAN_2026-11-17.md) and
+  `docs/ACTIVE_DEVELOPMENT_PLAN.json` as current development entry points.
+  Preserve dated evidence separately instead of repeatedly prepending historical
+  checkpoints to every status document. Keep R01–R14 identities stable.
 - Prefer substantial local development batches and reviewable local commits.
   Push tested, coherent checkpoints to `main` less frequently; avoid separate
   pushes for routine status/documentation updates or every small edit unless
@@ -84,7 +99,8 @@ repo up cold. Read this first, then `README.md`, then the references below.
 - Before broad or conceptual code navigation, use the source-bound
   [CocoIndex workflow](.agents/skills/cocoindex-code-search/SKILL.md). Exact
   names and small known scopes still use `rg`; confirm semantic results in live
-  source. Never change another checkout's registration or cache.
+  source. Serialize operations sharing one index namespace; their lock is
+  exclusive. Never change another checkout's registration or cache.
 - Use [Crawl4AI](.agents/skills/crawl4ai-research/SKILL.md) for web-page
   reading, retain native results and disclose failures. Search snippets are not
   page evidence. API and archive bytes retain their native transports. Follow

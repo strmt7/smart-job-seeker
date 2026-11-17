@@ -173,10 +173,17 @@ def main():
                     actions.screenshot(path=str(folder / f'model-actions-{width}.png'), animations='disabled')
                     measures.append({'width': width, 'panel_width': box['width']})
                 report['settings_geometry'] = measures
-                settings.get_by_role('button', name='Clear selection', exact=True).click()
-                expect(settings.get_by_role('status')).to_contain_text('No rehearsal model selected.')
+                settings.get_by_role('button', name='Use default Qwen', exact=True).click()
+                expect(settings.get_by_role('status')).to_contain_text('Default rehearsal model: Qwen 3.8 27B.')
                 cleared = api('/api/model-preferences')
                 assert cleared['choice'] is None and cleared['revision'] == saved['revision'] + 1
+                assert cleared['default_model'] == 'smart-jobseeker/qwen3.8:27b-ud-q3_k_xl'
+                assert page.locator('#model-install-choice option').first.get_attribute('value') == cleared['default_model']
+                for width in (1360, 480, 320):
+                    page.set_viewport_size({'width': width, 'height': 940})
+                    settings.scroll_into_view_if_needed()
+                    assert not page.evaluate('document.documentElement.scrollWidth > innerWidth')
+                    settings.screenshot(path=str(folder / f'model-default-{width}.png'), animations='disabled')
                 page.locator('#model-inventory').click()
                 settings.locator('input').fill(str(model_store))
                 row.get_by_role('button', name='Use for rehearsal', exact=True).click()

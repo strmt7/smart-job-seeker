@@ -1,5 +1,20 @@
 # Known limitations register (T050)
 
+The [17 November overview](docs/REPO_OVERVIEW_2026-11-17.md) and
+[detailed implementation plan](docs/IMPLEMENTATION_PLAN_2026-11-17.md) are current.
+Universal workflow completion, a unified Qwen runtime across all consumers,
+qualified 256k task accuracy, generic final review, clean-host installation and
+independent real-form no-send isolation remain open. No release readiness is
+claimed. Older dated results below are historical rather than current global
+acceptance.
+
+The 17 November native 256k F16 allocation failure also exposed a peak-job
+observation above its configured ceiling and an initial teardown observation
+that conflicted with root-exit accounting. A later native PID/listener check was
+clean; it does not explain the discrepancy. Keep this lifecycle/accounting work
+open under R01.3. The successful Q8 short request is capacity evidence, not a
+replacement for the failed trial or long-context/workflow qualification.
+
 The [mixed-materials continuation](docs/g1/MIXED_MATERIALS_REHEARSAL_2026-11-14.md) connects native number
 controls and immutable per-entry progress records. Its final local 12B run
 verifies 9/9 known fields with both unknowns untouched, after a retained

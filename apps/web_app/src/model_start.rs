@@ -19,6 +19,35 @@ pub(crate) const HOST_CONTINUATION_RESERVE_CAP_BYTES: u64 = HOST_START_RESERVE_B
 
 #[cfg(any(windows, test))]
 pub(crate) fn resource_gate(size: u64, system_available: u64, gpu: &Value) -> Result<(), String> {
+    resource_gate_with_profile(
+        waypoint_inference::generation_profile::GenerationProfile::Generic,
+        size,
+        system_available,
+        gpu,
+    )
+}
+
+#[cfg(any(windows, test))]
+pub(crate) fn resource_gate_for_model(
+    model: &str,
+    size: u64,
+    system_available: u64,
+    gpu: &Value,
+) -> Result<(), String> {
+    let profile = waypoint_inference::generation_profile::GenerationProfile::for_model(model);
+    if profile == waypoint_inference::generation_profile::GenerationProfile::Generic {
+        return resource_gate(size, system_available, gpu);
+    }
+    resource_gate_with_profile(profile, size, system_available, gpu)
+}
+
+#[cfg(any(windows, test))]
+fn resource_gate_with_profile(
+    profile: waypoint_inference::generation_profile::GenerationProfile,
+    size: u64,
+    system_available: u64,
+    gpu: &Value,
+) -> Result<(), String> {
     if size == 0 || size > MAX_MODEL_BYTES {
         return Err("Model file size is unavailable or exceeds the 16 GiB startup limit".into());
     }
@@ -50,13 +79,14 @@ pub(crate) fn resource_gate(size: u64, system_available: u64, gpu: &Value) -> Re
         .checked_sub(used)
         .ok_or("GPU memory observation is inconsistent")?;
     let needed_gpu = size
-        .checked_mul(6)
-        .and_then(|n| n.checked_add(4))
-        .map(|n| n / 5)
-        // Estimated overhead and at most 2 GiB of model offload. The runtime
-        // decides the actual split, which is checked after loading.
+        .checked_mul(100 + profile.startup_overhead_percent())
+        .and_then(|n| n.checked_add(99))
+        .map(|n| n / 100)
+        // Model-profile estimate, not a VRAM reservation. The default Qwen
+        // profile permits bounded offload under existing host RAM admission;
+        // the runtime's actual split is independently checked after loading.
         .and_then(|n| n.checked_add(GIB / 2))
-        .map(|n| n.saturating_sub(2 * GIB).max(GIB))
+        .map(|n| n.saturating_sub(profile.max_cpu_offload_bytes()).max(GIB))
         .ok_or("Invalid model size")?;
     if free < needed_gpu {
         return Err(format!(
@@ -137,10 +167,13 @@ fn existing_model(ps: &Value, requested: &str) -> Result<Option<Value>, String> 
         return Ok(None);
     }
     let state = crate::model_diagnostics(ps)?;
-    if state["model"].as_str() == Some(requested) && state["context_length"].as_u64() == Some(4096)
+    let context = waypoint_inference::generation_profile::GenerationProfile::for_model(requested)
+        .context_tokens();
+    if state["model"].as_str() == Some(requested)
+        && state["context_length"].as_u64() == Some(context.into())
     {
         return Ok(Some(
-            json!({"model":requested,"reported_vram_bytes":state["reported_vram_bytes"],"reported_cpu_bytes":state["reported_cpu_bytes"],"context_length":4096,"already_running":true}),
+            json!({"model":requested,"reported_vram_bytes":state["reported_vram_bytes"],"reported_cpu_bytes":state["reported_cpu_bytes"],"context_length":context,"already_running":true}),
         ));
     }
     Err("A model is already loaded with a different identity, context, or resource state; it was left unchanged".into())
@@ -164,12 +197,15 @@ fn verify_started_model(ps: &Value, requested: &str) -> Result<Value, String> {
     let state = crate::model_diagnostics(ps).map_err(|_| {
         "Model startup could not be verified; a model may remain loaded. Check local model status before retrying".to_owned()
     })?;
-    if state["model"].as_str() != Some(requested) || state["context_length"].as_u64() != Some(4096)
+    let context = waypoint_inference::generation_profile::GenerationProfile::for_model(requested)
+        .context_tokens();
+    if state["model"].as_str() != Some(requested)
+        || state["context_length"].as_u64() != Some(context.into())
     {
-        return Err("The requested model was not reported as the single model within the GPU and system-memory budgets with the requested 4096 context; a model may remain loaded. Check local model status before retrying".into());
+        return Err(format!("The requested model was not reported as the single model within the GPU and system-memory budgets with the requested {context} context; a model may remain loaded. Check local model status before retrying"));
     }
     Ok(
-        json!({"model":requested,"reported_vram_bytes":state["reported_vram_bytes"],"reported_cpu_bytes":state["reported_cpu_bytes"],"context_length":4096,"already_running":false}),
+        json!({"model":requested,"reported_vram_bytes":state["reported_vram_bytes"],"reported_cpu_bytes":state["reported_cpu_bytes"],"context_length":context,"already_running":false}),
     )
 }
 
@@ -225,12 +261,21 @@ fn run(model: &str) -> Result<Value, String> {
     // starting the load. This narrows but cannot eliminate the snapshot race.
     let mut system = sysinfo::System::new().map_err(|_| "System memory could not be sampled")?;
     system.refresh_memory();
-    resource_gate(
+    resource_gate_for_model(
+        model,
         binding.0,
         system.available_memory(),
         &crate::gpu_resources::sample(),
     )?;
-    let request = serde_json::to_vec(&json!({"model":model,"prompt":"","stream":false,"keep_alive":"10m","options":{"num_ctx":4096,"num_gpu":999,"num_thread":2,"num_batch":128}})).map_err(|_| "Could not prepare local model request")?;
+    let context = waypoint_inference::generation_profile::GenerationProfile::for_model(model)
+        .context_tokens();
+    let mut body = json!({"model":model,"prompt":"","stream":false,"keep_alive":"10m","options":{"num_ctx":context,"num_thread":2,"num_batch":128}});
+    if waypoint_inference::generation_profile::GenerationProfile::for_model(model)
+        == waypoint_inference::generation_profile::GenerationProfile::Generic
+    {
+        body["options"]["num_gpu"] = json!(999);
+    }
+    let request = serde_json::to_vec(&body).map_err(|_| "Could not prepare local model request")?;
     let (status, bytes) = guarded_start_request(addr, &request, &crate::check_inference_memory)?;
     if status != 200 {
         return Err(format!("Local model startup failed (HTTP {status}); check the model status before trying again"));
@@ -314,6 +359,42 @@ pub fn poll(id: &str) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn qwen_startup_keeps_host_reserve_while_allowing_bounded_gpu_sharing() {
+        let model = waypoint_inference::generation_profile::DEFAULT_MODEL;
+        let gpu = json!({"state":"sampled","reported_adapters":1,"adapters":[{"total_bytes":16*GIB,"used_bytes":5*GIB}]});
+        assert!(resource_gate_for_model(model, 13 * GIB, 32 * GIB, &gpu).is_ok());
+        assert!(resource_gate(13 * GIB, 32 * GIB, &gpu).is_err());
+        assert!(resource_gate_for_model(model, 13 * GIB, 22 * GIB - 1, &gpu).is_err());
+        assert!(resource_gate_for_model(
+            model,
+            13 * GIB,
+            32 * GIB,
+            &json!({"state":"unavailable"})
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn qwen_startup_checks_its_requested_context_and_actual_allocation() {
+        let model = waypoint_inference::generation_profile::DEFAULT_MODEL;
+        let mut state = json!({"models":[{"name":model,"size":14*GIB,"size_vram":8*GIB,"context_length":16384}]});
+        assert_eq!(
+            existing_model(&state, model).unwrap().unwrap()["context_length"],
+            16384
+        );
+        assert_eq!(
+            verify_started_model(&state, model).unwrap()["reported_cpu_bytes"],
+            6 * GIB
+        );
+        state["models"][0]["context_length"] = json!(4096);
+        assert!(existing_model(&state, model).is_err());
+        assert!(verify_started_model(&state, model).is_err());
+        state["models"][0]["context_length"] = json!(16384);
+        state["models"][0]["size_vram"] = json!(8 * GIB - 1);
+        assert!(verify_started_model(&state, model).is_err());
+    }
     #[test]
     fn startup_binding_rejects_changed_size_or_digest() {
         let digest = "a".repeat(64);

@@ -12,7 +12,12 @@ struct Spec {
     name: &'static str,
     digest: &'static str,
 }
-const SPECS: [Spec; 3] = [
+const DEFAULT_DIGEST: &str = "552b71d645d94564cfacdce245ba98de155c265de8ec3aa7c5e515e9590e0d8f";
+const QWEN_SOURCE: Spec = Spec {
+    name: "hf.co/unsloth/Qwen3.8-27B-GGUF:UD-Q3_K_XL",
+    digest: "56d747cb510c031f215eea0c2cef98662ef76c95177667b11b0080e2a63f7bf0",
+};
+const SPECS: [Spec; 4] = [
     Spec {
         name: "gemma4:12b-it-qat",
         digest: "38044be4f923e5a55264ed7df4eaac2676651a905f735197c504045140c02bd3",
@@ -25,7 +30,20 @@ const SPECS: [Spec; 3] = [
         name: "qwen3.5:9b",
         digest: "c97eb11d70b1acdc88af01eef566c1fe4f7fbe93eb1afc06871132f293ff425a",
     },
+    Spec {
+        name: waypoint_inference::generation_profile::DEFAULT_MODEL,
+        digest: DEFAULT_DIGEST,
+    },
 ];
+
+pub(crate) fn validate_default(choice: &crate::model_preferences::Choice) -> Result<(), String> {
+    if choice.name != waypoint_inference::generation_profile::DEFAULT_MODEL
+        || choice.digest != DEFAULT_DIGEST
+    {
+        return Err("The default Qwen version differs from the reviewed installation; repair or explicitly select a model in Settings".into());
+    }
+    Ok(())
+}
 struct Task {
     id: String,
     phase: String,
@@ -69,6 +87,45 @@ fn run(addr: SocketAddr, selected: Spec, id: &str) -> Result<Value, String> {
     }
     if let Some(verified) = inventory(addr, selected)? {
         return Ok(json!({"model":selected.name,"already_installed":true,"verified":verified}));
+    }
+    if selected.name == waypoint_inference::generation_profile::DEFAULT_MODEL {
+        let source = run(addr, QWEN_SOURCE, id)?;
+        if source["verified"] != true {
+            return Err("The Qwen source differs from the reviewed weights; the existing model was preserved".into());
+        }
+        let body = serde_json::to_vec(&json!({"model":selected.name,"from":QWEN_SOURCE.name,
+            "renderer":"qwen3.8","parser":"qwen3.5","stream":false,
+            "parameters":{"stop":[],"num_ctx":8192,"temperature":1.0,"top_p":0.95,"top_k":20,"min_p":0.0,"presence_penalty":0.0,"repeat_penalty":1.0}}))
+            .map_err(|_| "Cannot prepare the native Qwen profile")?;
+        let (code, value) = waypoint_inference::ollama::http_request(
+            addr,
+            "POST",
+            "/api/create",
+            Some(&body),
+            60_000,
+        )?;
+        let value: Value = serde_json::from_slice(&value)
+            .map_err(|_| "Invalid Qwen profile installation response")?;
+        if code != 200 || value["status"] != "success" || inventory(addr, selected)? != Some(true) {
+            return Err("The native Qwen profile did not match the reviewed installation; no model was loaded".into());
+        }
+        let request = serde_json::to_vec(&json!({"model":selected.name}))
+            .map_err(|_| "Cannot inspect installed Qwen profile")?;
+        let (code, details) = waypoint_inference::ollama::http_request(
+            addr,
+            "POST",
+            "/api/show",
+            Some(&request),
+            3000,
+        )?;
+        let details: Value =
+            serde_json::from_slice(&details).map_err(|_| "Invalid installed Qwen capabilities")?;
+        if code != 200 {
+            return Err("Installed Qwen capabilities could not be inspected".into());
+        }
+        waypoint_inference::generation_profile::GenerationProfile::Qwen38
+            .validate_details(&details)?;
+        return Ok(json!({"model":selected.name,"already_installed":false,"verified":true}));
     }
     let client = reqwest::blocking::Client::builder()
         .no_proxy()
@@ -150,7 +207,7 @@ pub fn start(id: String, name: &str) -> Result<(), String> {
     let lease = crate::doc_suggest::lease()?;
     *task = Some(Task {
         id: id.clone(),
-        phase: "Checking installed models".into(),
+        phase: "Preparing local runtime".into(),
         completed: None,
         total: None,
         result: None,
@@ -159,6 +216,7 @@ pub fn start(id: String, name: &str) -> Result<(), String> {
     std::thread::spawn(move || {
         let _lease = lease;
         let result = std::panic::catch_unwind(|| {
+            crate::runtime_start::ensure_started()?;
             run(
                 "127.0.0.1:11434".parse().expect("literal loopback"),
                 selected,
@@ -359,5 +417,48 @@ mod tests {
         assert!(spec("gemma4:12b-it-qat").is_some());
         assert!(spec("qwen3.5:9b").is_some());
         assert!(spec("ministral-3:14b").is_some());
+        assert!(spec(waypoint_inference::generation_profile::DEFAULT_MODEL).is_some());
+    }
+
+    #[test]
+    fn default_recipe_verifies_source_and_native_profile_without_loading() {
+        let selected = spec(waypoint_inference::generation_profile::DEFAULT_MODEL).unwrap();
+        let (addr, server) = serve(vec![
+            ("/api/tags".into(), json!({"models":[]}).to_string()),
+            ("/api/tags".into(), json!({"models":[{"name":QWEN_SOURCE.name,"digest":QWEN_SOURCE.digest}]}).to_string()),
+            ("/api/create".into(), json!({"status":"success"}).to_string()),
+            ("/api/tags".into(), json!({"models":[{"name":selected.name,"digest":selected.digest}]}).to_string()),
+            ("/api/show".into(), json!({"renderer":"qwen3.8","parser":"qwen3.5","capabilities":["vision","tools","thinking"],"thinking":{"values":[false,"low","medium","xhigh"]}}).to_string()),
+        ]);
+        let result = run(addr, selected, "fixture").unwrap();
+        assert_eq!(result["verified"], true);
+        let requests = server.join().unwrap();
+        assert_eq!(requests.len(), 5);
+        let body = requests[2].split_once("\r\n\r\n").unwrap().1;
+        let value: Value = serde_json::from_str(body).unwrap();
+        assert_eq!(value["from"], QWEN_SOURCE.name);
+        assert_eq!(value["renderer"], "qwen3.8");
+        assert_eq!(value["parser"], "qwen3.5");
+        assert_eq!(value["parameters"]["num_ctx"], 8192);
+        assert_eq!(value["parameters"]["temperature"], 1.0);
+        assert!(requests
+            .iter()
+            .all(|request| !request.starts_with("POST /api/generate")));
+    }
+
+    #[test]
+    fn changed_source_is_never_derived_into_the_default_model() {
+        let selected = spec(waypoint_inference::generation_profile::DEFAULT_MODEL).unwrap();
+        let (addr, server) = serve(vec![
+            ("/api/tags".into(), json!({"models":[]}).to_string()),
+            (
+                "/api/tags".into(),
+                json!({"models":[{"name":QWEN_SOURCE.name,"digest":"a".repeat(64)}]}).to_string(),
+            ),
+        ]);
+        assert!(run(addr, selected, "fixture")
+            .unwrap_err()
+            .contains("source differs"));
+        assert_eq!(server.join().unwrap().len(), 2);
     }
 }

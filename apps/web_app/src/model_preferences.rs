@@ -72,7 +72,9 @@ pub(crate) fn read(ws: &Workspace) -> Result<(u64, Option<Choice>), String> {
 
 pub(crate) fn status(ws: &Workspace) -> Result<Value, String> {
     let (revision, choice) = read(ws)?;
-    Ok(json!({"revision":revision,"choice":choice}))
+    Ok(
+        json!({"revision":revision,"choice":choice,"default_model":waypoint_inference::generation_profile::DEFAULT_MODEL}),
+    )
 }
 
 pub(crate) fn save(ws: &Workspace, body: &Value) -> Result<Value, String> {
@@ -140,7 +142,9 @@ pub(crate) fn save(ws: &Workspace, body: &Value) -> Result<Value, String> {
         .save_model_preferences(input.revision, bytes.as_deref())
         .map_err(|e| e.to_string())?
         .ok_or("Model settings changed in another window; refresh them before saving")?;
-    Ok(json!({"revision":revision,"choice":choice}))
+    Ok(
+        json!({"revision":revision,"choice":choice,"default_model":waypoint_inference::generation_profile::DEFAULT_MODEL}),
+    )
 }
 
 #[cfg(test)]

@@ -293,12 +293,10 @@ fn start_task(
         .ok_or("Workspace model cache folder is unavailable")?
         .join("model-cache");
     let model_choice = if replay.as_ref().is_some_and(|source| source.rehearse) {
-        crate::model_preferences::read(ws)?
-            .1
-            .map(|choice| crate::private_inference::Selection {
-                choice,
-                cache_root: cache_root.clone(),
-            })
+        Some(crate::private_inference::Selection {
+            choice: crate::model_preferences::read(ws)?.1,
+            cache_root: cache_root.clone(),
+        })
     } else {
         None
     };

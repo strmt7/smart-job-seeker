@@ -11,3 +11,4 @@ const context={document:{querySelector:q=>q==='#model-install'?button:info},sess
 
 const html=fs.readFileSync("apps/web_app/web/index.html","utf8");
 assert.match(html,/value="ministral-3:14b"/);
+assert.match(html, /<select id="model-install-choice"><option value="smart-jobseeker\/qwen3\.8:27b-ud-q3_k_xl">/);
