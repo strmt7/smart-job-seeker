@@ -391,6 +391,21 @@ qualify the verification steps below.
    `resource_interrupted`, `stale_inputs` or `unsupported_workflow` outcomes.
    No state says submitted or delivered because fields were filled.
 
+Implement the outcome check separately from navigation. Capture the current
+summary's native roles, headings, labels and values with its document identity.
+Use the hierarchy to associate repeated labels and records and bind that capture
+to the screenshot the local model reviews. Compare the observed answers with
+the immutable expected packet. BrowserGym's task validator and Playwright's
+accessibility-tree assertions provide reference designs for these two checks.
+[BrowserGym task validation](https://browsergym.readthedocs.io/latest/examples/create_custom_task.html)
+· [Playwright accessibility snapshots](https://playwright.dev/docs/aria-snapshots)
+
+Freeze acceptance cases for a complete summary, a missing required answer,
+duplicate labels in different sections, a changed value and a replaced
+document during review. Keep the fixture's independent truth outside the
+model-visible prompt. Verification remains read-only and saves the evidence
+for each mismatch or unresolved item.
+
 ### R04.5 — Recovery and useful autonomy
 
 Persist stage boundaries and safe read-only resume points. A restart may

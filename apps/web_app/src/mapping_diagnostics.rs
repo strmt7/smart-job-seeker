@@ -14,7 +14,7 @@ struct State {
 #[derive(Clone, Default)]
 pub(crate) struct Capture(Arc<Mutex<State>>);
 impl Capture {
-    pub(crate) fn observe(&self, schema: &str, native: &Value) {
+    pub(crate) fn observe(&self, schema: &str, native: &Value, request: &Value) {
         let Ok(mut state) = self.0.lock() else { return };
         if state.records.len() == RECORDS {
             state.omitted = state.omitted.saturating_add(1);
@@ -33,6 +33,38 @@ impl Capture {
             "response_truncated":response.is_some_and(|s|s.len()>prefix.unwrap_or("").len()),
             "done":native["done"].as_bool(),"done_reason":native["done_reason"].as_str().map(|s|s.chars().take(64).collect::<String>()),
             "thinking_bytes":native["thinking"].as_str().map(str::len)});
+        let decoding: serde_json::Map<String, Value> = [
+            "temperature",
+            "top_p",
+            "top_k",
+            "min_p",
+            "presence_penalty",
+            "repeat_penalty",
+            "seed",
+            "num_predict",
+            "num_ctx",
+        ]
+        .into_iter()
+        .filter_map(|field| {
+            let value = &request["options"][field];
+            value.is_number().then(|| (field.into(), value.clone()))
+        })
+        .collect();
+        let thinking = match &request["think"] {
+            value @ Value::Bool(_) => value.clone(),
+            value @ Value::String(text)
+                if matches!(text.as_str(), "low" | "medium" | "high" | "xhigh") =>
+            {
+                value.clone()
+            }
+            _ => Value::Null,
+        };
+        record["request"] = json!({
+            "sha256":serde_json::to_vec(request).ok().map(|bytes|waypoint_domain::sha256_hex(&bytes)),
+            "prompt_sha256":request["prompt"].as_str().map(|text|waypoint_domain::sha256_hex(text.as_bytes())),
+            "requested_decoding":decoding,
+            "requested_thinking":thinking,
+        });
         for key in [
             "eval_count",
             "prompt_eval_count",
@@ -73,7 +105,9 @@ mod tests {
     fn native_response_and_completion_are_retained_without_private_context() {
         let capture = Capture::default();
         let native = json!({"response":"{broken","done":true,"done_reason":"length","eval_count":512,"thinking":"private internal text","context":[1,2,3],"prompt":"private prompt","headers":{"secret":"must not retain"}});
-        capture.observe("form_mapping", &native);
+        let request = json!({"prompt":"private request prompt","think":false,
+            "options":{"temperature":0.7,"num_ctx":16384,"unrecognized":"private option"}});
+        capture.observe("form_mapping", &native, &request);
         let value = capture.finish();
         let row = &value["records"][0];
         assert_eq!(row["response"], "{broken");
@@ -83,11 +117,26 @@ mod tests {
             row["response_sha256"],
             waypoint_domain::sha256_hex(b"{broken")
         );
+        assert_eq!(
+            row["request"]["sha256"],
+            waypoint_domain::sha256_hex(&serde_json::to_vec(&request).unwrap())
+        );
+        assert_eq!(
+            row["request"]["prompt_sha256"],
+            waypoint_domain::sha256_hex(b"private request prompt")
+        );
+        assert_eq!(
+            row["request"]["requested_decoding"],
+            json!({"temperature":0.7,"num_ctx":16384})
+        );
+        assert_eq!(row["request"]["requested_thinking"], false);
         for secret in [
             "private internal text",
             "private prompt",
             "must not retain",
             "context",
+            "private request prompt",
+            "private option",
         ] {
             assert!(!value["records"].to_string().contains(secret));
         }
@@ -98,7 +147,7 @@ mod tests {
         let native = json!({"response":"é".repeat(12000),"done":false});
         let original = native.clone();
         for _ in 0..RECORDS + 3 {
-            capture.observe("form_mapping", &native);
+            capture.observe("form_mapping", &native, &Value::Null);
         }
         let result = capture.finish();
         let rows = result["records"].as_array().unwrap();

@@ -53,7 +53,7 @@
         "docs/g1/CHECKED_HISTORY_REHEARSAL_2026-11-14.md",
         "docs/g1/REVIEWED_QUALIFICATION_ANSWERS_2026-11-14.md"
       ],
-      "next_action": "Compare source-bound mapping requests and effective decoding for isolated and in-sequence fields. The private Qwen runner now starts and drains on the current host. The two full rehearsals verified 7 of 8 fields and retained the last review decision. The focused last section verified its one field. Distinguish model uncertainty from explicit sensitive or third-party review, qualify changes on unchanged full and held-out cases, and replace the attempt-wide pre-review memory recovery count with a shared deadline and fresh field evidence. Whole-product runtime consistency remains open.",
+      "next_action": "Qualify reproducible literal vision on the byte-identical last-name image pair with divergent results. Separate literal transcription from scene interpretation and score both omissions and wrong values before promotion. Contact decisions now separate uncertainty and explicit review. One of two unchanged full replays verified all eight fields and the expected repeat stop. The isolated and in-sequence final binding used identical mapping requests. Exercise the deferred-field branch with native Qwen on held-out cases. Replace the attempt-wide pre-review memory recovery count with a shared deadline and fresh field evidence.",
       "execution_batch": "A",
       "steps": [
         "Measure native observations and browser-operation cancellation/cleanup latency without blocking owner controls.",

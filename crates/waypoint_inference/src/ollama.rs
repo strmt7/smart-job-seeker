@@ -124,7 +124,7 @@ const PROBE_TIMEOUT_MS: u64 = 20_000;
 const GENERATION_PROBE_TIMEOUT_MS: u64 = 90_000;
 const GENERATE_TIMEOUT_MS: u64 = 300_000;
 
-type ResponseObserver = Box<dyn FnMut(&str, &Value) + Send>;
+type ResponseObserver = Box<dyn FnMut(&str, &Value, &Value) + Send>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Context {
@@ -204,7 +204,18 @@ impl OllamaInference {
     /// Opt-in native generation diagnostics, before completion/JSON validation.
     /// The caller must bound and protect retained data. No prompt is supplied;
     /// observation never changes validation or grants permission to act.
-    pub fn set_response_observer(&mut self, observer: impl FnMut(&str, &Value) + Send + 'static) {
+    pub fn set_response_observer(
+        &mut self,
+        mut observer: impl FnMut(&str, &Value) + Send + 'static,
+    ) {
+        self.set_generation_observer(move |name, native, _| observer(name, native));
+    }
+
+    /// Observe the native response and the unchanged JSON request used for it.
+    pub fn set_generation_observer(
+        &mut self,
+        observer: impl FnMut(&str, &Value, &Value) + Send + 'static,
+    ) {
         self.response_observer = Some(Box::new(observer));
     }
 
@@ -331,7 +342,7 @@ impl OllamaInference {
         });
         let out = self.post_json("/api/generate", &body, GENERATE_TIMEOUT_MS)?;
         if let Some(observer) = &mut self.response_observer {
-            observer(schema_name, &out);
+            observer(schema_name, &out, &body);
         }
         if self.cancelled() {
             return Err(InferenceError::Cancelled);
@@ -521,7 +532,7 @@ impl Inference for OllamaInference {
         };
         let out = self.post_json("/api/generate", &body, timeout)?;
         if let Some(observer) = &mut self.response_observer {
-            observer(purpose, &out);
+            observer(purpose, &out, &body);
         }
         if self.cancelled() {
             return Err(InferenceError::Cancelled);

@@ -1380,7 +1380,9 @@ pub(crate) fn research_recorded_issue(
     let capture = crate::mapping_diagnostics::Capture::default();
     let observer = capture.clone();
     let mut result = with_recorded_inference(model, addr, |inference| {
-        inference.set_response_observer(move |schema, native| observer.observe(schema, native));
+        inference.set_generation_observer(move |schema, native, request| {
+            observer.observe(schema, native, request)
+        });
         crate::form_research::run(inference, directory, profile, context, guard)
     })?;
     result["diagnostics"] = capture.finish();
@@ -1396,7 +1398,9 @@ pub(crate) fn propose_recorded_facts(
     let capture = crate::mapping_diagnostics::Capture::default();
     let observer = capture.clone();
     let plan = with_recorded_inference(model, addr, |inference| {
-        inference.set_response_observer(move |schema, native| observer.observe(schema, native));
+        inference.set_generation_observer(move |schema, native, request| {
+            observer.observe(schema, native, request)
+        });
         crate::form_preview::suggest_for_recorded_form(form.clone(), inference, profile)
     });
     RecordedFactPlan {
@@ -1415,7 +1419,9 @@ pub(crate) fn propose_recorded_history(
     let capture = crate::mapping_diagnostics::Capture::default();
     let observer = capture.clone();
     let mut result = with_recorded_inference(model, addr, |inference| {
-        inference.set_response_observer(move |schema, native| observer.observe(schema, native));
+        inference.set_generation_observer(move |schema, native, request| {
+            observer.observe(schema, native, request)
+        });
         crate::history_batch::propose(
             inference,
             fields,
@@ -1437,7 +1443,9 @@ pub(crate) fn propose_recorded_qualifications(
     let capture = crate::mapping_diagnostics::Capture::default();
     let observer = capture.clone();
     let mut result = with_recorded_inference(model, addr, |inference| {
-        inference.set_response_observer(move |schema, native| observer.observe(schema, native));
+        inference.set_generation_observer(move |schema, native, request| {
+            observer.observe(schema, native, request)
+        });
         crate::rehearsal_facts::propose(inference, fields, facts)
     })?;
     result["diagnostics"] = capture.finish();
