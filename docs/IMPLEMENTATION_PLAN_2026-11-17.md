@@ -54,18 +54,52 @@ Qwen-specific; candidate truth, browser actions, documents, archives and policy
 are not. Additional backends must satisfy the same contracts rather than mimic
 an unsupported Qwen effort value or output parser.
 
+### Integration decisions after reviewing the full workspace
+
+Use one attempt identity from job selection through the application record.
+Bind it to the observed role, the current candidate revision and the exact
+materials. Discovery, fit, tailoring, form completion and email preparation can
+run independently, but the attempt must have a single source for each decision
+and one current outcome. Local writes can be resumed from validated checkpoints.
+An uncertain external write requires reconciliation before any subsequent action.
+
+Treat each model decision as a proposal with a distinct verification step. The
+model interprets the question, its period and its scope. The application resolves
+that interpretation against exact native controls and reviewed sources. For
+example, an explicitly requested current role can match a single checked ongoing
+record. Two ongoing records require further evidence about which role is meant.
+When a scalar proposal omits a literal unit, recover it from the native question
+only if the wording establishes one. Retain the original response and require
+the same fact, unit, field constraints and independent semantic check used for
+any other proposal.
+
+Run focused reasoning after the ordinary checks so a recheck cannot consume the
+budget for already proposed answers. Prioritize required unresolved questions.
+Preserve first-pass abstentions and separate the reason for a failed recheck.
+Choose completion and accuracy metrics for each stage before introducing more
+branches or extending model budgets. Apply this policy to document repairs,
+page transitions and experience reuse as those paths move to the shared runtime.
+
+Distinguish observed progress, unresolved required work and final review in the
+interface. An unsupported route should still yield useful artifacts and a clear
+next manual action. A section transition counts only after native state and
+visual evidence confirm it. Check the final review independently against the
+whole attempt. Use permitted pages to evaluate reachability and isolated
+fictional forms to measure interactions and unexpected transitions.
+
 ## Execution order and work admission
 
-1. **Finish and record the current Qwen batch.** Preserve the completed failed
-   cases, the native 256k/F16/Q8 capacity trials, the current escalation result,
-   all source/configuration identities and native teardown. Keep active-context
-   and requested-capacity statements distinct.
+1. **Finish the current Qwen answer requalification.** Replay the frozen mixed
+   and varied cases with the disjoint contact response. Retain the initial
+   7/9 field result, the evaluator binding failure and the prelaunch resource
+   refusals. Use the same model/context and require owned teardown before
+   comparing results. Keep 256k capacity evidence separate from task accuracy.
 2. **R04.1 and R03.1: repair coverage and structural perception.** First account
    for every offered question and add bounded deliberative repair for grounded
-   omissions (current-record ambiguity and missing question units). Replace punctuation-sensitive
+   omissions. The current-record and quantity changes have scoped regression
+   evidence and one native observation. Replace punctuation-sensitive
    model-written field paths with typed section/leaf observations and independent
-   native resolution. This addresses the actual Qwen integration failure before
-   changing more model settings.
+   native resolution.
 3. **R01.1 and R11.1: unify runtime profiles and admission.** Connect the proven
    Q8/256k configuration through an owned, resource-aware product runtime, then
    make every inference consumer use the selected/default profile consistently.
@@ -683,10 +717,23 @@ native context and recommended generation controls. Our actual 256k allocation
 trials and retained task failures take precedence over an assumption that more
 context or effort guarantees improvement.
 
+Simplify's documentation describes continuous autofill on supported pages,
+manual fallback for unsupported forms and a final review step. Use those as
+workflow comparison points. Test against changing native layouts and keep
+records usable after a failure. [Simplify Copilot documentation](https://help.simplify.jobs/en/articles/2415391-use-copilot-to-autofill-applications)
+
+Bound rechecks by specific failed criteria and retain the first outcome. Use
+structured model output for typed proposals and verify the meaning against local
+evidence. [Building effective agents](https://www.anthropic.com/research/building-effective-agents), [Ollama structured outputs](https://docs.ollama.com/capabilities/structured-outputs)
+
 These primary pages were read through bounded isolated captures on
 17 November. Stagehand capture SHA-256:
 `692f6d609dd44cc4a7db6fd315617ca83c8b3756619696a1ed4a0bce8b3c89b8`;
 AgentLab capture:
 `a7fd56a6f636846aa9343eaf329d0d48937f0d0fb5312077cddf991068f0bd3a`.
+Simplify, Anthropic and Ollama structured-output captures respectively:
+`944a5aa6b9ab520c2b94e48330f3a2677b9cabec902f8f5f6cf4b69666ae7ae5`,
+`3ba5d890c6f91feca3db914a9e6fb5084afefbc76285c314c42c3c14009d91d5` and
+`16da72be78168122a06b2ca37bcfbbfaf7ea3ba6da58b38772970bd0a5e87210`.
 The current batch adopts architectural ideas, not their code. Any later code or
 tool adoption requires exact-source/license review and free-runtime verification.

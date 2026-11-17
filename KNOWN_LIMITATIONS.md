@@ -8,6 +8,13 @@ independent real-form no-send isolation remain open. No release readiness is
 claimed. Older dated results below are historical rather than current global
 acceptance.
 
+The [grounded-answer checkpoint](docs/g1/GROUNDED_ANSWERS_2026-11-17.md)
+verified the current employer and exact duration in the managed Qwen replay.
+The run verified 7/9 known fields and left both unknowns blank. The contact
+contract and later saved-view evidence have passing local regressions. Native
+Qwen contact requalification and the varied case await admitted RAM. No whole
+workflow or held-out case was qualified in this checkpoint.
+
 The 17 November native 256k F16 allocation failure also exposed a peak-job
 observation above its configured ceiling and an initial teardown observation
 that conflicted with root-exit accounting. A later native PID/listener check was

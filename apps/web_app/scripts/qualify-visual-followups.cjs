@@ -21,6 +21,9 @@ async function bounded(promise,label,ms=15000){let timer;try{return await Promis
  if(options['source-assets'])await context.route(origin+'/app.js',route=>route.fulfill({status:200,contentType:'application/javascript; charset=utf-8',body:fs.readFileSync(path.join(repo,'apps/web_app/web/app.js'))}));
  const page=await context.newPage();page.setDefaultTimeout(12000);page.on('pageerror',e=>evidence.errors.push(e.message));await page.goto(address);await page.waitForFunction(()=>typeof visualAutoRetryCandidates==='function');
  const served=await page.evaluate(async()=>{const response=await fetch('/app.js');return {status:response.status,body:await response.text()};});assert.equal(served.status,200);assert.equal(crypto.createHash('sha256').update(served.body).digest('hex'),digest(path.join(repo,'apps/web_app/web/app.js')),options['source-assets']?'explicit source app.js is served':'compiled app serves current UI source');
+ const copyAsset=await page.evaluate(async()=>{const response=await fetch('/source-copy.js');return {status:response.status,body:await response.text()};});
+ assert.equal(copyAsset.status,200);
+ assert.equal(crypto.createHash('sha256').update(copyAsset.body).digest('hex'),digest(path.join(repo,'apps/web_app/web/source-copy.js')),'compiled app serves current saved-page renderer');
  async function captureViewport(name){
   await page.bringToFront();await bounded(page.evaluate(async()=>{await document.fonts.ready;await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));}),'Screenshot paint');
   const session=await context.newCDPSession(page);let capture,metrics;try{metrics=await session.send('Page.getLayoutMetrics');capture=await session.send('Page.captureScreenshot',{format:'png',fromSurface:true,captureBeyondViewport:false});}finally{await session.detach();}
@@ -128,6 +131,64 @@ async function bounded(promise,label,ms=15000){let timer;try{return await Promis
   evidence.cases.push(`reviewed qualification provenance and revision warning at ${width}px`);
   if(width===390||width===1440)await captureViewport(`facts-result-${width}.png`);
  }
+ const laterImage={name:'0100.png',sha256:crypto.createHash('sha256').update(Buffer.from(crops[0],'base64')).digest('hex'),image_base64:crops[0]};
+ await page.evaluate(async image=>{
+  const host=element('section','','answer-draft');
+  host.id='later-rehearsal-evidence';
+  host.style.padding='20px';
+  const earlier=Array.from({length:8},(_,index)=>({view:1,label:`Earlier answer ${index+1}`,kind:'text',status:'visually_matched'}));
+  const view=window.WaypointSourceCopies.previewView({
+   views:[
+    {kind:'page'},{kind:'unsupported'},
+    ...Array.from({length:6},(_,index)=>({kind:'page',section:index+2})),
+    {kind:'page',section:8,field_count:2,fields:[{label:'Employer name',required:true},{label:'Job title',required:true}]},
+   ],
+   rehearsal:{
+    scope:'fictional_saved_form',
+    fields:[
+     ...earlier,
+     {view:9,label:'Employer name',kind:'text',status:'visually_matched',native_verified:true,image:image.name,sha256:image.sha256},
+     {view:9,label:'Job title',kind:'text',status:'before_entry_review_required'},
+    ],
+    sections:[{view:9,status:'stopped',reason:'required_fields_unverified'}],
+   },
+  },element,{inline:true,jobId:'fictional-job',attemptId:'fictional-rehearsal',api:async(route,body)=>{
+   if(route!=='/api/attempts/screenshot'||body.id!=='fictional-job'||body.attempt_id!=='fictional-rehearsal'||body.name!==image.name)throw Error('Saved image identity changed');
+   return image;
+  }});
+  host.append(view);
+  document.querySelector('#workspace-pane').append(host);
+ },laterImage);
+ const later=page.locator('#later-rehearsal-evidence');
+ const savedViews=later.getByRole('combobox',{name:'Saved page view'});
+ assert.equal(await savedViews.locator('option').count(),8);
+ await savedViews.selectOption('8');
+ assert.equal(await later.getByText('Employer name · Text and image match',{exact:true}).count(),1);
+ assert.equal(await later.getByText('Job title · Visual review stopped entry before any value was entered',{exact:true}).count(),1);
+ assert.equal(await later.getByText('Required fields need review before continuing.',{exact:true}).count(),1);
+ assert.equal(await later.getByText('Earlier answer 1',{exact:false}).count(),0);
+ await later.getByRole('button',{name:'View field image',exact:true}).click();
+ await later.locator('img').evaluate(image=>image.decode());
+ for(const width of [320,390,1440]){
+  await resizeViewport({width,height:1000});
+  await later.scrollIntoViewIfNeeded();
+  assert.equal(await later.evaluate(el=>el.scrollWidth>el.clientWidth+1||document.documentElement.scrollWidth>innerWidth+1),false,`Saved evidence overflow at ${width}`);
+  evidence.cases.push(`later saved view and field capture at ${width}px`);
+  if(width!==390)await captureViewport(`later-rehearsal-${width}.png`);
+ }
+ await controller.evaluate(async({origin})=>{
+  const tabs=await chrome.tabs.query({url:origin+'/*'});
+  await chrome.tabs.setZoom(tabs[0].id,2);
+ },{origin});
+ await later.scrollIntoViewIfNeeded();
+ assert.equal(await savedViews.inputValue(),'8');
+ assert.equal(await later.evaluate(el=>el.scrollWidth>el.clientWidth+1||document.documentElement.scrollWidth>innerWidth+1),false,'Saved evidence overflow at 200%');
+ evidence.cases.push('later saved view and field capture at zoom 2');
+ await captureViewport('later-rehearsal-zoom-2.png');
+ await controller.evaluate(async({origin})=>{
+  const tabs=await chrome.tabs.query({url:origin+'/*'});
+  await chrome.tabs.setZoom(tabs[0].id,1);
+ },{origin});
  const correctionId=await page.evaluate(async()=>{
   const value=await api('/api/facts',{text:'Fictional Rust tooling skill'});
   const host=element('section','','answer-draft');host.id='correction-qualification';host.style.padding='20px';

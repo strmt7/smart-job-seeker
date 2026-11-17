@@ -57,11 +57,56 @@ pub(crate) fn propose(
         .and_then(|i| usize::try_from(i).ok())
         .and_then(|i| i.checked_sub(1))
         .and_then(|i| input.facts.get(i));
+    let mut proof = json!({
+        "proposal":raw,
+        "source_sha256":source.map(|s|waypoint_domain::sha256_hex(s.as_bytes())),
+        "field_sha256":field_digest(field)?,
+    });
+    if let Some(unit) = native_question_unit(field).filter(|_| {
+        input.question == field.label
+            && serde_json::from_value::<Projection>(raw.clone())
+                .is_ok_and(|proposal| proposal.kind == "number" && proposal.question_unit.is_none())
+    }) {
+        proof["native_question_unit"] = json!(unit);
+    }
     Ok(Some(
         json!({"text":raw["value"],"facts":raw["source_index"].as_u64().map(|i|vec![i]).unwrap_or_default(),
-        "sources":source.into_iter().collect::<Vec<_>>(),
-        "number_projection":{"proposal":raw,"source_sha256":source.map(|s|waypoint_domain::sha256_hex(s.as_bytes())),"field_sha256":field_digest(field)?}}),
+        "sources":source.into_iter().collect::<Vec<_>>(),"number_projection":proof}),
     ))
+}
+
+/// A surviving model proposal can omit the spelling of an explicit unit.
+/// Recover only a single literal unit in the native question itself. The field
+/// digest binds the quote while the original model response remains intact.
+fn native_question_unit(field: &FormField) -> Option<&str> {
+    let mut question = field.label.as_str();
+    for section in &field.context.sections {
+        if section.inferred {
+            question = question.strip_prefix("Possible section: ")?;
+        }
+        question = question.strip_prefix(&section.label)?.strip_prefix(" — ")?;
+    }
+    let mut units = question
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| crate::draft_task::numeric_unit(&word.to_ascii_lowercase()) != "other");
+    let quote = units.next()?;
+    units.next().is_none().then_some(quote)
+}
+
+fn question_unit<'a>(
+    field: &FormField,
+    proposal: &'a Projection,
+    proof: &'a Value,
+) -> Result<&'a str, String> {
+    match (&proposal.question_unit, proof.get("native_question_unit")) {
+        (Some(unit), None) => Ok(unit),
+        (None, Some(receipt)) => receipt
+            .as_str()
+            .filter(|quote| native_question_unit(field) == Some(*quote))
+            .ok_or_else(|| "Native question unit evidence changed".into()),
+        (None, None) => Err("Question unit is missing".into()),
+        _ => Err("Native question unit evidence changed".into()),
+    }
 }
 
 fn words(text: &str) -> Vec<String> {
@@ -99,10 +144,7 @@ pub(crate) fn validate(field: &FormField, answer: &Value) -> Result<(), String> 
         return Err("Quantity source binding changed".into());
     }
     let value = p.value.as_deref().ok_or("Quantity value is missing")?;
-    let unit_quote = p
-        .question_unit
-        .as_deref()
-        .ok_or("Question unit is missing")?;
+    let unit_quote = question_unit(field, &p, proof)?;
     let subject = p.subject.as_deref().ok_or("Quantity subject is missing")?;
     let unit = crate::draft_task::numeric_unit(&unit_quote.to_ascii_lowercase());
     let subject_words = words(subject);
@@ -198,15 +240,17 @@ pub(crate) fn validate(field: &FormField, answer: &Value) -> Result<(), String> 
 /// A selected citation cannot hide a competing quantity in the reviewed pool.
 /// This conservative comparison does not resolve periods, scope or conversions.
 pub(crate) fn check_context<'a>(
+    field: &FormField,
     answer: &Value,
     facts: impl IntoIterator<Item = &'a str>,
 ) -> Result<(), String> {
-    let p: Projection = serde_json::from_value(answer["number_projection"]["proposal"].clone())
+    let proof = &answer["number_projection"];
+    let p: Projection = serde_json::from_value(proof["proposal"].clone())
         .map_err(|_| "Quantity proposal is invalid")?;
     let subject = words(p.subject.as_deref().ok_or("Quantity subject is missing")?);
+    let unit =
+        crate::draft_task::numeric_unit(&question_unit(field, &p, proof)?.to_ascii_lowercase());
     let value = p.value.ok_or("Quantity value is missing")?;
-    let unit_quote = p.question_unit.ok_or("Quantity unit is missing")?;
-    let unit = crate::draft_task::numeric_unit(&unit_quote.to_ascii_lowercase());
     for fact in facts {
         if contains_words(fact, &subject)
             && crate::draft_task::numeric_literals(fact)
@@ -235,9 +279,10 @@ mod tests {
             "I have 7 years of test tooling experience.",
             "I have 48 months of test tooling experience.",
         ] {
-            assert!(check_context(&answer, [source, other]).is_err());
+            assert!(check_context(&field, &answer, [source, other]).is_err());
         }
         check_context(
+            &field,
             &answer,
             [
                 source,
@@ -305,6 +350,53 @@ mod tests {
                 .unwrap();
             assert_eq!(answer["number_projection"]["proposal"], raw);
             assert!(validate(&field, &answer).is_err());
+        }
+
+        let raw = json!({"kind":"number","source_index":1,"value":"4","question_unit":null,"subject":"test tooling"});
+        let mut repaired = propose(&mut Model(raw.clone()), &field, &input)
+            .unwrap()
+            .unwrap();
+        repaired["selection"]["draft_used_facts"] = json!(input.facts);
+        let proof = &repaired["number_projection"];
+        assert_eq!(proof["proposal"], raw);
+        assert_eq!(proof["native_question_unit"], "Years");
+        validate(&field, &repaired).unwrap();
+        assert!(check_context(
+            &field,
+            &repaired,
+            ["I have 7 years of test tooling experience."]
+        )
+        .is_err());
+        repaired["number_projection"]["native_question_unit"] = json!("years");
+        assert!(
+            validate(&field, &repaired).is_err(),
+            "bind the original quote exactly"
+        );
+
+        for label in [
+            "Training years — Test tooling experience?",
+            "Training years — How many years or months of test tooling experience?",
+        ] {
+            let mut scoped = field.clone();
+            scoped.label = label.into();
+            scoped
+                .context
+                .sections
+                .push(waypoint_applications::form_mapping::FormSection {
+                    id: "fictional-section".into(),
+                    label: "Training years".into(),
+                    inferred: false,
+                });
+            let mut scoped_input = input.clone();
+            scoped_input.question = scoped.label.clone();
+            let mut answer = propose(&mut Model(raw.clone()), &scoped, &scoped_input)
+                .unwrap()
+                .unwrap();
+            answer["selection"]["draft_used_facts"] = json!(scoped_input.facts);
+            assert!(answer["number_projection"]
+                .get("native_question_unit")
+                .is_none());
+            assert!(validate(&scoped, &answer).is_err());
         }
     }
     fn field(question: &str) -> FormField {

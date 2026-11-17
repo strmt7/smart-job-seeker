@@ -309,6 +309,35 @@ function harness(api, onFinished) {
   assert(find(stages,node => node.textContent==='Frame 1 · Qualifications · Section 2'));
   assert(find(stages,node => node.textContent==='Required fields need review before continuing.'));
   assert(find(stages,node => node.textContent==='Later answer · Text verified in form · visual review unavailable'));
+
+  const earlierFields = Array.from({length:8}, (_, index) => ({
+    view:1,label:`Earlier field ${index+1}`,kind:'text',status:'visually_matched'
+  }));
+  const laterEvidence = harness(async () => {}).preview({
+    views:[
+      preview.views[0],{kind:'unknown_view'},
+      ...Array.from({length:7}, (_, index) => ({kind:'page',section:index+2})),
+    ],
+    rehearsal:{
+      scope:'fictional_saved_form',
+      fields:[...earlierFields,{view:9,label:'Later required answer',kind:'text',status:'before_entry_review_required',image:'0100.png',sha256:digest}],
+      visual_gate:{targets:[
+        ...Array.from({length:10}, (_, index) => ({view:1,label:`Earlier target ${index+1}`})),
+        {view:9,label:'Later target',status:'visually_matched',image:'0030.png',sha256:digest},
+      ]},
+      sections:[{view:9,status:'stopped',reason:'required_fields_unverified'}],
+    },
+  }, {});
+  const laterSelect = find(laterEvidence, node => node.tag==='select');
+  assert.equal(laterSelect.children.length,8,'All saved views remain available');
+  laterSelect.value='8';
+  laterSelect.listeners.change();
+  assert(find(laterEvidence,node => node.textContent==='Later required answer · Visual review stopped entry before any value was entered'));
+  assert(find(laterEvidence,node => node.textContent.includes('Later target · Target and image match')));
+  assert(find(laterEvidence,node => node.textContent==='Required fields need review before continuing.'));
+  assert(button(laterEvidence,'View field image'));
+  assert(button(laterEvidence,'View target image'));
+  assert(!find(laterEvidence,node => node.textContent.includes('Earlier field')));
 })().catch(error=>{console.error(error);process.exitCode=1;});
 
 (async () => {

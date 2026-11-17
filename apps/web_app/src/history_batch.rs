@@ -14,6 +14,8 @@ pub const MAX_CALLS: usize = 32;
 const FIELDS_PER_CALL: usize = 16;
 const PROMPT_BYTES: usize = 12000;
 const TIME_BUDGET: Duration = Duration::from_secs(240);
+const MAX_CLASSIFICATION_RECHECKS: usize = 2;
+const RECHECK_FIELDS: usize = 4;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -149,11 +151,45 @@ fn validate_output(value: Value, fields: &[(usize, &FormField)]) -> Result<Vec<D
     Ok(output.decisions)
 }
 
+/// Revisit interpretation only. Saved records are resolved by the same rules
+/// as the first pass, and every resulting value still requires its own audit.
+fn recheck_classification(
+    model: &mut dyn Inference,
+    fields: &[(usize, &FormField)],
+) -> Result<Option<Vec<Decision>>, String> {
+    let request = format!(
+        "Reconsider just these questions which the first pass found ambiguous. \
+         Distinguish a clear request for a record component from uncertainty about \
+         which saved record will supply it. Resolve the question's meaning only. \
+         Keep an abstention if the requested subject, period or component is unclear. \
+         Return only a JSON object with a decisions array. Each decision contains \
+         exactly field, record, component and reason. Do not add prose or Markdown.\n{}",
+        prompt(fields)
+    );
+    if request.len() > 8000 {
+        return Err("History recheck exceeds the local context budget".into());
+    }
+    // This is a short, independent decision rather than an open-ended plan.
+    // Leave enough of the history budget for its required answer checks.
+    let budget = model.advice_token_budget().min(1536);
+    model
+        .generate_advice("history_classification_recheck", &request, budget)
+        .map_err(|error| error.to_string())?
+        .map(|(text, _)| {
+            let value = serde_json::from_str(&text)
+                .map_err(|_| "History recheck did not return complete JSON")?;
+            validate_output(value, fields)
+        })
+        .transpose()
+}
+
 struct Candidate {
     index: usize,
     proposal: Value,
     audit: Value,
 }
+
+type AuditedCandidate = (usize, Result<Value, String>);
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AuditOutput {
@@ -198,19 +234,256 @@ fn audit_output(value: Value, candidates: &[&Candidate]) -> Result<Vec<AuditDeci
     }
     Ok(result.decisions)
 }
-fn stop_reason(control: &Control, started: Instant, calls: usize) -> Option<&'static str> {
-    if control.cancelled() {
-        Some("cancelled")
-    } else if started.elapsed() > TIME_BUDGET {
-        Some("time_budget")
-    } else if calls >= MAX_CALLS {
-        Some("model_call_budget")
-    } else {
-        None
-    }
-}
 fn defer(field: &FormField, reason: &str) -> Value {
     json!({"selector":field.selector,"label":field.label,"reason":reason})
+}
+
+fn ground_decision(
+    index: usize,
+    field: &FormField,
+    records: &[SelectedRecord],
+    decision: &Decision,
+    rechecked: bool,
+) -> Result<Candidate, String> {
+    if crate::suggestions::names_other_person(&field.label) {
+        return Err("wrong_subject".into());
+    }
+    let (Some(role), Some(component)) = (&decision.record, &decision.component) else {
+        return Err(decision.reason.clone());
+    };
+    let (kind, basis) = role.split_once('_').ok_or("Invalid history role")?;
+    let record = crate::history_record_choice::resolve_classification(records, kind, basis)
+        .map_err(|_| "record_selection_ambiguous")?;
+    let mut proposal = crate::history_advice::grounded_proposal(field, record, component)
+        .ok_or("saved_value_or_type_unavailable")?;
+    proposal["selection"] = json!({
+        "basis":basis,"kind":kind,"field_reference":decision.field,"scope":"question",
+        "question_sha256":question_digest(field)?,
+    });
+    if rechecked {
+        proposal["selection"]["classification_origin"] = json!("deliberative_recheck");
+    }
+    let audit = json!({
+        "field":decision.field,"question":field.label,"type":field_kind(field),
+        "autocomplete":field.autocomplete,"choices":choices(field),
+        "sections":field.context.sections.iter().map(|section| &section.label).collect::<Vec<_>>(),
+        "component":component,"value":proposal["value"],
+        "source":{
+            "kind":record.kind,"label":record.label,"confirmed_ongoing":record.ongoing_confirmed,
+            "start_date":record.values.get("start_date"),"end_date":record.values.get("end_date"),
+        },
+    });
+    Ok(Candidate {
+        index,
+        proposal,
+        audit,
+    })
+}
+
+struct HistoryPlan<'a> {
+    fields: &'a [FormField],
+    control: &'a Control,
+    started: Instant,
+    calls: usize,
+    proposals: Vec<Value>,
+    manual: Vec<Value>,
+    issues: Vec<Value>,
+}
+
+impl HistoryPlan<'_> {
+    fn stop_reason(&self) -> Option<&'static str> {
+        if self.control.cancelled() {
+            Some("cancelled")
+        } else if self.started.elapsed() > TIME_BUDGET {
+            Some("time_budget")
+        } else if self.calls >= MAX_CALLS {
+            Some("model_call_budget")
+        } else {
+            None
+        }
+    }
+
+    fn report(&self) -> Result<(), String> {
+        self.control.report(
+            self.proposals.len() + self.manual.len(),
+            self.fields.len(),
+            self.proposals.len(),
+            self.manual.len(),
+            self.calls,
+        )
+    }
+
+    fn record_issue(&mut self, error: &str) {
+        self.issues
+            .push(json!({"call":self.calls,"error":error.chars().take(240).collect::<String>()}));
+    }
+
+    fn audit(
+        &mut self,
+        model: &mut dyn Inference,
+        candidates: &[Candidate],
+    ) -> Result<Vec<AuditedCandidate>, String> {
+        let mut checked = Vec::new();
+        while checked.len() < candidates.len() {
+            let remaining = &candidates[checked.len()..];
+            if let Some(reason) = self.stop_reason() {
+                checked.extend(
+                    remaining
+                        .iter()
+                        .map(|item| (item.index, Err(reason.into()))),
+                );
+                break;
+            }
+            let mut audit = Vec::new();
+            for candidate in remaining.iter().take(FIELDS_PER_CALL) {
+                audit.push(candidate);
+                if audit_prompt(&audit).len() > PROMPT_BYTES {
+                    audit.pop();
+                    break;
+                }
+            }
+            if audit.is_empty() {
+                checked.push((
+                    remaining[0].index,
+                    Err("answer_check_context_budget".into()),
+                ));
+                continue;
+            }
+            self.calls += 1;
+            self.report()?;
+            let generated = model.generate_structured(
+                "history_form_answer_check",
+                &audit_prompt(&audit),
+                u32::try_from(audit.len() * 50 + 100).unwrap_or(900),
+            );
+            let verified = if self.control.cancelled() {
+                Err("Answer check cancelled".into())
+            } else {
+                generated
+                    .map_err(|error| error.to_string())
+                    .and_then(|(value, _)| audit_output(value, &audit))
+            };
+            match verified {
+                Ok(decisions) => {
+                    for decision in decisions {
+                        let candidate = audit
+                            .iter()
+                            .find(|item| decision.field == format!("f{}", item.index + 1))
+                            .ok_or("Answer check field changed")?;
+                        let result = if decision.verdict == "supported" {
+                            let mut proposal = candidate.proposal.clone();
+                            proposal["semantic_check"] =
+                                json!({"status":"supported","advisory":true});
+                            Ok(proposal)
+                        } else {
+                            Err(format!("answer_check_{}", decision.verdict))
+                        };
+                        checked.push((candidate.index, result));
+                    }
+                }
+                Err(error) => {
+                    self.record_issue(&error);
+                    let reason = if self.control.cancelled() {
+                        "cancelled"
+                    } else {
+                        "answer_check_failed"
+                    };
+                    checked.extend(audit.iter().map(|item| (item.index, Err(reason.into()))));
+                }
+            }
+        }
+        Ok(checked)
+    }
+
+    // Reconsider unresolved classifications only after the ordinary pass.
+    // Advice or an exhausted repair budget cannot discard audited proposals.
+    fn recheck(
+        &mut self,
+        model: &mut dyn Inference,
+        records: &[SelectedRecord],
+    ) -> Result<Vec<Value>, String> {
+        let ambiguous: HashSet<_> = self
+            .manual
+            .iter()
+            .filter(|review| review["reason"] == "ambiguous")
+            .filter_map(|review| review["selector"].as_str())
+            .collect();
+        let mut pending: Vec<_> = self
+            .fields
+            .iter()
+            .enumerate()
+            .filter(|(_, field)| ambiguous.contains(field.selector.as_str()))
+            .collect();
+        pending.sort_by_key(|(_, field)| !field.required);
+        let mut receipts = Vec::new();
+        for focus in pending
+            .chunks(RECHECK_FIELDS)
+            .take(MAX_CLASSIFICATION_RECHECKS)
+        {
+            if self.calls + 1 >= MAX_CALLS || self.stop_reason().is_some() {
+                break;
+            }
+            let mut receipt = json!({
+                "selectors":focus.iter().map(|(_, field)| &field.selector).collect::<Vec<_>>(),
+                "initial_reason":"ambiguous",
+            });
+            self.calls += 1;
+            self.report()?;
+            let decisions = match recheck_classification(model, focus) {
+                Ok(Some(decisions)) if !self.control.cancelled() => decisions,
+                other => {
+                    match other {
+                        Ok(Some(_)) => receipt["status"] = json!("cancelled"),
+                        Ok(None) => {
+                            self.calls -= 1;
+                            receipt["status"] = json!("unavailable");
+                        }
+                        Err(error) => {
+                            self.record_issue(&error);
+                            receipt["status"] = json!("failed");
+                        }
+                    }
+                    receipts.push(receipt);
+                    continue;
+                }
+            };
+            let mut candidates = Vec::new();
+            let mut outcomes = Vec::new();
+            for decision in decisions {
+                let (index, field) = focus
+                    .iter()
+                    .find(|(index, _)| decision.field == format!("f{}", index + 1))
+                    .ok_or("History recheck field changed")?;
+                match ground_decision(*index, field, records, &decision, true) {
+                    Ok(candidate) => candidates.push(candidate),
+                    Err(reason) => outcomes.push(defer(field, &reason)),
+                }
+            }
+            for (index, result) in self.audit(model, &candidates)? {
+                let field = &self.fields[index];
+                match result {
+                    Ok(proposal) => {
+                        let position = self
+                            .manual
+                            .iter()
+                            .position(|review| {
+                                review["selector"] == field.selector
+                                    && review["reason"] == "ambiguous"
+                            })
+                            .ok_or("History recheck lost the original review outcome")?;
+                        self.manual.remove(position);
+                        self.proposals.push(proposal);
+                        outcomes.push(defer(field, "supported"));
+                    }
+                    Err(reason) => outcomes.push(defer(field, &reason)),
+                }
+            }
+            receipt["status"] = json!("complete");
+            receipt["outcomes"] = json!(outcomes);
+            receipts.push(receipt);
+        }
+        Ok(receipts)
+    }
 }
 
 pub fn propose(
@@ -223,42 +496,46 @@ pub fn propose(
     if records.is_empty() || records.len() > 40 {
         return Err("Add checked career history first".into());
     }
-    let started = Instant::now();
-    let mut proposals = Vec::new();
-    let mut manual = Vec::new();
-    let mut calls = 0;
+    let mut plan = HistoryPlan {
+        fields,
+        control,
+        started: Instant::now(),
+        calls: 0,
+        proposals: Vec::new(),
+        manual: Vec::new(),
+        issues: Vec::new(),
+    };
     let mut cursor = 0;
-    let mut issues = Vec::new();
-    control.report(0, fields.len(), 0, 0, 0)?;
+    plan.report()?;
     while cursor < fields.len() {
-        if let Some(reason) = stop_reason(control, started, calls) {
-            manual.extend(fields[cursor..].iter().map(|field| defer(field, reason)));
-            cursor = fields.len();
+        if let Some(reason) = plan.stop_reason() {
+            plan.manual
+                .extend(fields[cursor..].iter().map(|field| defer(field, reason)));
             break;
         }
         if crate::suggestions::names_other_person(&fields[cursor].label) {
-            manual.push(defer(&fields[cursor], "wrong_subject"));
+            plan.manual.push(defer(&fields[cursor], "wrong_subject"));
             cursor += 1;
-            control.report(cursor, fields.len(), proposals.len(), manual.len(), calls)?;
+            plan.report()?;
             continue;
         }
         let mut batch = Vec::new();
-        while cursor + batch.len() < fields.len() && batch.len() < FIELDS_PER_CALL {
-            let index = cursor + batch.len();
-            batch.push((index, &fields[index]));
+        for (index, field) in fields.iter().enumerate().skip(cursor).take(FIELDS_PER_CALL) {
+            batch.push((index, field));
             if prompt(&batch).len() > PROMPT_BYTES {
                 batch.pop();
                 break;
             }
         }
         if batch.is_empty() {
-            manual.push(defer(&fields[cursor], "question_context_budget"));
+            plan.manual
+                .push(defer(&fields[cursor], "question_context_budget"));
             cursor += 1;
-            control.report(cursor, fields.len(), proposals.len(), manual.len(), calls)?;
+            plan.report()?;
             continue;
         }
-        calls += 1;
-        control.report(cursor, fields.len(), proposals.len(), manual.len(), calls)?;
+        plan.calls += 1;
+        plan.report()?;
         let generated = model.generate_structured(
             "history_form_mapping",
             &prompt(&batch),
@@ -271,147 +548,63 @@ pub fn propose(
                 .map_err(|error| error.to_string())
                 .and_then(|(value, _)| validate_output(value, &batch))
         };
-        let mut candidates = Vec::new();
-        let mut batch_manual = Vec::new();
-        let mut batch_proposals = Vec::new();
         match decisions {
             Err(error) => {
-                issues.push(
-                    json!({"call":calls,"error":error.chars().take(240).collect::<String>()}),
-                );
+                plan.record_issue(&error);
                 let reason = if control.cancelled() {
                     "cancelled"
                 } else {
                     "model_batch_failed"
                 };
-                batch_manual.extend(batch.iter().map(|(_, field)| defer(field, reason)));
+                plan.manual
+                    .extend(batch.iter().map(|(_, field)| defer(field, reason)));
             }
             Ok(decisions) => {
+                let mut candidates = Vec::new();
                 for decision in decisions {
                     let (index, field) = batch
                         .iter()
                         .find(|(index, _)| decision.field == format!("f{}", index + 1))
                         .ok_or("History field reference changed")?;
-                    if crate::suggestions::names_other_person(&field.label) {
-                        batch_manual.push(defer(field, "wrong_subject"));
-                        continue;
+                    match ground_decision(*index, field, records, &decision, false) {
+                        Ok(candidate) => candidates.push(candidate),
+                        Err(reason) => plan.manual.push(defer(field, &reason)),
                     }
-                    let (Some(role), Some(component)) = (decision.record, decision.component)
-                    else {
-                        batch_manual.push(defer(field, &decision.reason));
-                        continue;
-                    };
-                    let (kind, basis) = role.split_once('_').ok_or("Invalid history role")?;
-                    match crate::history_record_choice::resolve_classification(records, kind, basis)
-                    {
-                        Ok(record) => match crate::history_advice::grounded_proposal(
-                            field, record, &component,
-                        ) {
-                            Some(mut proposed) => {
-                                proposed["selection"] = json!({"basis":basis,"kind":kind,"field_reference":format!("f{}",index+1),"scope":"question"});
-                                candidates.push(Candidate {index:*index,audit:json!({"field":format!("f{}",index+1),"question":field.label,"type":field_kind(field),"autocomplete":field.autocomplete,"choices":choices(field),"sections":field.context.sections.iter().map(|section|&section.label).collect::<Vec<_>>(),"component":component,"value":proposed["value"],"source":{"kind":record.kind,"label":record.label,"confirmed_ongoing":record.ongoing_confirmed,"start_date":record.values.get("start_date"),"end_date":record.values.get("end_date")}}),proposal:proposed});
-                            }
-                            None => {
-                                batch_manual.push(defer(field, "saved_value_or_type_unavailable"))
-                            }
-                        },
-                        Err(_) => batch_manual.push(defer(field, "record_selection_ambiguous")),
+                }
+                for (index, result) in plan.audit(model, &candidates)? {
+                    match result {
+                        Ok(proposal) => plan.proposals.push(proposal),
+                        Err(reason) => plan.manual.push(defer(&fields[index], &reason)),
                     }
                 }
             }
         }
-        let mut checked = 0;
-        while checked < candidates.len() {
-            if let Some(reason) = stop_reason(control, started, calls) {
-                batch_manual.extend(
-                    candidates[checked..]
-                        .iter()
-                        .map(|item| defer(&fields[item.index], reason)),
-                );
-                break;
-            }
-            let mut audit = Vec::new();
-            for candidate in candidates.iter().skip(checked).take(FIELDS_PER_CALL) {
-                audit.push(candidate);
-                if audit_prompt(&audit).len() > PROMPT_BYTES {
-                    audit.pop();
-                    break;
-                }
-            }
-            if audit.is_empty() {
-                batch_manual.push(defer(
-                    &fields[candidates[checked].index],
-                    "answer_check_context_budget",
-                ));
-                checked += 1;
-                continue;
-            }
-            calls += 1;
-            control.report(cursor, fields.len(), proposals.len(), manual.len(), calls)?;
-            let generated = model.generate_structured(
-                "history_form_answer_check",
-                &audit_prompt(&audit),
-                u32::try_from(audit.len() * 50 + 100).unwrap_or(900),
-            );
-            let verified = if control.cancelled() {
-                Err("Answer check cancelled".into())
-            } else {
-                generated
-                    .map_err(|error| error.to_string())
-                    .and_then(|(value, _)| audit_output(value, &audit))
-            };
-            match verified {
-                Err(error) => {
-                    issues.push(
-                        json!({"call":calls,"error":error.chars().take(240).collect::<String>()}),
-                    );
-                    let reason = if control.cancelled() {
-                        "cancelled"
-                    } else {
-                        "answer_check_failed"
-                    };
-                    batch_manual
-                        .extend(audit.iter().map(|item| defer(&fields[item.index], reason)));
-                }
-                Ok(decisions) => {
-                    for decision in decisions {
-                        let candidate = audit
-                            .iter()
-                            .find(|item| decision.field == format!("f{}", item.index + 1))
-                            .ok_or("Answer check field changed")?;
-                        if decision.verdict == "supported" {
-                            let mut proposed = candidate.proposal.clone();
-                            proposed["semantic_check"] =
-                                json!({"status":"supported","advisory":true});
-                            batch_proposals.push(proposed);
-                        } else {
-                            batch_manual.push(defer(
-                                &fields[candidate.index],
-                                &format!("answer_check_{}", decision.verdict),
-                            ));
-                        }
-                    }
-                }
-            }
-            checked += audit.len();
-        }
-        proposals.extend(batch_proposals);
-        manual.extend(batch_manual);
         cursor += batch.len();
-        control.report(cursor, fields.len(), proposals.len(), manual.len(), calls)?;
+        plan.report()?;
     }
+    let classification_rechecks = plan.recheck(model, records)?;
     let order = |value: &Value| {
         fields
             .iter()
             .position(|field| Some(field.selector.as_str()) == value["selector"].as_str())
             .unwrap_or(usize::MAX)
     };
-    proposals.sort_by_key(order);
-    manual.sort_by_key(order);
-    control.report(cursor, fields.len(), proposals.len(), manual.len(), calls)?;
-    Ok(
-        json!({"mode":"form","entry_label":"saved career history","proposals":proposals,"manual_review":manual,"complete":manual.is_empty(),"cancelled":control.cancelled(),"processed_fields":cursor,"total_fields":fields.len(),"model_calls":calls,"issues":issues,"advisory":true}),
-    )
+    plan.proposals.sort_by_key(order);
+    plan.manual.sort_by_key(order);
+    plan.report()?;
+    Ok(json!({
+        "mode":"form","entry_label":"saved career history","proposals":plan.proposals,
+        "manual_review":plan.manual,"complete":plan.manual.is_empty(),"cancelled":control.cancelled(),
+        "processed_fields":plan.proposals.len()+plan.manual.len(),"total_fields":fields.len(),
+        "model_calls":plan.calls,"issues":plan.issues,"classification_rechecks":classification_rechecks,
+        "advisory":true,
+    }))
+}
+
+fn question_digest(field: &FormField) -> Result<String, String> {
+    serde_json::to_vec(field)
+        .map(|bytes| waypoint_domain::sha256_hex(&bytes))
+        .map_err(|_| "Cannot bind history question".into())
 }
 
 /// Re-resolve every accepted proposal against the immutable checked source.
@@ -446,6 +639,13 @@ pub(crate) fn resolve_checked_proposals(
             || proposal["selection"]["scope"] != "question"
         {
             return Err("History proposal has no independent semantic check".into());
+        }
+        if let Some(digest) = proposal["selection"].get("question_sha256") {
+            if digest.as_str() != Some(question_digest(field)?.as_str()) {
+                return Err("History proposal's inspected question changed".into());
+            }
+        } else if proposal["selection"].get("classification_origin").is_some() {
+            return Err("History recheck has no inspected question binding".into());
         }
         let component = proposal["component"]
             .as_str()
@@ -565,6 +765,127 @@ mod tests {
                     wall_time_ms: 0,
                 },
             ))
+        }
+    }
+
+    struct RecheckModel {
+        normal: Fake,
+        recheck: Value,
+        rechecks: usize,
+    }
+
+    impl Inference for RecheckModel {
+        fn probe(&mut self) -> Result<CapabilityReport, InferenceError> {
+            unreachable!()
+        }
+        fn generate_structured(
+            &mut self,
+            schema: &str,
+            prompt: &str,
+            budget: u32,
+        ) -> Result<(Value, UsageReport), InferenceError> {
+            self.normal.generate_structured(schema, prompt, budget)
+        }
+        fn generate_advice(
+            &mut self,
+            purpose: &str,
+            prompt: &str,
+            _: u32,
+        ) -> Result<Option<(String, UsageReport)>, InferenceError> {
+            assert_eq!(purpose, "history_classification_recheck");
+            assert_eq!(self.normal.calls, 2, "audit the initial match first");
+            assert!(prompt.contains("Name the organization you work for today"));
+            assert!(!prompt.contains("Your position at present"));
+            assert!(!prompt.contains("Secret Fictional"));
+            self.rechecks += 1;
+            Ok(Some((
+                self.recheck.to_string(),
+                UsageReport {
+                    prompt_tokens: 0,
+                    completion_tokens: 0,
+                    wall_time_ms: 0,
+                },
+            )))
+        }
+    }
+
+    #[test]
+    fn history_recheck_requires_unique_current_record_and_independent_support() {
+        let mut questions = fields(2);
+        questions[0].label = "Name the organization you work for today".into();
+        questions[1].label = "Your position at present".into();
+
+        for (duplicate_current, verdict) in [
+            (false, "supported"),
+            (false, "wrong_period"),
+            (true, "supported"),
+        ] {
+            // The initial title question deliberately selects the completed
+            // record when testing two current roles. Its checked result must
+            // survive the independently unresolved organization question.
+            let title_role = if duplicate_current {
+                "employment_latest_completed"
+            } else {
+                "employment_current"
+            };
+            let mut answers = vec![
+                json!({"decisions":[{"field":"f1","record":null,"component":null,"reason":"ambiguous"},decision(2,title_role,"title")]}),
+                json!({"decisions":[{"field":"f2","verdict":"supported"}]}),
+            ];
+            if !duplicate_current {
+                answers.push(json!({"decisions":[{"field":"f1","verdict":verdict}]}));
+            }
+            let mut model = RecheckModel {
+                normal: Fake {
+                    answers,
+                    calls: 0,
+                    cancel: None,
+                },
+                recheck: json!({"decisions":[decision(1,"employment_current","employer")]}),
+                rechecks: 0,
+            };
+            let mut saved = records();
+            let mut variant = questions.clone();
+            if duplicate_current {
+                variant[1].label = "Title in your last completed role".into();
+                let mut concurrent = saved[0].clone();
+                concurrent.id = "d".repeat(32);
+                saved.push(concurrent);
+            }
+            let result = propose(&mut model, &variant, &saved, &Control::default()).unwrap();
+            assert_eq!(model.rechecks, 1);
+            assert!(model.normal.answers.is_empty());
+            let repaired = !duplicate_current && verdict == "supported";
+            let proposals = result["proposals"].as_array().unwrap();
+            assert_eq!(proposals.len(), if repaired { 2 } else { 1 });
+            assert_eq!(proposals.last().unwrap()["selector"], variant[1].selector);
+            assert_eq!(result["processed_fields"], 2);
+            if repaired {
+                assert_eq!(proposals[0]["value"]["text"], saved[0].values["employer"]);
+                assert_eq!(
+                    proposals[0]["selection"]["classification_origin"],
+                    "deliberative_recheck"
+                );
+                assert_eq!(
+                    resolve_checked_proposals(&variant, &saved, &result)
+                        .unwrap()
+                        .len(),
+                    2
+                );
+                variant[0].label = "Company where you previously worked".into();
+                assert!(resolve_checked_proposals(&variant, &saved, &result).is_err());
+            } else {
+                let reason = if duplicate_current {
+                    "record_selection_ambiguous"
+                } else {
+                    "answer_check_wrong_period"
+                };
+                assert_eq!(result["manual_review"][0]["reason"], "ambiguous");
+                assert_eq!(
+                    result["classification_rechecks"][0]["outcomes"][0]["reason"],
+                    reason
+                );
+            }
         }
     }
     fn records() -> Vec<SelectedRecord> {

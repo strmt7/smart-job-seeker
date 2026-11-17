@@ -196,6 +196,7 @@ fn checked_answer(
         }
         crate::qualification_number::validate(field, answer)?;
         crate::qualification_number::check_context(
+            field,
             answer,
             snapshot.facts.iter().map(|f| f.text.as_str()),
         )?;
@@ -267,6 +268,7 @@ pub(crate) fn propose(
             if answer.get("number_projection").is_some() {
                 crate::qualification_number::validate(field, &answer)?;
                 crate::qualification_number::check_context(
+                    field,
                     &answer,
                     snapshot.facts.iter().map(|f| f.text.as_str()),
                 )?;

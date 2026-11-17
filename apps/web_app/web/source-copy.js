@@ -158,8 +158,10 @@
         section.append(el('p', 'A loaded local vision model is required before autofill. Check the model settings.', 'review-label'));
       }
     }
-    const captures = Array.isArray(preview?.views) ? preview.views.filter(view => view && ['page','frame'].includes(view.kind)).slice(0, 7) : [];
-    if (!captures.length) {
+    const captures = Array.isArray(preview?.views) ? preview.views : [];
+    const supportedView = view => view?.kind === 'page' || view?.kind === 'frame';
+    const firstView = captures.findIndex(supportedView);
+    if (firstView === -1) {
       section.append(el('p', 'No view could be saved. Check this record’s screenshots and status.', 'review-label'));
       return section;
     }
@@ -167,6 +169,7 @@
     select.setAttribute('aria-label', 'Saved page view');
     const frames = new Map();
     for (const [index, view] of captures.entries()) {
+      if (!supportedView(view)) continue;
       const scope = count(view.scope_view) || index + 1;
       if (view.kind === 'frame' && !frames.has(scope)) frames.set(scope, frames.size + 1);
       const heading = view.kind === 'page' ? 'Page' : `Frame ${frames.get(scope)} · ${view.label || view.origin || 'Embedded page'}`;
@@ -209,7 +212,7 @@
       imageArea.replaceChildren();
       show.disabled = false;
       details.replaceChildren();
-      if (!view) return;
+      if (!supportedView(view)) return;
       if (view.origin) details.append(el('p', view.origin, 'footnote'));
       const fields = Array.isArray(view.fields) ? view.fields.filter(field => field && typeof field.label === 'string').slice(0, 40) : [];
       const total = count(view.field_count);
@@ -242,7 +245,7 @@
       }
       if (rehearsal) {
         const viewNumber = Number(select.value) + 1;
-        const dialogs = Array.isArray(rehearsal.dialogs) ? rehearsal.dialogs.slice(0,2).filter(action=>action?.view===viewNumber) : [];
+        const dialogs = Array.isArray(rehearsal.dialogs) ? rehearsal.dialogs.filter(action=>action?.view===viewNumber) : [];
         const dialogReasons = {form_changed:'The form changed during dialog review.',interaction_unverified:'The dialog interaction could not be verified.',dialog_changed:'The dialog changed during review.',replay_gap:'The saved page requested an unrecorded response.',document_changed:'The page changed during review.',dialog_remains:'A dialog still needs review.',field_changed:'Page values changed during the dialog check.'};
         for(const action of dialogs){
           const closed = ['fictional_saved_copy_only','offline_saved_copy_only'].includes(action.scope) && action.status==='closed_in_saved_copy' && action.native_closed===true && action.closure_reverified===true
@@ -253,11 +256,11 @@
           if(action.followup_capture==='unavailable')details.append(el('p','The updated form could not be saved. Further entry stopped.','review-label'));
           if(action.image){const button=el('button','View dialog image','button-secondary');button.type='button';button.addEventListener('click',()=>showImage(action,button));details.append(button);}
           const next=count(action.to);
-          if(closed && action.followup_capture==='saved' && next!==null && next>viewNumber && next<=captures.length){
+          if(closed && action.followup_capture==='saved' && next!==null && next>viewNumber && supportedView(captures[next-1])){
             const button=el('button','View updated form','button-secondary');button.type='button';button.addEventListener('click',()=>{select.value=String(next-1);describeSelection();});details.append(button);
           }
         }
-        const factPlan = Array.isArray(rehearsal.fact_plans) ? rehearsal.fact_plans.slice(0, 7).find(plan => plan?.view === viewNumber) : null;
+        const factPlan = Array.isArray(rehearsal.fact_plans) ? rehearsal.fact_plans.find(plan => plan?.view === viewNumber) : null;
         if (factPlan?.status === 'needs_review') {
           details.append(el('p', 'Contact matching needs review; no contact fields were chosen automatically.', 'review-label'));
           if (typeof factPlan.reason === 'string') details.append(el('p', factPlan.reason.slice(0, 500), 'footnote'));
@@ -268,7 +271,7 @@
           for (const warning of warnings.slice(0, 3)) details.append(el('p', warning.slice(0, 500), 'footnote'));
           if (warnings.length > 3 || count(factPlan.omitted_warnings) > 0) details.append(el('p', 'More matching notes are saved in this record.', 'footnote'));
         }
-        for(const plan of (Array.isArray(rehearsal.history_plans)?rehearsal.history_plans:[]).slice(0,24).filter(plan=>plan?.view===viewNumber)) {
+        for(const plan of (Array.isArray(rehearsal.history_plans)?rehearsal.history_plans:[]).filter(plan=>plan?.view===viewNumber)) {
           if(plan.status==='proposed'){
             const total=Array.isArray(plan.plan?.proposals)?plan.plan.proposals.length:0;
             details.append(el('p',`${total} career history suggestion${total===1?'':'s'} prepared. Each entry still needs verification.`,'footnote'));
@@ -277,7 +280,7 @@
           if(plan.archive_error)details.append(el('p','History answer evidence could not be saved. Further entry stopped.','review-label'));
           if(plan.omitted_eligible_fields>0||Array.isArray(plan.entry_deferred)&&plan.entry_deferred.length)details.append(el('p','Some history fields remain outside this rehearsal or need manual handling.','review-label'));
         }
-        for(const plan of (Array.isArray(rehearsal.qualification_plans)?rehearsal.qualification_plans:[]).slice(0,24).filter(plan=>plan?.view===viewNumber)) {
+        for(const plan of (Array.isArray(rehearsal.qualification_plans)?rehearsal.qualification_plans:[]).filter(plan=>plan?.view===viewNumber)) {
           const proposed=Array.isArray(plan.plan?.proposals)?plan.plan.proposals.length:0;
           details.append(el('p',plan.status==='proposed'?`${proposed} answer${proposed===1?'':'s'} prepared from reviewed qualifications.`:'Qualification answers need review.',plan.status==='proposed'?'footnote':'review-label'));
           const unanswered=Array.isArray(plan.plan?.manual_review)?plan.plan.manual_review.length:0;
@@ -285,14 +288,14 @@
           if(plan.archive_error)details.append(el('p','Qualification evidence could not be saved. Further entry stopped.','review-label'));
         }
         if(rehearsal.history_error)details.append(el('p','The saved career history could not be verified.','review-label'));
-        const documentPlan = Array.isArray(rehearsal.attachment_plans) ? rehearsal.attachment_plans.slice(0, 7).find(plan => plan?.view === viewNumber) : null;
+        const documentPlan = Array.isArray(rehearsal.attachment_plans) ? rehearsal.attachment_plans.find(plan => plan?.view === viewNumber) : null;
         if (documentPlan?.status === 'needs_review') {
           details.append(el('p', 'Document matching needs review; no attachment was chosen automatically.', 'review-label'));
         } else if (documentPlan?.status === 'proposed' && Array.isArray(documentPlan.decisions)) {
           const unresolved = documentPlan.decisions.slice(0, 16).filter(decision => decision?.document_id === null).length;
           if (unresolved) details.append(el('p', `${unresolved} upload control${unresolved === 1 ? ' needs' : 's need'} a document choice.`, 'review-label'));
         }
-        const checks = Array.isArray(rehearsal.fields) ? rehearsal.fields.slice(0, 8).filter(field => field?.view === viewNumber) : [];
+        const checks = Array.isArray(rehearsal.fields) ? rehearsal.fields.filter(field => field?.view === viewNumber) : [];
         if (!checks.length) details.append(el('p', 'No fields were tested in this view.', 'footnote'));
         for (const check of checks) {
           const stateLabel = check.kind === 'file' ? 'Attachment' : ['select', 'radio'].includes(check.kind) ? 'Selection' : 'Text';
@@ -334,7 +337,7 @@
             if (blocked) details.append(el('p', `During this check, the saved page blocked ${blocked} request${blocked === 1 ? '' : 's'}. The website response remains unverified.`, 'review-label'));
           }
         }
-        const targets = Array.isArray(rehearsal.visual_gate?.targets) ? rehearsal.visual_gate.targets.slice(0, 10).filter(target => target?.view === viewNumber) : [];
+        const targets = Array.isArray(rehearsal.visual_gate?.targets) ? rehearsal.visual_gate.targets.filter(target => target?.view === viewNumber) : [];
         for (const target of targets) {
           const phase = target.phase === 'before_section' ? 'Before section change' : 'Before entry';
           const state = target.status === 'visually_matched' ? 'Target and image match' : 'Visual inspection needs review';
@@ -349,10 +352,10 @@
           details.append(row);
           appendDetailEvidence(target);
         }
-        const transition = Array.isArray(rehearsal.sections) ? rehearsal.sections.slice(0, 7).find(item => item?.view === viewNumber) : null;
+        const transition = Array.isArray(rehearsal.sections) ? rehearsal.sections.find(item => item?.view === viewNumber) : null;
         if (transition?.status === 'advanced' && typeof transition.control === 'string') {
           const target = captures[(count(transition.to) || 0) - 1];
-          if (target?.section) details.append(el('p', `${transition.control} opened section ${target.section} in the saved copy.`, 'footnote'));
+          if (supportedView(target) && target.section) details.append(el('p', `${transition.control} opened section ${target.section} in the saved copy.`, 'footnote'));
         } else if (transition?.status === 'stopped') {
           const reasons = {
             no_forward_control: 'No further section control was found.',
@@ -396,7 +399,7 @@
         button.disabled = false;
       }
     }
-    select.value = '0';
+    select.value = String(firstView);
     describeSelection();
     return section;
   }
