@@ -392,6 +392,11 @@ used by development tools and tests. Do not add WSL or Docker as product require
   developer's reading alone never supplies a local-model observation. Apply exact
   value checks; only native telephone proof admits separator equivalence, never
   an inferred country prefix or normalization of another field.
+- For literal readback, verify the native entered value and hidden placeholder
+  around the bound detail capture. Keep the visible field label and ordered
+  section headings separate in the model response. Retain the raw observations
+  and compare the visible characters exactly. See
+  [literal field readback](docs/g1/LITERAL_FIELD_READBACK_2026-11-18.md).
 - An iframe's full-box center can be offscreen while its fields are visible.
   Owner availability uses a common ancestor-viewport intersection and native
   hit tests; each actual field still requires complete visual/native checks.

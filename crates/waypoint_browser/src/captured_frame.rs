@@ -143,6 +143,7 @@ pub struct RecordedFieldCapture {
     detail_image: Option<String>,
     detail_error: Option<String>,
     associated_label_detail: bool,
+    native_text_without_placeholder: bool,
     label: String,
     kind: RecordedFieldKind,
     required_marker: bool,
@@ -381,6 +382,13 @@ impl RecordedFieldCapture {
 
     pub fn associated_label_detail(&self) -> bool {
         self.associated_label_detail
+    }
+    /// The detail has a native label binding and a nonempty native control
+    /// value, with the placeholder hidden on both sides of the capture.
+    pub fn literal_readback_available(&self) -> bool {
+        self.associated_label_detail
+            && self.detail_image.is_some()
+            && self.native_text_without_placeholder
     }
     /// A native-inspected additive state, never an approval or an old fill plan.
     pub fn continuation(&self) -> Option<&LiveForm> {
@@ -921,12 +929,13 @@ impl CdpDriver {
         }
         self.stop_if_non_read_request_observed(network_before)?;
         self.verify_recorded_command(&command)?;
-        let observed_value = if matches!(kind, RecordedFieldKind::Text | RecordedFieldKind::Number)
-        {
-            self.text_value_snapshot(selector)?.value
-        } else {
-            value.to_owned()
-        };
+        let text_before = matches!(kind, RecordedFieldKind::Text | RecordedFieldKind::Number)
+            .then(|| self.native_text_snapshot(selector))
+            .transpose()?;
+        let observed_value = text_before
+            .as_ref()
+            .map_or(value, |snapshot| &snapshot.value)
+            .to_owned();
         let value_comparison = if observed_value == value {
             "exact"
         } else if matches!(kind, RecordedFieldKind::Text)
@@ -943,11 +952,15 @@ impl CdpDriver {
         };
         let (detail_image, detail_error, associated_label_detail) =
             self.recorded_detail_context(selector, kind);
-        if matches!(kind, RecordedFieldKind::Text | RecordedFieldKind::Number)
-            && self.text_value_snapshot(selector)?.value != observed_value
-        {
-            return Err(review());
-        }
+        let native_text_without_placeholder = if let Some(before) = text_before {
+            let after = self.native_text_snapshot(selector)?;
+            if after.value != observed_value {
+                return Err(review());
+            }
+            before.entered_without_placeholder && after.entered_without_placeholder
+        } else {
+            false
+        };
         let post_form = if progressive {
             let current = self.inspect_current()?;
             if self.recorded_document()? != document {
@@ -994,6 +1007,7 @@ impl CdpDriver {
         };
         Ok(RecordedFieldCapture {
             associated_label_detail,
+            native_text_without_placeholder,
             binding,
             continuation,
             detail_image,
@@ -1195,18 +1209,29 @@ impl CdpDriver {
         &mut self,
         capture: &RecordedFieldCapture,
     ) -> Result<(), DriverError> {
+        self.verify_recorded_field_state(capture).map(|_| ())
+    }
+
+    fn verify_recorded_field_state(
+        &mut self,
+        capture: &RecordedFieldCapture,
+    ) -> Result<bool, DriverError> {
         self.verify_recorded_command(&capture.command)?;
-        if matches!(
+        let native_text_without_placeholder = if matches!(
             capture.kind,
             RecordedFieldKind::Text | RecordedFieldKind::Number
         ) {
             let BrowserCommand::Fill { selector, .. } = &capture.command else {
                 return Err(review());
             };
-            if self.text_value_snapshot(selector)?.value != capture.observed_value {
+            let snapshot = self.native_text_snapshot(selector)?;
+            if snapshot.value != capture.observed_value {
                 return Err(review());
             }
-        }
+            snapshot.entered_without_placeholder
+        } else {
+            false
+        };
         if self.recorded_document()? != capture.document {
             return Err(review());
         }
@@ -1244,7 +1269,8 @@ impl CdpDriver {
                 return Err(review());
             }
         }
-        self.stop_if_non_read_request_observed(capture.network_before)
+        self.stop_if_non_read_request_observed(capture.network_before)?;
+        Ok(native_text_without_placeholder)
     }
 
     /// Recheck the full inspected form and the entered field without acting.
@@ -1252,12 +1278,19 @@ impl CdpDriver {
         &mut self,
         capture: &RecordedFieldCapture,
     ) -> Result<(), DriverError> {
+        self.verify_recorded_observation_state(capture).map(|_| ())
+    }
+
+    fn verify_recorded_observation_state(
+        &mut self,
+        capture: &RecordedFieldCapture,
+    ) -> Result<bool, DriverError> {
         self.require_recorded_frames()?;
         let binding = capture.binding.as_ref().ok_or_else(review)?;
         if self.inspect_current()? != binding.form {
             return Err(review());
         }
-        self.verify_recorded_field(capture)
+        self.verify_recorded_field_state(capture)
     }
 
     /// Refresh the pixels of an entered field in its unchanged recorded form.
@@ -1266,7 +1299,7 @@ impl CdpDriver {
         &mut self,
         capture: &mut RecordedFieldCapture,
     ) -> Result<(), DriverError> {
-        self.verify_recorded_field_observation(capture)?;
+        let text_before = self.verify_recorded_observation_state(capture)?;
         let selector = &capture.binding.as_ref().ok_or_else(review)?.field.selector;
         let image = if matches!(capture.kind, RecordedFieldKind::Radio) {
             self.screenshot_recorded_radio(selector, &capture.observed_value, true, false)?
@@ -1275,7 +1308,7 @@ impl CdpDriver {
         };
         let (detail, error, associated_label_detail) =
             self.recorded_detail_context(selector, capture.kind);
-        self.verify_recorded_field_observation(capture)?;
+        let text_after = self.verify_recorded_observation_state(capture)?;
         if capture.associated_label_detail && !associated_label_detail {
             return Err(DriverError(
                 "The recorded field label could not be verified in a fresh image".into(),
@@ -1285,6 +1318,7 @@ impl CdpDriver {
         capture.detail_image = detail;
         capture.detail_error = error;
         capture.associated_label_detail = associated_label_detail;
+        capture.native_text_without_placeholder = text_before && text_after;
         Ok(())
     }
 

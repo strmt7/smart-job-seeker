@@ -15,7 +15,7 @@ fn recorded_number_entry_checks_native_constraints_before_events() {
         ("changed-on-focus", "4", "onfocus=\"this.min='5'\"", false),
     ] {
         let entry = "https://fixture.invalid/number-admission";
-        let html = format!("<!doctype html><meta charset=utf-8><link rel=icon href=data:,><style>body{{font:18px Arial;margin:24px}}label{{display:block}}input{{font:inherit;padding:8px}}</style><label for=years>Years of test tooling experience</label><input id=years type=number min=0 max=10 step=1 required {focus}><script>window.entryEvents=0;document.querySelector('#years').addEventListener('input',()=>window.entryEvents++);</script>");
+        let html = format!("<!doctype html><meta charset=utf-8><link rel=icon href=data:,><style>body{{font:18px Arial;margin:24px}}label{{display:block;width:max-content}}input{{font:inherit;padding:8px}}</style><label for=years>Years of test tooling experience</label><input id=years type=number min=0 max=10 step=1 placeholder=4 required {focus}><script>window.entryEvents=0;document.querySelector('#years').addEventListener('input',()=>window.entryEvents++);</script>");
         let wire = format!("HTTP/1.1 200 Fictional\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\n\r\n{html}", html.len());
         let response = waypoint_net::read_asset_response(
             &mut std::io::Cursor::new(wire.into_bytes()),
@@ -40,6 +40,19 @@ fn recorded_number_entry_checks_native_constraints_before_events() {
         assert!(ready.appcontainer && ready.capabilities == 0);
         let outcome = (|| -> Result<Value, DriverError> {
             let form = driver.open(entry)?;
+            let initial = driver.native_text_snapshot("#years")?;
+            let placeholder = driver.cdp.call("Runtime.evaluate", json!({
+                "expression":"document.querySelector('#years').matches(':placeholder-shown')",
+                "returnByValue":true,
+            })).map_err(derr)?;
+            if placeholder["result"]["value"] != true
+                || !initial.value.is_empty()
+                || initial.entered_without_placeholder
+            {
+                return Err(DriverError(
+                    "Visible placeholder was admitted as an entered number".into(),
+                ));
+            }
             let mut reviews = 0;
             let result =
                 driver.rehearse_recorded_field_reviewed(&form, "#years", value, &[], |target| {
@@ -69,6 +82,7 @@ fn recorded_number_entry_checks_native_constraints_before_events() {
                     || actual != value
                     || events == 0
                     || reviews != 1
+                    || !capture.literal_readback_available()
                 {
                     return Err(DriverError(
                         "Valid number lacks exact native entry evidence".into(),
@@ -82,7 +96,7 @@ fn recorded_number_entry_checks_native_constraints_before_events() {
                     ));
                 }
                 Ok(
-                    json!({"entered":true,"events":events,"reviews":reviews,"value":actual,"stale_refused":true}),
+                    json!({"entered":true,"events":events,"reviews":reviews,"value":actual,"stale_refused":true,"literal_readback_available":true}),
                 )
             } else if result.is_err()
                 && actual.is_empty()

@@ -5,7 +5,7 @@
   "goal": "Continue the existing active Smart Jobseeker product-development goal",
   "plan": "docs/IMPLEMENTATION_PLAN_2026-11-17.md",
   "assessment": "docs/REPO_OVERVIEW_2026-11-17.md",
-  "next_task": "R01",
+  "next_task": "R04",
   "boundaries": [
     "main only",
     "headless development only",
@@ -51,9 +51,10 @@
         "docs/g1/SELECTED_CANDIDATE_PDFS_2026-11-14.md",
         "docs/g1/NATIVE_FILE_LABEL_DETAILS_2026-11-14.md",
         "docs/g1/CHECKED_HISTORY_REHEARSAL_2026-11-14.md",
-        "docs/g1/REVIEWED_QUALIFICATION_ANSWERS_2026-11-14.md"
+        "docs/g1/REVIEWED_QUALIFICATION_ANSWERS_2026-11-14.md",
+        "docs/g1/LITERAL_FIELD_READBACK_2026-11-18.md"
       ],
-      "next_action": "Qualify reproducible literal vision on the byte-identical last-name image pair with divergent results. Separate literal transcription from scene interpretation and score both omissions and wrong values before promotion. Contact decisions now separate uncertainty and explicit review. One of two unchanged full replays verified all eight fields and the expected repeat stop. The isolated and in-sequence final binding used identical mapping requests. Exercise the deferred-field branch with native Qwen on held-out cases. Replace the attempt-wide pre-review memory recovery count with a shared deadline and fresh field evidence.",
+      "next_action": "Qualify the deferred contact-mapping branch and literal visual readback on held-out layouts. The literal comparison passed ten reads across five frozen development images. One combined rehearsal verified eight fields and recovered twice from simulated admission refusals under the shared deadline. Continue measuring cancellation, admission and host headroom on representative workflows.",
       "execution_batch": "A",
       "steps": [
         "Measure native observations and browser-operation cancellation/cleanup latency without blocking owner controls.",
@@ -313,7 +314,7 @@
         "Measure the local model on the frozen corpus; provide actionable review records rather than invented answers.",
         "Qualify native-supported inference profiles per role, including projector/renderer/parser and advertised effort. Retain actual thinking/final/tool observations and sufficient admitted budgets; do not force maximum effort onto every primitive or promote from component probes. Incorporate current primary-source research and the adapted catalog guidance without treating instructions as runtime implementation."
       ],
-      "next_action": "Qualify independent terminal summary review and representative local-model navigation. The dense fictional replay now verifies 20 of 20 fields across five sections in 173.062 seconds and saves its terminal view with the submit sentinel untouched. Use retained timing and specific native stop evidence to remove redundant waits and arbitrary caps. Exercise new sections, repeated controls and delayed state changes on held-out layouts before extending authority.",
+      "next_action": "Capture read-only native terminal summary evidence bound to the current document and compare blind visual observations independently against candidate-backed answers. Exercise missing, wrong and duplicate answers, repeated sections and replaced documents. The dense fictional replay verified 20 of 20 fields and saved the terminal view. The eight-field fictional replay independently exercised exact visual readback and two recoveries with the repeat stop. Both remain development evidence pending terminal and held-out qualification.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "start_requirements": [
         "The frozen schema2 known-source initial-control case and native mutation fixture admit investigation of the observed actuator failure. This does not admit broad planner promotion; that still requires the varied held-out tranche and full workflow truth.",

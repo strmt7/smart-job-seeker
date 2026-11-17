@@ -344,8 +344,8 @@ fn render_at(
 const REVIEW_MEMORY_WAIT: std::time::Duration = std::time::Duration::from_secs(45);
 #[cfg(all(windows, test))]
 thread_local! {
-    static TEST_FIELD_MEMORY_REFUSAL: std::cell::Cell<Option<crate::InferenceMemoryRefusal>> =
-        const { std::cell::Cell::new(None) };
+    static TEST_FIELD_MEMORY_REFUSALS: std::cell::RefCell<std::collections::BTreeSet<usize>> =
+        const { std::cell::RefCell::new(std::collections::BTreeSet::new()) };
 }
 /// Shared by launch and accounting. Larger local reasoning models need enough
 /// time to complete mixed materials; RAM, cancellation and action guards remain.
@@ -586,7 +586,6 @@ struct RehearsalVision {
     model: Option<crate::visual_review::VisionIdentityGuard>,
     identity: Value,
     targets: Vec<Value>,
-    field_review_recovery_used: bool,
     deadline: std::time::Instant,
 }
 
@@ -685,7 +684,6 @@ impl RehearsalVision {
             }),
             identity: metadata.unwrap_or(Value::Null),
             targets: Vec::new(),
-            field_review_recovery_used: false,
             deadline,
         }
     }
@@ -788,20 +786,27 @@ impl RehearsalVision {
         #[cfg(not(test))]
         let admission = self.memory.sample();
         #[cfg(test)]
-        let admission = TEST_FIELD_MEMORY_REFUSAL
-            .take()
-            .map_or_else(|| self.memory.sample(), Err);
+        let admission = if TEST_FIELD_MEMORY_REFUSALS
+            .with(|entries| entries.borrow_mut().remove(&(index + 1)))
+        {
+            Err(crate::InferenceMemoryRefusal::Pressure {
+                available: 3 * 1024_u64.pow(3),
+                required: crate::InferenceMemoryPolicy::OWNED_RESERVE_BYTES,
+            })
+        } else {
+            self.memory.sample()
+        };
         if let Err(refusal) = admission {
             result["review_reason"] = json!(bounded_text(&refusal.to_string()));
             // A request that was already issued can still be running. Only
             // a known admission refusal before review permits this recovery.
             if !matches!(refusal, crate::InferenceMemoryRefusal::Pressure { .. })
-                || self.field_review_recovery_used
                 || self.model.is_none()
             {
                 return;
             }
-            self.field_review_recovery_used = true;
+            // Each entry has its own immutable initial record and recapture.
+            // The remaining workflow deadline limits every recovery.
             let initial = json!({
                 "scope": "entered_field_before_visual_review",
                 "field": result,
@@ -2991,6 +2996,8 @@ mod tests {
             selection: crate::private_inference::Selection,
             #[serde(default)]
             simulate_initial_review_pressure: bool,
+            #[serde(default)]
+            simulate_review_pressure_entries: Vec<usize>,
             journey: Option<Journey>,
         }
         #[derive(serde::Deserialize)]
@@ -3024,12 +3031,20 @@ mod tests {
         crate::private_inference::create_namespace(&attempt, "automatic-rehearsal").unwrap();
         let existing = crate::resident_model_status().unwrap();
         assert_eq!(existing["state"], "no_model");
+        let mut simulated: std::collections::BTreeSet<_> = fixture
+            .simulate_review_pressure_entries
+            .iter()
+            .copied()
+            .collect();
+        assert_eq!(
+            simulated.len(),
+            fixture.simulate_review_pressure_entries.len()
+        );
+        assert!(!simulated.contains(&0));
         if fixture.simulate_initial_review_pressure {
-            TEST_FIELD_MEMORY_REFUSAL.set(Some(crate::InferenceMemoryRefusal::Pressure {
-                available: 3 * 1024_u64.pow(3),
-                required: crate::InferenceMemoryPolicy::OWNED_RESERVE_BYTES,
-            }));
+            simulated.insert(1);
         }
+        TEST_FIELD_MEMORY_REFUSALS.with(|entries| *entries.borrow_mut() = simulated.clone());
         let result = render(
             &fixture.source,
             &fixture.url,
@@ -3134,28 +3149,32 @@ mod tests {
             assert_eq!(targets.len(), 5);
         }
         assert!(fields.iter().all(|v| v["status"] == "visually_matched"));
-        if fixture.simulate_initial_review_pressure {
-            assert!(TEST_FIELD_MEMORY_REFUSAL.take().is_none());
-            assert_eq!(fields[0]["visual_recovery"]["status"], "verified");
-            assert_eq!(fields[0]["native_verified"], true);
-            assert!(fields[1..]
-                .iter()
-                .all(|field| field.get("visual_recovery").is_none()));
-            let note = &fields[0]["visual_recovery"]["initial_archive"];
-            let original = read(&attempt.join(note["file"].as_str().unwrap()), 512 * 1024).unwrap();
-            assert_eq!(note["sha256"], waypoint_domain::sha256_hex(&original));
-            let original: Value = serde_json::from_slice(&original).unwrap();
-            assert_eq!(original["reason"], "memory_pressure");
-            assert_eq!(original["field"]["status"], "visual_unavailable");
-            assert_eq!(original["field"]["control"], fields[0]["control"]);
-            assert_ne!(original["field"]["image"], fields[0]["image"]);
-            for field in [&original["field"], &fields[0]] {
-                let image = read(
-                    &screenshots.join(field["image"].as_str().unwrap()),
-                    6 * 1024 * 1024,
-                )
-                .unwrap();
-                assert_eq!(field["sha256"], waypoint_domain::sha256_hex(&image));
+        if !simulated.is_empty() {
+            assert!(TEST_FIELD_MEMORY_REFUSALS.with(|entries| entries.borrow().is_empty()));
+            for (index, field) in fields.iter().enumerate() {
+                if !simulated.contains(&(index + 1)) {
+                    assert!(field.get("visual_recovery").is_none());
+                    continue;
+                }
+                assert_eq!(field["visual_recovery"]["status"], "verified");
+                assert_eq!(field["native_verified"], true);
+                let note = &field["visual_recovery"]["initial_archive"];
+                let original =
+                    read(&attempt.join(note["file"].as_str().unwrap()), 512 * 1024).unwrap();
+                assert_eq!(note["sha256"], waypoint_domain::sha256_hex(&original));
+                let original: Value = serde_json::from_slice(&original).unwrap();
+                assert_eq!(original["reason"], "memory_pressure");
+                assert_eq!(original["field"]["status"], "visual_unavailable");
+                assert_eq!(original["field"]["control"], field["control"]);
+                assert_ne!(original["field"]["image"], field["image"]);
+                for observed in [&original["field"], field] {
+                    let image = read(
+                        &screenshots.join(observed["image"].as_str().unwrap()),
+                        6 * 1024 * 1024,
+                    )
+                    .unwrap();
+                    assert_eq!(observed["sha256"], waypoint_domain::sha256_hex(&image));
+                }
             }
             assert_eq!(result["replay"]["cached_non_read_replies"], 0);
             assert_eq!(result["replay"]["unmanaged_child_sessions"], 0);
