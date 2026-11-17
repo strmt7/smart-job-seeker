@@ -104,10 +104,11 @@ mod windows {
     };
     use std::sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
-        mpsc::{self, Receiver, SyncSender, TryRecvError},
+        mpsc::{self, Receiver, SyncSender},
         Arc, Mutex,
     };
     use std::time::{Duration, Instant};
+    use tokio::sync::mpsc as command_queue;
     use tokio_stream::StreamExt;
 
     const MAX_FRAME: usize = 16 * 1024 * 1024;
@@ -130,13 +131,19 @@ mod windows {
         Stop(SyncSender<Result<(), String>>),
     }
 
+    enum RelayActivity {
+        Command(Option<OwnerCommand>),
+        Output(Option<String>),
+        CheckBudgets,
+    }
+
     pub struct RehearsalOwner {
-        commands: Option<SyncSender<OwnerCommand>>,
+        commands: Option<command_queue::Sender<OwnerCommand>>,
         failure: Arc<Mutex<Option<String>>>,
     }
 
     pub struct PipeTransport {
-        commands: SyncSender<OwnerCommand>,
+        commands: command_queue::Sender<OwnerCommand>,
         events: Receiver<String>,
         failure: Arc<Mutex<Option<String>>>,
         queued_bytes: Arc<AtomicUsize>,
@@ -264,7 +271,7 @@ mod windows {
             }
             let owned_folder = folder.clone();
             let lifetime = Duration::from_secs(config.seconds + 60);
-            let (commands, command_rx) = mpsc::sync_channel(4);
+            let (commands, mut command_rx) = command_queue::channel(4);
             let (events, event_rx) = mpsc::sync_channel(256);
             let (ready, startup) = mpsc::sync_channel(1);
             let state = Arc::new(Mutex::new(None));
@@ -274,7 +281,7 @@ mod windows {
             let spawn = std::thread::Builder::new()
                 .name("smart-jobseeker-rehearsal-owner".into())
                 .spawn(move || {
-                    let work = || -> Result<Option<SyncSender<Result<(), String>>>, String> {
+                    let mut work = || -> Result<Option<SyncSender<Result<(), String>>>, String> {
                         let runtime = tokio::runtime::Builder::new_current_thread()
                             .enable_all()
                             .build()
@@ -361,8 +368,21 @@ mod windows {
                             {
                                 return Err("Rehearsal shutdown timed out".into());
                             }
-                            match command_rx.try_recv() {
-                                Ok(OwnerCommand::Send(message, reply)) => {
+                            // A command or a complete line wakes the relay immediately.
+                            // Periodic checks also cover output without a complete line.
+                            let next_check = stopping
+                                .as_ref()
+                                .map_or(deadline, |(stop, _)| deadline.min(*stop))
+                                .min(Instant::now() + Duration::from_millis(250));
+                            let activity = runtime.block_on(async {
+                                tokio::select! {
+                                    _ = tokio::time::sleep_until(next_check.into()) => RelayActivity::CheckBudgets,
+                                    command = command_rx.recv() => RelayActivity::Command(command),
+                                    line = lines.next() => RelayActivity::Output(line),
+                                }
+                            });
+                            match activity {
+                                RelayActivity::Command(Some(OwnerCommand::Send(message, reply))) => {
                                     let result = runtime.block_on(async {
                                         tokio::time::timeout(
                                             Duration::from_secs(2),
@@ -380,7 +400,7 @@ mod windows {
                                         return Err("Rehearsal command write failed".into());
                                     }
                                 }
-                                Ok(OwnerCommand::Stop(reply)) => {
+                                RelayActivity::Command(Some(OwnerCommand::Stop(reply))) => {
                                     runtime.block_on(async {
                                         tokio::time::timeout(
                                             Duration::from_secs(1),
@@ -393,18 +413,12 @@ mod windows {
                                     stopping =
                                         Some((Instant::now() + Duration::from_secs(6), reply));
                                 }
-                                Err(TryRecvError::Disconnected) => {
+                                RelayActivity::Command(None) => {
                                     return Err("Rehearsal owner disconnected".into())
                                 }
-                                Err(TryRecvError::Empty) => (),
-                            }
-                            let line = runtime.block_on(async {
-                                tokio::time::timeout(Duration::from_millis(10), lines.next()).await
-                            });
-                            match line {
-                                Err(_) => (),
-                                Ok(None) => break,
-                                Ok(Some(line)) => {
+                                RelayActivity::CheckBudgets => (),
+                                RelayActivity::Output(None) => break,
+                                RelayActivity::Output(Some(line)) => {
                                     if line.len() > MAX_FRAME {
                                         return Err("Rehearsal response exceeds its budget".into());
                                     }

@@ -792,6 +792,43 @@ pub struct Cdp {
     pub timeout: Duration,
     observed_non_read_requests: u64,
     paused_event_lost: bool,
+    #[cfg(windows)]
+    call_timings: Option<CallTimings>,
+}
+
+#[cfg(windows)]
+#[derive(Default, serde::Serialize)]
+pub(crate) struct CallTimings {
+    methods: std::collections::BTreeMap<String, MethodTiming>,
+    omitted: u64,
+}
+
+#[cfg(windows)]
+#[derive(Default, serde::Serialize)]
+struct MethodTiming {
+    calls: u64,
+    failed: u64,
+    total_micros: u128,
+    max_micros: u128,
+}
+
+#[cfg(windows)]
+impl CallTimings {
+    fn record(&mut self, method: &str, failed: bool, elapsed: Duration) {
+        let sample = if let Some(sample) = self.methods.get_mut(method) {
+            sample
+        } else if self.methods.len() < 128 && method.len() <= 128 {
+            self.methods.entry(method.to_owned()).or_default()
+        } else {
+            self.omitted += 1;
+            return;
+        };
+        let micros = elapsed.as_micros();
+        sample.calls += 1;
+        sample.failed += u64::from(failed);
+        sample.total_micros += micros;
+        sample.max_micros = sample.max_micros.max(micros);
+    }
 }
 
 fn is_non_read_request(value: &Value) -> bool {
@@ -909,6 +946,8 @@ impl Cdp {
             timeout: Duration::from_secs(20),
             observed_non_read_requests: 0,
             paused_event_lost: false,
+            #[cfg(windows)]
+            call_timings: None,
         };
         let target = cdp.call_browser("Target.createTarget", json!({ "url": "about:blank" }))?;
         let target_id = target
@@ -951,13 +990,29 @@ impl Cdp {
         self.call_inner(method, params, Some(session.to_owned()))
     }
 
+    #[cfg(windows)]
+    pub(crate) fn begin_call_timing(&mut self) {
+        self.call_timings = Some(CallTimings::default());
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn take_call_timing(&mut self) -> Option<CallTimings> {
+        self.call_timings.take()
+    }
+
     fn call_inner(
         &mut self,
         method: &str,
         params: Value,
         session: Option<String>,
     ) -> Result<Value, CdpError> {
+        #[cfg(windows)]
+        let start = self.call_timings.as_ref().map(|_| Instant::now());
         let result = self.call_inner_impl(method, params, session);
+        #[cfg(windows)]
+        if let (Some(start), Some(timings)) = (start, self.call_timings.as_mut()) {
+            timings.record(method, result.is_err(), start.elapsed());
+        }
         // A failed command may have consumed or lost protocol events. Do not
         // allow subsequent interception servicing to assert a complete view.
         if result.is_err() {
@@ -1222,6 +1277,8 @@ mod tests {
             timeout: Duration::from_secs(2),
             observed_non_read_requests: 0,
             paused_event_lost: false,
+            #[cfg(windows)]
+            call_timings: None,
         };
         assert!(cdp.pump_checked(Duration::from_millis(30)).is_ok());
         assert!(!cdp.paused_event_lost);
@@ -1616,6 +1673,8 @@ mod tests {
             timeout: Duration::from_secs(2),
             observed_non_read_requests: 0,
             paused_event_lost: false,
+            #[cfg(windows)]
+            call_timings: None,
         };
         cdp.pump(Duration::from_millis(40));
         let response = cdp
@@ -1650,6 +1709,8 @@ mod tests {
             timeout: Duration::from_secs(2),
             observed_non_read_requests: 0,
             paused_event_lost: false,
+            #[cfg(windows)]
+            call_timings: None,
         };
         let error = cdp.call_browser("Test.deep", json!({})).unwrap_err();
         assert!(

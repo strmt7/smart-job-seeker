@@ -182,6 +182,10 @@ preload. Proposed new owner modules must replace existing duplicated behavior.
 5. Allocate deliberation to semantic decisions and eligible uncertainty. Literal
    transcription has its own profile; high-effort rechecks retain first results
    and cannot override genuine duplicates or contradictions.
+6. Remove the single recovery allowance shared by every entered field. Admit
+   each eligible pre-request memory recovery according to the remaining workflow
+   time and a fresh native value, image and runtime check. Exercise two separate
+   interruptions in one workflow and retain both original observations.
 
 **Acceptance:** a supported long workflow can finish within its declared budget;
 exhaustion yields a recoverable partial attempt; Stop remains responsive during
@@ -319,6 +323,12 @@ actual local-model observation. Native identity alone never clears a scope or
 visual barrier.
 
 ## R04 — Universal workflow completion
+
+The event-driven relay reduced the same four-field native check from 99.8 to
+38.9 seconds. The dense fixture now reaches the final review without a submit
+action. Dialog admission uses distinct observations and verified section
+progress. Independent terminal review and representative local-model journeys
+are the next completion gates. [Rehearsal evidence](g1/REHEARSAL_PROGRESS_2026-11-17.md)
 
 ### R04.2 — Generic navigation intent
 

@@ -1,7 +1,22 @@
 //! Local semantic proposals for optional dialogs in isolated saved copies.
 use serde::Deserialize;
 use serde_json::{json, Value};
+#[cfg(windows)]
+use std::collections::HashSet;
 use waypoint_inference::Inference;
+
+/// Each observed dialog gets one attempt until a new section is verified.
+#[cfg(windows)]
+#[derive(Default)]
+pub(crate) struct SectionDialogs(HashSet<waypoint_domain::Sha256Digest>);
+
+#[cfg(windows)]
+impl SectionDialogs {
+    pub(crate) fn record(&mut self, description: &Value) -> bool {
+        self.0
+            .insert(waypoint_domain::Sha256Digest::of(&description.to_string()))
+    }
+}
 
 #[derive(serde::Serialize)]
 pub(crate) struct Plan {
@@ -111,6 +126,30 @@ pub(crate) fn propose(
 mod tests {
     use super::*;
     use waypoint_inference::{CapabilityReport, InferenceError, UsageReport};
+
+    #[cfg(windows)]
+    #[test]
+    fn section_allows_new_dialogs_until_an_observation_repeats() {
+        let observed = |title: &str, label: &str| {
+            json!(waypoint_browser::DialogDescription {
+                title: title.into(),
+                text: format!("{title} {label}"),
+                controls: vec![waypoint_browser::DialogChoice {
+                    id: "control-0".into(),
+                    label: label.into(),
+                    available: true,
+                }],
+            })
+        };
+        let mut section = SectionDialogs::default();
+        let first = observed("Help", "Close");
+        assert!(section.record(&first));
+        assert!(section.record(&observed("Display tips", "Close")));
+        assert!(section.record(&observed("Tour", "Skip")));
+        assert!(!section.record(&first));
+        assert!(SectionDialogs::default().record(&first));
+    }
+
     struct Fake {
         value: Value,
         calls: usize,

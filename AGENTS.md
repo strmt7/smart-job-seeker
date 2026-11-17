@@ -10,6 +10,10 @@ repo up cold. Read this first, then `README.md`, then the references below.
   application workflows come before latency. Treat latency as a secondary
   optimization unless it prevents completion or threatens bounded host operation.
   Never weaken factual, native, visual or authorization checks to improve speed.
+- Tie execution limits to a named correctness, resource or authorization requirement.
+  Replace arbitrary action counts with verified progress and cycle detection under
+  the shared workflow deadline. Remove redundant waits and ceilings once their
+  replacement is qualified on the same workload.
 - Keep agent augmentation model-agnostic: shared perception, browser/document
   tools, reasoning/validation, bounded internet-assisted repair, validated learning
   and recovery should improve any compatible local model. Qualify capabilities

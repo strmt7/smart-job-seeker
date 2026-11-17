@@ -352,8 +352,6 @@ thread_local! {
 #[cfg(windows)]
 pub(crate) const REHEARSAL_SECONDS: u64 = 2700;
 const VIEW_FIELD_LIMIT: usize = 40;
-#[cfg(windows)]
-const DIALOG_ACTION_LIMIT: usize = 2;
 
 #[cfg(windows)]
 fn record_scope(
@@ -371,6 +369,7 @@ fn record_scope(
     let mut pending: Option<(usize, String)> = None;
     let mut pending_dialog: Option<usize> = None;
     let mut section = 1;
+    let mut section_dialogs = crate::dialog_planning::SectionDialogs::default();
     if let Some(rehearsal) = rehearsal.as_deref_mut() {
         rehearsal.captures.clear();
     }
@@ -423,7 +422,9 @@ fn record_scope(
             return Ok(());
         }
         if form.independent_field_entry_blocked() || form.schema.fields.is_empty() {
-            if let Some(next) = rehearsal.resolve_dialog(driver, evidence, view, &form) {
+            if let Some(next) =
+                rehearsal.resolve_dialog(driver, evidence, view, &form, &mut section_dialogs)
+            {
                 pending_dialog = Some(view);
                 form = next;
                 continue;
@@ -471,6 +472,7 @@ fn record_scope(
                 prior.push(form);
                 form = next;
                 rehearsal.captures.clear();
+                section_dialogs = crate::dialog_planning::SectionDialogs::default();
             }
             Ok(RecordedSectionOutcome::ReviewRequired {
                 reason,
@@ -1696,9 +1698,12 @@ impl Rehearsal {
         evidence: &mut ScreenshotArchive<'_>,
         view: usize,
         form: &waypoint_applications::driver::LiveForm,
+        section_dialogs: &mut crate::dialog_planning::SectionDialogs,
     ) -> Option<waypoint_applications::driver::LiveForm> {
         use waypoint_browser::RecordedDialogOutcome;
-        if !self.fields.is_empty() || self.dialogs.len() >= DIALOG_ACTION_LIMIT {
+        // Active captures are bound to their original form. Earlier sections
+        // retain their archived evidence and do not block this observation.
+        if !self.captures.is_empty() {
             return None;
         }
         let dialog = match driver.recorded_dialog(form) {
@@ -1710,7 +1715,14 @@ impl Rehearsal {
                 return None;
             }
         };
-        let mut record = json!({"view":view,"status":"needs_review","scope":if self.candidate_selected{"offline_saved_copy_only"}else{"fictional_saved_copy_only"},"description":dialog.description()});
+        let description = dialog.description();
+        let mut record = json!({"view":view,"status":"needs_review","scope":if self.candidate_selected{"offline_saved_copy_only"}else{"fictional_saved_copy_only"},"description":description});
+        if !section_dialogs.record(&record["description"]) {
+            record["reason"] = json!("The same dialog returned before the section advanced");
+            self.dialogs.push(record);
+            self.halted = true;
+            return None;
+        }
         let outcome = (|| -> Result<Option<waypoint_applications::driver::LiveForm>, String> {
             self.vision.memory.check()?;
             let model = self
@@ -1721,7 +1733,7 @@ impl Rehearsal {
             let plan = crate::visual_review::propose_recorded_dialog(
                 model,
                 self.vision.addr,
-                &dialog.description(),
+                &description,
             )?;
             record["proposal"] = json!(plan);
             let Some(choice) = plan.control else {
@@ -1795,7 +1807,7 @@ impl Rehearsal {
     }
 
     fn finish(self, screenshot_bytes: usize) -> Value {
-        json!({"scope":if self.candidate_selected{self.candidate_metadata["scope"].as_str().unwrap_or("saved_candidate_materials")}else{"fictional_saved_form"},"candidate_source":self.candidate_metadata,"profile_sha256":self.candidate_metadata["profile_sha256"],"profile_error":self.profile.as_ref().err(),"time_limit_seconds":self.session_duration.as_secs(),"progress_checkpoints":self.progress_checkpoints,"halted":self.halted,"fields":self.fields,"fact_plans":self.fact_plans,"history_plans":self.history_plans,"qualification_plans":self.qualification_plans,"history_error":self.history.as_ref().err(),"attachment_plans":self.attachment_plans,"sections":self.sections,"dialogs":self.dialogs,"dialog_action_limit":DIALOG_ACTION_LIMIT,"vision_model":self.vision.identity,
+        json!({"scope":if self.candidate_selected{self.candidate_metadata["scope"].as_str().unwrap_or("saved_candidate_materials")}else{"fictional_saved_form"},"candidate_source":self.candidate_metadata,"profile_sha256":self.candidate_metadata["profile_sha256"],"profile_error":self.profile.as_ref().err(),"time_limit_seconds":self.session_duration.as_secs(),"progress_checkpoints":self.progress_checkpoints,"halted":self.halted,"fields":self.fields,"fact_plans":self.fact_plans,"history_plans":self.history_plans,"qualification_plans":self.qualification_plans,"history_error":self.history.as_ref().err(),"attachment_plans":self.attachment_plans,"sections":self.sections,"dialogs":self.dialogs,"vision_model":self.vision.identity,
             "conditional_replans":self.conditionals,"screenshot_bytes":screenshot_bytes,"screenshot_budget_bytes":SCREENSHOT_BUDGET_BYTES,
             "public_research_enabled":self.public_research,"public_research":self.research_notes,
             "visual_gate":{"required":true,"available":self.vision.model.is_some(),"targets":self.vision.targets}})
@@ -2672,6 +2684,8 @@ mod tests {
             python: PathBuf,
             config: RehearsalConfig,
             sections: Vec<Vec<(String, String)>>,
+            #[serde(default)]
+            measure_first_section: bool,
         }
         let target = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../target")
@@ -2699,7 +2713,9 @@ mod tests {
         fs::create_dir(&output).unwrap();
         let (mut driver, ready) =
             CdpDriver::launch_rehearsal(&fixture.python, fixture.config).unwrap();
+        driver.begin_recorded_call_timing().unwrap();
         let started = std::time::Instant::now();
+        let mut entry_timings = Vec::new();
         let observed = (|| -> Result<Value, String> {
             let mut form = driver
                 .open(&ready.entry_url)
@@ -2712,18 +2728,20 @@ mod tests {
                 for (field, (label, value)) in form.schema.fields.iter().zip(expected) {
                     assert_eq!(&field.label, label);
                     let previous: Vec<_> = entries.iter().collect();
-                    let entry = driver
-                        .rehearse_recorded_field_progressive(
-                            &form,
-                            &field.selector,
-                            value,
-                            &previous,
-                            |target| {
-                                assert_eq!(target.label(), label);
-                                Ok(())
-                            },
-                        )
-                        .map_err(|error| error.to_string())?;
+                    let entry_started = std::time::Instant::now();
+                    let entry = driver.rehearse_recorded_field_progressive(
+                        &form,
+                        &field.selector,
+                        value,
+                        &previous,
+                        |target| {
+                            assert_eq!(target.label(), label);
+                            Ok(())
+                        },
+                    );
+                    entry_timings.push(json!({"section":index+1,"field":entries.len()+1,
+                        "seconds":entry_started.elapsed().as_secs_f64(),"verified":entry.is_ok()}));
+                    let entry = entry.map_err(|error| error.to_string())?;
                     assert_eq!(entry.observed_value(), value);
                     assert!(entry.continuation().is_none());
                     entries.push(entry);
@@ -2750,6 +2768,11 @@ mod tests {
                             index + 1
                         ));
                     };
+                    if fixture.measure_first_section {
+                        return Ok(
+                            json!({"scope":"first_section_only","entry_fields":verified_entries,"sections":1,"advanced":true}),
+                        );
+                    }
                     prior.push(form);
                     form = next;
                     continue;
@@ -2801,7 +2824,15 @@ mod tests {
             }
             Err("The fictional fixture supplied no terminal section".into())
         })();
+        let profile = json!({"scope":if fixture.measure_first_section{"first_section_only"}else{"full_fixture"},
+            "entries":entry_timings,"elapsed_seconds":started.elapsed().as_secs_f64(),
+            "calls":driver.take_recorded_call_timing()});
         let close = driver.execute(&BrowserCommand::Close);
+        fs::write(
+            output.join("timing.private.json"),
+            serde_json::to_vec_pretty(&profile).unwrap(),
+        )
+        .unwrap();
         let mut saved = observed.unwrap_or_else(|error| panic!("{error}; close: {close:?}"));
         close.unwrap();
         saved["browser_closed"] = json!(true);

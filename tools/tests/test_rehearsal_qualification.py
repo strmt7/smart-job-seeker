@@ -11,9 +11,33 @@ spec = importlib.util.spec_from_file_location('rehearsal_qualification', TOOLS /
 qualification = importlib.util.module_from_spec(spec)
 with patch.object(sys, 'path', [str(TOOLS), *sys.path]):
     spec.loader.exec_module(qualification)
+    import qualify_history_ui
 
 
 class TestQualificationDenominators(unittest.TestCase):
+    def test_ram_monitor_keeps_observing_after_history_fills(self):
+        available = [2] + [8] * 900 + [4]
+        readings = iter(available)
+        kernel = MagicMock()
+
+        def sample(status):
+            status._obj.available_physical = next(readings)
+            status._obj.total_physical = 16
+            return True
+
+        kernel.GlobalMemoryStatusEx.side_effect = sample
+        with patch.object(qualify_history_ui.ctypes, 'WinDLL', return_value=kernel, create=True):
+            monitor = qualify_history_ui.RamSamples()
+        with patch.object(monitor.stop, 'wait', side_effect=[False] * (len(available) - 1) + [True]):
+            monitor.thread.start()
+            monitor.thread.join(timeout=2)
+        report = monitor.finish()
+
+        self.assertEqual(report['observed_count'], len(available))
+        self.assertEqual(report['count'], 900)
+        self.assertEqual(report['minimum_available_bytes'], available[0])
+        self.assertEqual([row['available_bytes'] for row in report['samples']], available[-900:])
+
     def test_explicit_memory_budget_requires_admission_before_launch(self):
         with tempfile.TemporaryDirectory() as temp, \
                 patch.object(qualification, 'admit_child_memory_bytes', side_effect=ValueError('too large')) as admission, \

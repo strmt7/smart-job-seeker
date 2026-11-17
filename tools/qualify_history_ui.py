@@ -1,4 +1,5 @@
 """Memory-contained fictional UI/model qualification; never targets employer forms."""
+from collections import deque
 from pathlib import Path
 import argparse
 import ctypes
@@ -15,10 +16,12 @@ from owned_process import _MemoryStatus
 REPO = Path(__file__).resolve().parent.parent
 
 class RamSamples:
-    """Bounded host observations; these are not exclusive application peaks."""
+    """Whole-host minimum across the run, with a bounded recent sample history."""
     def __init__(self):
         self.stop = threading.Event()
-        self.samples = []
+        self.samples = deque(maxlen=900)
+        self.observed_count = 0
+        self.minimum_available_bytes = None
         self.errors = []
         self.started = time.monotonic()
         self.kernel = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -27,10 +30,18 @@ class RamSamples:
         self.thread = threading.Thread(target=self.observe, name="history-ui-ram", daemon=True)
 
     def observe(self):
-        while len(self.samples) < 900:
+        while not self.stop.is_set():
             status = _MemoryStatus(length=ctypes.sizeof(_MemoryStatus))
             if self.kernel.GlobalMemoryStatusEx(ctypes.byref(status)):
-                self.samples.append({"milliseconds":round((time.monotonic()-self.started)*1000), "available_bytes":status.available_physical,"total_bytes":status.total_physical})
+                available = status.available_physical
+                self.observed_count += 1
+                if self.minimum_available_bytes is None or available < self.minimum_available_bytes:
+                    self.minimum_available_bytes = available
+                self.samples.append({
+                    "milliseconds": round((time.monotonic() - self.started) * 1000),
+                    "available_bytes": available,
+                    "total_bytes": status.total_physical,
+                })
             elif len(self.errors) < 3:
                 self.errors.append(ctypes.get_last_error())
             if self.stop.wait(0.5):
@@ -39,7 +50,17 @@ class RamSamples:
     def finish(self):
         self.stop.set()
         self.thread.join(timeout=2)
-        return {"scope":"sampled whole-host physical RAM; not application/GPU peak or a reservation", "interval_ms":500,"count":len(self.samples), "minimum_available_bytes":min((row["available_bytes"] for row in self.samples),default=None),"errors":self.errors,"samples":self.samples}
+        if self.thread.is_alive():
+            raise RuntimeError("The host RAM sampler did not stop")
+        return {
+            "scope": "sampled whole-host physical RAM",
+            "interval_ms": 500,
+            "count": len(self.samples),
+            "observed_count": self.observed_count,
+            "minimum_available_bytes": self.minimum_available_bytes,
+            "errors": self.errors,
+            "samples": list(self.samples),
+        }
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)

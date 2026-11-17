@@ -491,6 +491,20 @@ fn scope_key(frame: &CapturedFrame) -> Result<String, DriverError> {
     ))
 }
 impl CdpDriver {
+    /// Opt into method-only timing for an isolated recorded-page diagnostic.
+    #[cfg(windows)]
+    pub fn begin_recorded_call_timing(&mut self) -> Result<(), DriverError> {
+        self.require_recorded_frames()?;
+        self.cdp.begin_call_timing();
+        Ok(())
+    }
+
+    /// Retain partial timings when the replay stops. No browser request is issued.
+    #[cfg(windows)]
+    pub fn take_recorded_call_timing(&mut self) -> Option<Value> {
+        self.cdp.take_call_timing().map(|timings| json!(timings))
+    }
+
     /// Try one same-document section change in the owned replay browser.
     /// Only newly observed controls count as progress.
     #[cfg(windows)]
