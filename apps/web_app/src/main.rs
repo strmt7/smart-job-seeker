@@ -2160,27 +2160,62 @@ fn merge_completed_selectors(existing: &mut Vec<String>, completed: &[Value]) {
     }
 }
 
+#[cfg(any(windows, test))]
+#[derive(Debug, PartialEq, Eq)]
+enum InferenceMemoryRefusal {
+    Unavailable,
+    Pressure { available: u64, required: u64 },
+}
+
+#[cfg(any(windows, test))]
+impl std::fmt::Display for InferenceMemoryRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        const MIB: u64 = 1024 * 1024;
+        match *self {
+            Self::Unavailable => {
+                f.write_str("System memory could not be sampled reliably. Local inference paused.")
+            }
+            Self::Pressure {
+                available,
+                required,
+            } => write!(
+                f,
+                "Local inference paused with {} MiB of system memory available. At least {} MiB is required to continue.",
+                available / MIB,
+                required.div_ceil(MIB)
+            ),
+        }
+    }
+}
+
+#[cfg(any(windows, test))]
 /// Reserve a conservative share of RAM before beginning another inference.
 /// This is a snapshot, not a reservation or a guarantee against later pressure.
-#[cfg(any(windows, test))]
-fn inference_memory_gate(available: u64, total: u64) -> Result<(), String> {
+fn inference_memory_gate(available: u64, total: u64) -> Result<(), InferenceMemoryRefusal> {
     const GIB: u64 = 1024 * 1024 * 1024;
     if total == 0 || available > total {
-        return Err("System memory could not be sampled reliably; local inference paused".into());
+        return Err(InferenceMemoryRefusal::Unavailable);
     }
     let floor = (total / 4).clamp(4 * GIB, model_start::HOST_CONTINUATION_RESERVE_CAP_BYTES);
     if available < floor {
-        return Err(format!("Local inference paused: {} MiB system memory available; at least {} MiB is required to continue. Close other work and retry.", available / (1024 * 1024), floor.div_ceil(1024 * 1024)));
+        return Err(InferenceMemoryRefusal::Pressure {
+            available,
+            required: floor,
+        });
     }
     Ok(())
 }
 
 #[cfg(windows)]
-fn check_inference_memory() -> Result<(), String> {
-    let mut system = sysinfo::System::new()
-        .map_err(|_| "System memory could not be sampled; local inference paused")?;
+fn sample_inference_memory() -> Result<(), InferenceMemoryRefusal> {
+    let mut system = sysinfo::System::new().map_err(|_| InferenceMemoryRefusal::Unavailable)?;
     system.refresh_memory();
     inference_memory_gate(system.available_memory(), system.total_memory())
+}
+
+#[cfg(windows)]
+fn check_inference_memory() -> Result<(), String> {
+    sample_inference_memory().map_err(|error| error.to_string())
 }
 
 /// Only use one already-resident model within the reported GPU and CPU budgets.
@@ -5435,6 +5470,19 @@ fn serve_request(
                 stream,
                 "200 OK",
                 attempt_record::review_summary(ws, &job, attempt)?,
+            );
+        }
+        "/api/attempts/source-page-details" => {
+            let job = JobIdentityId::new(body["id"].as_str().ok_or("missing job id")?)
+                .map_err(|e| e.to_string())?;
+            ws.job(&job)
+                .map_err(|e| e.to_string())?
+                .ok_or("Job not found")?;
+            let attempt = body["attempt_id"].as_str().ok_or("missing attempt id")?;
+            json_reply(
+                stream,
+                "200 OK",
+                attempt_record::source_page_details(ws, &job, attempt)?,
             );
         }
         "/api/attempts/answers" => {
@@ -11193,13 +11241,23 @@ mod tests {
         const GIB: u64 = 1024 * 1024 * 1024;
         assert!(inference_memory_gate(8 * GIB, 64 * GIB).is_ok());
         assert!(inference_memory_gate(10125 * 1024 * 1024, 64 * GIB).is_ok());
-        assert!(inference_memory_gate(8 * GIB - 1, 64 * GIB)
-            .unwrap_err()
-            .contains("paused"));
+        assert_eq!(
+            inference_memory_gate(8 * GIB - 1, 64 * GIB),
+            Err(InferenceMemoryRefusal::Pressure {
+                available: 8 * GIB - 1,
+                required: 8 * GIB,
+            })
+        );
         assert!(inference_memory_gate(4 * GIB, 16 * GIB).is_ok());
         assert!(inference_memory_gate(4 * GIB - 1, 16 * GIB).is_err());
-        assert!(inference_memory_gate(1, 0).is_err());
-        assert!(inference_memory_gate(17 * GIB, 16 * GIB).is_err());
+        assert_eq!(
+            inference_memory_gate(1, 0),
+            Err(InferenceMemoryRefusal::Unavailable)
+        );
+        assert_eq!(
+            inference_memory_gate(17 * GIB, 16 * GIB),
+            Err(InferenceMemoryRefusal::Unavailable)
+        );
         assert!(inference_memory_gate(6 * GIB, 24 * GIB).is_ok());
         assert!(inference_memory_gate(6 * GIB - 1, 24 * GIB).is_err());
         for capacity in [16, 24, 32, 64, 128] {

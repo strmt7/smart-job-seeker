@@ -17,9 +17,44 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
 function harness(api, onFinished) {
   const timers = [], window = {};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../web/source-copy.js'), 'utf8'), { window, URL, document: { createElement: tag => new Node(tag) }, setTimeout: callback => { timers.push(callback); } });
-  return { actions: (id, attempt, documents=[]) => window.WaypointSourceCopies.previewAction(id, attempt, {api, documents:()=>documents, element:(tag,text,style)=>new Node(tag,text,style),onFinished}), preview: (preview, options) => window.WaypointSourceCopies.previewView(preview, (tag, text, style) => new Node(tag, text, style), options), create: id => window.WaypointSourceCopies.create({ id }, { api, element: (tag, text, style) => new Node(tag, text, style), onFinished }), tick: async () => { assert(timers.length, 'Expected a scheduled status poll'); timers.shift()(); await settle(); } };
+  const element = (tag, text, style) => new Node(tag, text, style);
+  return {
+    actions: (id, attempt, documents=[]) => window.WaypointSourceCopies.previewAction(id, attempt, {api, documents:()=>documents, element, onFinished}),
+    preview: (preview, options) => window.WaypointSourceCopies.previewView(preview, element, options),
+    create: id => window.WaypointSourceCopies.create({ id }, { api, element, onFinished }),
+    saved: (id, attempt) => window.WaypointSourceCopies.savedPageDetails(id, attempt, {api, element, onFinished}),
+    tick: async () => { assert(timers.length, 'Expected a scheduled status poll'); timers.shift()(); await settle(); },
+  };
 }
 (async () => {
+  const pendingDetails = [];
+  const archived = harness((route, body) => {
+    assert.equal(route, '/api/attempts/source-page-details');
+    assert.equal(body.id, 'archive-job');
+    assert.equal(body.attempt_id, 'archive-attempt');
+    return new Promise(resolve => pendingDetails.push(resolve));
+  }).saved('archive-job', 'archive-attempt');
+  assert.equal(pendingDetails.length, 0);
+  const answer = {job_id:'archive-job',attempt_id:'archive-attempt',details:{
+    kind:'recorded_preview',preview:{views:[{kind:'page',section:12,fields:[]}]},
+  }};
+  archived.open = true;
+  const closedRequest = archived.listeners.toggle();
+  archived.open = false;
+  archived.listeners.toggle();
+  pendingDetails.shift()(answer);
+  await closedRequest;
+  assert.equal(find(archived, node => node.textContent === 'Page · Section 12'), undefined);
+  archived.open = true;
+  const wrong = archived.listeners.toggle();
+  pendingDetails.shift()({...answer,attempt_id:'another-attempt'});
+  await wrong;
+  assert(find(archived, node => node.textContent === 'Saved page details did not match this attempt.'));
+  const retry = button(archived, 'Retry saved page details').listeners.click();
+  pendingDetails.shift()(answer);
+  await retry;
+  assert(find(archived, node => node.textContent === 'Page · Section 12'));
+
   for(const [enabled,action] of [[false,'Rehearse autofill'],[true,'Rehearse autofill'],[true,'Create recorded preview']]){
     let request;const instance=harness(async(route,body)=>{if(route.endsWith('/pending'))return {active:false};if(route.endsWith('/preview-start')){request=body;return {task_id:'history-task'};}if(route.endsWith('/status'))return {status:'complete',task_id:'history-task',job_id:'history-job'};throw Error('Unexpected history route');});
     const controls=instance.actions('history-job','source');const label=find(controls,node=>node.tag==='label'&&node.children.some(child=>child.textContent==='Use checked career history'));const checkbox=label.children[0];assert.equal(Boolean(checkbox.checked),false);checkbox.checked=enabled;await button(controls,action).listeners.click();assert.equal(request.use_saved_history===true,enabled&&action==='Rehearse autofill');assert.equal(request.career_history,undefined);assert.equal(request.use_saved_contacts,undefined);

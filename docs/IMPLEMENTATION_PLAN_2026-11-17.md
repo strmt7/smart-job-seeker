@@ -89,13 +89,13 @@ fictional forms to measure interactions and unexpected transitions.
 
 ## Execution order and work admission
 
-1. **Qualify recovery from an interrupted visual check.** The paired
-   [grounded-answer replay](g1/GROUNDED_ANSWERS_2026-11-17.md) verified both
-   previously missed contacts and passed the varied case. The mixed case
-   stopped while free RAM had fallen below inference admission. Retain the
-   exact refusal, apply a bounded read-only review retry when resources
-   recover, and require fresh document and value evidence before proceeding.
-   Keep the previous attempt and 256k capacity evidence intact.
+1. **Replace fixed workflow counts with measured progress.** The
+   [field recovery replay](g1/REVIEW_RECOVERY_AND_CAPTURE_RESULTS_2026-11-17.md)
+   verified three fictional entries after a simulated refusal before visual
+   inference. Remove premature section and entry stops using verified state
+   changes, cycle detection, retained evidence and one coherent worker deadline.
+   Qualify in-flight interruption separately with native request drain and
+   fresh readback.
 2. **R04.1 and R03.1: repair coverage and structural perception.** First account
    for every offered question and add bounded deliberative repair for grounded
    omissions. The current-record and quantity changes have scoped regression
@@ -555,12 +555,11 @@ must be refused without suppressing current intelligence.
 2. Write manifests/checkpoints atomically. Preserve immutable attempt history,
    correction annotations and incomplete artifacts. Recover from partial writes,
    crashes, missing files and disk pressure without falsely reporting success.
-   First scan bounded identity and ordering metadata. Select the requested page
-   before constructing detailed rows. Serve heavyweight saved results through a
-   bound selected-attempt read with a shared writer/reader ceiling and explicit
-   unavailable states. Preserve existing archives and freshness annotations.
-   Test records above the existing 256 KiB list limit and measure peak memory
-   with a populated history, including stale responses during selection changes.
+   History now paginates by bounded identity and ordering metadata and retrieves
+   large saved reports on demand. The compiled route preserved an archived
+   468,306-byte report and the renderer rejected stale detail responses.
+   Measure peak memory with a populated history and qualify explicit incomplete
+   outcomes when the manifest or source artifacts cannot be stored.
 3. Build email-only application packets through the same facts/documents/identity
    pipeline. Parse addresses and requested subject/body/attachments from the ad,
    retaining uncertainties and exact destination bindings.

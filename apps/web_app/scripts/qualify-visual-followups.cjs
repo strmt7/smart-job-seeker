@@ -137,7 +137,7 @@ async function bounded(promise,label,ms=15000){let timer;try{return await Promis
   host.id='later-rehearsal-evidence';
   host.style.padding='20px';
   const earlier=Array.from({length:8},(_,index)=>({view:1,label:`Earlier answer ${index+1}`,kind:'text',status:'visually_matched'}));
-  const view=window.WaypointSourceCopies.previewView({
+  const preview={
    views:[
     {kind:'page'},{kind:'unsupported'},
     ...Array.from({length:6},(_,index)=>({kind:'page',section:index+2})),
@@ -152,7 +152,13 @@ async function bounded(promise,label,ms=15000){let timer;try{return await Promis
     ],
     sections:[{view:9,status:'stopped',reason:'required_fields_unverified'}],
    },
-  },element,{inline:true,jobId:'fictional-job',attemptId:'fictional-rehearsal',api:async(route,body)=>{
+  };
+  host.dataset.detailLoads='0';
+  const view=window.WaypointSourceCopies.savedPageDetails('fictional-job','fictional-rehearsal',{element,api:async(route,body)=>{
+   if(route==='/api/attempts/source-page-details'&&body.id==='fictional-job'&&body.attempt_id==='fictional-rehearsal'){
+    host.dataset.detailLoads=String(Number(host.dataset.detailLoads)+1);
+    return {job_id:body.id,attempt_id:body.attempt_id,details:{kind:'recorded_preview',preview}};
+   }
    if(route!=='/api/attempts/screenshot'||body.id!=='fictional-job'||body.attempt_id!=='fictional-rehearsal'||body.name!==image.name)throw Error('Saved image identity changed');
    return image;
   }});
@@ -160,7 +166,11 @@ async function bounded(promise,label,ms=15000){let timer;try{return await Promis
   document.querySelector('#workspace-pane').append(host);
  },laterImage);
  const later=page.locator('#later-rehearsal-evidence');
+ assert.equal(await later.getAttribute('data-detail-loads'),'0');
+ await later.getByText('Saved page details',{exact:true}).click();
  const savedViews=later.getByRole('combobox',{name:'Saved page view'});
+ await savedViews.waitFor();
+ assert.equal(await later.getAttribute('data-detail-loads'),'1');
  assert.equal(await savedViews.locator('option').count(),8);
  await savedViews.selectOption('8');
  assert.equal(await later.getByText('Employer name · Text and image match',{exact:true}).count(),1);

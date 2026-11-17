@@ -787,7 +787,7 @@ impl CdpDriver {
             .transpose()?;
         let network_before = self.observed_non_read_requests()?;
         let image = if matches!(kind, RecordedFieldKind::Radio) {
-            self.screenshot_recorded_radio(selector, value, false)?
+            self.screenshot_recorded_radio(selector, value, false, true)?
         } else {
             self.scroll_field_into_view(selector)?;
             self.screenshot_field_context(selector)?
@@ -880,7 +880,7 @@ impl CdpDriver {
             return Err(review());
         };
         let image = if matches!(kind, RecordedFieldKind::Radio) {
-            self.screenshot_recorded_radio(selector, value, true)?
+            self.screenshot_recorded_radio(selector, value, true, true)?
         } else {
             self.screenshot_field_feedback(selector)?
         };
@@ -1179,6 +1179,47 @@ impl CdpDriver {
         self.stop_if_non_read_request_observed(capture.network_before)
     }
 
+    /// Recheck the full inspected form and the entered field without acting.
+    pub fn verify_recorded_field_observation(
+        &mut self,
+        capture: &RecordedFieldCapture,
+    ) -> Result<(), DriverError> {
+        self.require_recorded_frames()?;
+        let binding = capture.binding.as_ref().ok_or_else(review)?;
+        if self.inspect_current()? != binding.form {
+            return Err(review());
+        }
+        self.verify_recorded_field(capture)
+    }
+
+    /// Refresh the pixels of an entered field in its unchanged recorded form.
+    /// No field input, focus, scroll or navigation is issued here.
+    pub fn refresh_recorded_field_observation(
+        &mut self,
+        capture: &mut RecordedFieldCapture,
+    ) -> Result<(), DriverError> {
+        self.verify_recorded_field_observation(capture)?;
+        let selector = &capture.binding.as_ref().ok_or_else(review)?.field.selector;
+        let image = if matches!(capture.kind, RecordedFieldKind::Radio) {
+            self.screenshot_recorded_radio(selector, &capture.observed_value, true, false)?
+        } else {
+            self.screenshot_field_feedback(selector)?
+        };
+        let (detail, error, associated_label_detail) =
+            self.recorded_detail_context(selector, capture.kind);
+        self.verify_recorded_field_observation(capture)?;
+        if capture.associated_label_detail && !associated_label_detail {
+            return Err(DriverError(
+                "The recorded field label could not be verified in a fresh image".into(),
+            ));
+        }
+        capture.image = image;
+        capture.detail_image = detail;
+        capture.detail_error = error;
+        capture.associated_label_detail = associated_label_detail;
+        Ok(())
+    }
+
     fn verify_recorded_command(&mut self, command: &BrowserCommand) -> Result<(), DriverError> {
         match command {
             BrowserCommand::Fill {
@@ -1207,13 +1248,16 @@ impl CdpDriver {
         selector: &str,
         label: &str,
         require_checked: bool,
+        scroll: bool,
     ) -> Result<String, DriverError> {
         let node = self
             .radio_selection_inner(selector, label, false, true, require_checked)?
             .ok_or_else(review)?;
-        self.cdp
-            .call("DOM.scrollIntoViewIfNeeded", json!({"nodeId":node}))
-            .map_err(derr)?;
+        if scroll {
+            self.cdp
+                .call("DOM.scrollIntoViewIfNeeded", json!({"nodeId":node}))
+                .map_err(derr)?;
+        }
         if self.captured_scope.is_some() {
             self.screenshot_captured_node(node, true, true, false)
         } else {

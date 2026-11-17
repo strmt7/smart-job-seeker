@@ -14,6 +14,85 @@ use waypoint_workspace::Workspace;
 
 pub const WORKER_FLAG: &str = "--job-source-worker";
 const CANCELLED: &str = "Page capture was cancelled; partial files were retained";
+#[cfg(windows)]
+const CAPTURE_SETUP_SECONDS: u64 = 1500;
+// A single selected report is decoded in memory. Browser images and response
+// bodies live in separate files. Keep the pipe for the receipt and errors.
+pub(crate) const CAPTURE_RESULT_BYTES: usize = 8 * 1024 * 1024;
+pub(crate) const SOURCE_SUMMARY_BYTES: usize = CAPTURE_RESULT_BYTES + 16 * 1024;
+#[cfg(any(windows, test))]
+const WORKER_RESULT: &str = "worker-result.json";
+
+#[cfg(any(windows, test))]
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkerReceipt {
+    schema: u8,
+    task_id: String,
+    bytes: usize,
+    sha256: String,
+}
+
+#[cfg(any(windows, test))]
+fn save_worker_result(
+    destination: &Path,
+    task_id: &str,
+    result: &Value,
+) -> Result<WorkerReceipt, String> {
+    use std::io::Write;
+    crate::recorded_preview::directory(destination)?;
+    if !checked_id(task_id) || result["task_id"] != task_id {
+        return Err("Page capture result does not match the request".into());
+    }
+    let bytes = serde_json::to_vec(result).map_err(|_| "Cannot encode page capture result")?;
+    if bytes.len() > CAPTURE_RESULT_BYTES {
+        return Err(
+            "Page capture result exceeds the selected-report budget. Partial files were retained."
+                .into(),
+        );
+    }
+    let mut file = tempfile::NamedTempFile::new_in(destination)
+        .map_err(|_| "Cannot stage page capture result")?;
+    file.write_all(&bytes)
+        .and_then(|()| file.as_file().sync_all())
+        .map_err(|_| "Cannot save page capture result")?;
+    file.persist_noclobber(destination.join(WORKER_RESULT))
+        .map_err(|_| "Cannot preserve page capture result")?;
+    Ok(WorkerReceipt {
+        schema: 1,
+        task_id: task_id.to_owned(),
+        bytes: bytes.len(),
+        sha256: waypoint_domain::sha256_hex(&bytes),
+    })
+}
+
+#[cfg(any(windows, test))]
+fn load_worker_result(
+    destination: &Path,
+    task_id: &str,
+    receipt: WorkerReceipt,
+) -> Result<Value, String> {
+    if receipt.schema != 1
+        || !checked_id(task_id)
+        || receipt.task_id != task_id
+        || !(1..=CAPTURE_RESULT_BYTES).contains(&receipt.bytes)
+        || receipt.sha256.len() != 64
+        || !receipt.sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err("Invalid page capture result receipt".into());
+    }
+    crate::recorded_preview::directory(destination)?;
+    let bytes = crate::recorded_preview::read(&destination.join(WORKER_RESULT), receipt.bytes)?;
+    if bytes.len() != receipt.bytes || waypoint_domain::sha256_hex(&bytes) != receipt.sha256 {
+        return Err("Saved page capture result differs from its receipt".into());
+    }
+    let value: Value =
+        serde_json::from_slice(&bytes).map_err(|_| "Invalid saved page capture result")?;
+    if value["task_id"] != task_id {
+        return Err("Page capture result does not match the request".into());
+    }
+    Ok(value)
+}
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Request {
@@ -645,7 +724,9 @@ fn finalize(
         .is_some_and(|url| url.as_str() == task.source_url);
     let mut value = match result {
         Ok(result) => {
-            json!({"status":"complete","task_id":id,"job_id":task.job.as_str(),"attempt_id":id,"current_source":current,"result":result})
+            let mut outcome = json!({"status":"complete","task_id":id,"job_id":task.job.as_str(),"attempt_id":id,"current_source":current});
+            outcome["result"] = result;
+            outcome
         }
         Err(error) => {
             json!({"status":if error==CANCELLED{"cancelled"}else{"failed"},"task_id":id,"job_id":task.job.as_str(),"attempt_id":id,"error":error})
@@ -663,7 +744,15 @@ fn finalize(
     }
     value["source_url_sha256"] = json!(waypoint_domain::sha256_hex(task.source_url.as_bytes()));
     value = with_current_candidate(ws, value);
-    let event=task.record.event(json!({"type":"source_capture_result","time":crate::now(),"task_id":id,"status":value["status"],"current_source":current,"result":value["result"]}));
+    let event = task.record.event(json!({
+        "type":"source_capture_result",
+        "time":crate::now(),
+        "task_id":id,
+        "status":value["status"],
+        "current_source":current,
+        "archive_written":value["result"]["archive_written"],
+        "needs_review":value["result"]["needs_review"],
+    }));
     let summary_saved = task.record.source_capture_result(&value).is_ok();
     let status_saved = task.record.status("manual_review", crate::now()).is_ok();
     let saved = event.is_ok() && summary_saved && status_saved;
@@ -717,6 +806,13 @@ fn run_request(
         memory_limit(sys.available_memory(), sys.total_memory())?
     };
     let input = serde_json::to_vec(&request).map_err(|_| "Cannot prepare page capture")?;
+    let rehearsal_seconds = request
+        .replay
+        .as_ref()
+        .filter(|source| source.rehearse)
+        .map_or(0, |_| crate::recorded_preview::REHEARSAL_SECONDS);
+    // Preserve the declared browser session after tool and model preparation.
+    let worker_time = Duration::from_secs(CAPTURE_SETUP_SECONDS + rehearsal_seconds);
     let exe = std::env::current_exe().map_err(|_| "Cannot locate the application worker")?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -731,10 +827,8 @@ fn run_request(
                 .args([WORKER_FLAG])
                 .create_no_window()
                 .stdin(Stdin::from_bytes(input))
-                .timeout(Duration::from_secs(1500))
-                .output_buffer(
-                    OutputBufferPolicy::fail_loud(usize::MAX).with_max_bytes(256 * 1024),
-                );
+                .timeout(worker_time)
+                .output_buffer(OutputBufferPolicy::fail_loud(usize::MAX).with_max_bytes(16 * 1024));
             let process = group
                 .start(&command)
                 .await
@@ -794,7 +888,8 @@ fn run_request(
                     .take(1000)
                     .collect());
             }
-            Ok(value)
+            serde_json::from_value::<WorkerReceipt>(value)
+                .map_err(|_| "Invalid page capture result receipt".to_owned())
         }
         .await;
         let stopped = group
@@ -820,7 +915,10 @@ fn run_request(
         match (outcome, cleanup) {
             (Err(error), Err(cleanup)) => Err(format!("{error}; {cleanup}")),
             (Err(error), _) => Err(error),
-            (Ok(value), Ok(())) => Ok(value),
+            (Ok(_), Ok(())) if cancel.load(Ordering::Acquire) => Err(CANCELLED.to_owned()),
+            (Ok(receipt), Ok(())) => {
+                load_worker_result(&request.destination, &request.task_id, receipt)
+            }
             (Ok(_), Err(error)) => Err(error),
         }
     })
@@ -1058,7 +1156,12 @@ pub fn worker_main() -> i32 {
                 identity = request.task_id.clone();
                 #[cfg(windows)]
                 {
-                    worker(request)
+                    let destination = request.destination.clone();
+                    let result = worker(request)?;
+                    save_worker_result(&destination, &identity, &result).and_then(|receipt| {
+                        serde_json::to_value(receipt)
+                            .map_err(|_| "Cannot encode page capture receipt".into())
+                    })
                 }
                 #[cfg(not(windows))]
                 {
@@ -1088,6 +1191,33 @@ pub fn worker_main() -> i32 {
 mod tests {
     use super::*;
     const ID: &str = "0123456789abcdef0123456789abcdef";
+    #[test]
+    fn page_worker_receipt_binds_a_large_result_to_one_task() {
+        let root = tempfile::tempdir().unwrap();
+        let value = json!({"task_id":ID,"report":{"details":"x".repeat(512 * 1024)}});
+        let receipt = save_worker_result(root.path(), ID, &value).unwrap();
+        let compact = serde_json::to_vec(&receipt).unwrap();
+        assert!(compact.len() < 1024);
+        assert!(receipt.bytes > 256 * 1024);
+        let decode = || serde_json::from_slice(&compact).unwrap();
+        assert_eq!(
+            load_worker_result(root.path(), ID, decode()).unwrap(),
+            value
+        );
+        assert!(load_worker_result(root.path(), &"f".repeat(32), decode()).is_err());
+        assert!(save_worker_result(root.path(), ID, &value).is_err());
+        assert_eq!(
+            load_worker_result(root.path(), ID, decode()).unwrap(),
+            value
+        );
+        let path = root.path().join(WORKER_RESULT);
+        let mut changed = std::fs::read(&path).unwrap();
+        let index = changed.iter().position(|byte| *byte == b'x').unwrap();
+        changed[index] = b'y';
+        std::fs::write(path, changed).unwrap();
+        assert!(load_worker_result(root.path(), ID, decode()).is_err());
+    }
+
     #[test]
     fn outbound_source_urls_refuse_identifiers_authentication_and_forbidden_sources() {
         let profile = json!({"first_name":"Avery","last_name":"Invented","email":"avery@fixture.invalid","phone":"+49 555 0199"});

@@ -630,5 +630,52 @@
     views.set(root, render); render(); recover();
     return root;
   }
-  window.WaypointSourceCopies = { create, outlineView, previewAction, previewView };
+  function savedPageDetails(jobId, attemptId, dependencies) {
+    const { api, element: el } = dependencies;
+    const details = el('details', '', 'source-copy-result');
+    const body = el('div');
+    details.append(el('summary', 'Saved page details'), body);
+    let generation = 0;
+    async function load() {
+      const request = ++generation;
+      const status = el('p', 'Loading saved page details…', 'footnote');
+      status.setAttribute('role', 'status');
+      body.replaceChildren(status);
+      const current = () => request === generation && details.isConnected && details.open;
+      try {
+        const record = await api('/api/attempts/source-page-details', {
+          id: jobId, attempt_id: attemptId,
+        });
+        if (!current()) return;
+        if (record.job_id !== jobId || record.attempt_id !== attemptId || !record.details) {
+          throw new Error('Saved page details did not match this attempt.');
+        }
+        const saved = record.details;
+        const options = { api, jobId, attemptId, inline: true, renderEvidence: dependencies.renderEvidence };
+        if (saved.kind === 'recorded_preview' && saved.preview) {
+          body.replaceChildren(previewView(saved.preview, el, options));
+        } else if (saved.archive_written === true) {
+          body.replaceChildren(
+            outlineView(saved.form_outline, el, options),
+            previewAction(jobId, attemptId, dependencies),
+          );
+        } else {
+          body.replaceChildren(el('p', 'Review the saved application folder for this page copy.', 'review-label'));
+        }
+      } catch (error) {
+        if (!current()) return;
+        const retry = el('button', 'Retry saved page details', 'button-secondary');
+        retry.type = 'button';
+        retry.addEventListener('click', load);
+        body.replaceChildren(el('p', error.message, 'review-label'), retry);
+      }
+    }
+    details.addEventListener('toggle', () => {
+      if (details.open) return load();
+      generation++;
+      body.replaceChildren();
+    });
+    return details;
+  }
+  window.WaypointSourceCopies = { create, outlineView, previewAction, previewView, savedPageDetails };
 })();

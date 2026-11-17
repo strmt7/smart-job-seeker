@@ -47,7 +47,12 @@ pub fn inputs(
         return Err("Review possible duplicates before preparing answers".into());
     }
     let root = crate::attempt_record::attempt_directory(ws, job, attempt)?;
-    let record = read_record(&root.join("source-page-summary.json"))?;
+    let bytes = crate::recorded_preview::read(
+        &root.join("source-page-summary.json"),
+        crate::job_capture::SOURCE_SUMMARY_BYTES,
+    )?;
+    let record: Value =
+        serde_json::from_slice(&bytes).map_err(|_| "Invalid saved question record")?;
     let url = selected
         .canonical_url
         .as_deref()

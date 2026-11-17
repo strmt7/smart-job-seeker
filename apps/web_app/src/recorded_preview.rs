@@ -23,7 +23,7 @@ pub(crate) struct Source {
     pub(crate) candidate_snapshot_sha256: Option<String>,
 }
 
-fn linked(metadata: &fs::Metadata) -> bool {
+pub(crate) fn linked(metadata: &fs::Metadata) -> bool {
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
@@ -33,7 +33,7 @@ fn linked(metadata: &fs::Metadata) -> bool {
     metadata.file_type().is_symlink()
 }
 
-fn directory(path: &Path) -> Result<(), String> {
+pub(crate) fn directory(path: &Path) -> Result<(), String> {
     let meta = fs::symlink_metadata(path).map_err(|_| "Saved page directory is unavailable")?;
     if !meta.is_dir() || linked(&meta) {
         return Err("Saved page directory is invalid".into());
@@ -41,7 +41,7 @@ fn directory(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn read(path: &Path, max: usize) -> Result<Vec<u8>, String> {
+pub(crate) fn read(path: &Path, max: usize) -> Result<Vec<u8>, String> {
     let meta = fs::symlink_metadata(path).map_err(|_| "Saved page evidence is unavailable")?;
     if !meta.is_file() || linked(&meta) || meta.len() > max as u64 {
         return Err("Saved page evidence is invalid".into());
@@ -77,7 +77,7 @@ impl Source {
         directory(&self.directory)?;
         let summary: Value = serde_json::from_slice(&read(
             &self.directory.join("source-page-summary.json"),
-            256 * 1024,
+            crate::job_capture::SOURCE_SUMMARY_BYTES,
         )?)
         .map_err(|_| "Invalid saved page record")?;
         let digest = waypoint_domain::sha256_hex(url.as_bytes());
@@ -325,6 +325,13 @@ fn render_at(
 
 #[cfg(windows)]
 const REHEARSAL_LIMIT: usize = 16;
+#[cfg(windows)]
+const REVIEW_MEMORY_WAIT: std::time::Duration = std::time::Duration::from_secs(45);
+#[cfg(all(windows, test))]
+thread_local! {
+    static TEST_FIELD_MEMORY_REFUSAL: std::cell::Cell<Option<crate::InferenceMemoryRefusal>> =
+        const { std::cell::Cell::new(None) };
+}
 /// Shared by launch and accounting. Larger local reasoning models need enough
 /// time to complete mixed materials; RAM, cancellation and action guards remain.
 #[cfg(windows)]
@@ -540,6 +547,7 @@ struct RehearsalVision {
     model: Option<crate::visual_review::VisionIdentityGuard>,
     identity: Value,
     targets: Vec<Value>,
+    field_review_recovery_used: bool,
 }
 
 #[cfg(windows)]
@@ -615,6 +623,7 @@ impl RehearsalVision {
             }),
             identity: metadata.unwrap_or(Value::Null),
             targets: Vec::new(),
+            field_review_recovery_used: false,
         }
     }
 
@@ -700,6 +709,103 @@ impl RehearsalVision {
             crate::visual_review::review_recorded_field(model, self.addr, capture)?;
         Ok((recorded_vision_status(outcome), transcription))
     }
+
+    fn review_entered_field(
+        &mut self,
+        driver: &mut waypoint_browser::CdpDriver,
+        capture: &mut waypoint_browser::RecordedFieldCapture,
+        directory: &Path,
+        index: usize,
+        replay_before: Option<&Value>,
+        result: &mut Value,
+    ) {
+        let mut recovered = false;
+        #[cfg(not(test))]
+        let admission = crate::sample_inference_memory();
+        #[cfg(test)]
+        let admission = TEST_FIELD_MEMORY_REFUSAL
+            .take()
+            .map_or_else(crate::sample_inference_memory, Err);
+        if let Err(refusal) = admission {
+            result["review_reason"] = json!(bounded_text(&refusal.to_string()));
+            // A request that was already issued can still be running. Only
+            // a known admission refusal before review permits this recovery.
+            if !matches!(refusal, crate::InferenceMemoryRefusal::Pressure { .. })
+                || self.field_review_recovery_used
+                || self.model.is_none()
+            {
+                return;
+            }
+            self.field_review_recovery_used = true;
+            let initial = json!({
+                "scope": "entered_field_before_visual_review",
+                "field": result,
+                "reason": "memory_pressure",
+            });
+            let initial_archive = match archive_candidate_answers(
+                directory,
+                "recovery",
+                index + 1,
+                "entries",
+                &initial,
+            ) {
+                Ok(value) => value,
+                Err(reason) => {
+                    result["visual_recovery"] =
+                        json!({"status":"evidence_unavailable","reason":reason});
+                    return;
+                }
+            };
+            let started = std::time::Instant::now();
+            let outcome = recover_field_observation(driver, capture, replay_before, || {
+                wait_for_review_memory(crate::sample_inference_memory, REVIEW_MEMORY_WAIT)
+            })
+            .and_then(|()| save_field_images(directory, 360 + index, capture, result));
+            result["visual_recovery"] = json!({
+                "status": "stopped",
+                "initial_archive": initial_archive,
+                "elapsed_ms": started.elapsed().as_millis(),
+            });
+            match outcome {
+                Ok(()) => {
+                    if let Some(field) = result.as_object_mut() {
+                        field.remove("review_reason");
+                    }
+                    recovered = true;
+                }
+                Err(reason) => {
+                    result["visual_recovery"]["reason"] = json!(bounded_text(&reason));
+                    result["review_reason"] = json!(bounded_text(&reason));
+                    return;
+                }
+            }
+        }
+        match self.review_field(capture) {
+            Ok((status, transcription)) => {
+                result["status"] = json!(status);
+                if let Some(transcription) = transcription {
+                    result["transcription"] = transcription;
+                }
+            }
+            Err(reason) => result["review_reason"] = json!(bounded_text(&reason)),
+        }
+        if recovered {
+            let current = driver
+                .verify_recorded_field_observation(capture)
+                .map_err(|error| error.to_string())
+                .and_then(|()| verify_recovery_replay(driver, replay_before));
+            if let Err(reason) = current {
+                result["status"] = json!("changed_after_entry");
+                result["review_reason"] = json!(bounded_text(&reason));
+            }
+            result["visual_recovery"]["status"] =
+                json!(if result["status"] == "visually_matched" {
+                    "verified"
+                } else {
+                    "stopped"
+                });
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -749,6 +855,67 @@ fn observed_replay_activity(before: Option<&Value>, after: Option<&Value>) -> Va
 }
 
 #[cfg(windows)]
+fn verify_recovery_replay(
+    driver: &mut waypoint_browser::CdpDriver,
+    before: Option<&Value>,
+) -> Result<(), String> {
+    let current = driver
+        .rehearsal_replay_report()
+        .map_err(|e| e.to_string())?;
+    let activity = observed_replay_activity(before, Some(&current));
+    if activity["status"] != "observed"
+        || ![
+            "blocked",
+            "cached_non_read_replies",
+            "unreplayed_transports",
+            "unmanaged_child_sessions",
+        ]
+        .iter()
+        .all(|key| activity["delta"][key] == 0)
+        || !current["unsupported_targets"].is_object()
+        || !before
+            .is_some_and(|report| report["unsupported_targets"] == current["unsupported_targets"])
+    {
+        return Err("Saved-page request activity changed or could not be verified".into());
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn recover_field_observation(
+    driver: &mut waypoint_browser::CdpDriver,
+    capture: &mut waypoint_browser::RecordedFieldCapture,
+    replay_before: Option<&Value>,
+    wait: impl FnOnce() -> Result<(), crate::InferenceMemoryRefusal>,
+) -> Result<(), String> {
+    verify_recovery_replay(driver, replay_before)?;
+    wait().map_err(|error| error.to_string())?;
+    verify_recovery_replay(driver, replay_before)?;
+    driver
+        .refresh_recorded_field_observation(capture)
+        .map_err(|error| error.to_string())?;
+    verify_recovery_replay(driver, replay_before)
+}
+
+#[cfg(any(windows, test))]
+fn wait_for_review_memory(
+    mut sample: impl FnMut() -> Result<(), crate::InferenceMemoryRefusal>,
+    limit: std::time::Duration,
+) -> Result<(), crate::InferenceMemoryRefusal> {
+    use crate::InferenceMemoryRefusal;
+    use std::time::{Duration, Instant};
+    let started = Instant::now();
+    loop {
+        let result = sample();
+        let remaining = limit.saturating_sub(started.elapsed());
+        if !matches!(result, Err(InferenceMemoryRefusal::Pressure { .. })) || remaining.is_zero() {
+            return result;
+        }
+        std::thread::sleep(remaining.min(Duration::from_secs(1)));
+    }
+}
+
+#[cfg(windows)]
 fn archive_history(
     screenshots: &Path,
     index: usize,
@@ -767,7 +934,7 @@ fn archive_candidate_answers(
     value: &Value,
 ) -> Result<Value, String> {
     use std::io::Write;
-    if !matches!(category, "history" | "facts" | "progress")
+    if !matches!(category, "history" | "facts" | "progress" | "recovery")
         || !matches!(kind, "plan" | "entries")
         || !(1..=64).contains(&index)
     {
@@ -1259,7 +1426,7 @@ impl Rehearsal {
                     reviewed
                 },
             ) {
-                Ok(capture) => {
+                Ok(mut capture) => {
                     if let Some(next) = capture.continuation() {
                         settled_form = next.clone();
                         continuation = Some(next.clone());
@@ -1267,42 +1434,26 @@ impl Rehearsal {
                     result["control"] = json!(capture.control());
                     result["kind"] = json!(capture.kind());
                     result["status"] = json!("visual_unavailable");
-                    let mut image_saved = if let Ok((name, digest)) =
-                        save_image(directory, 10 + index, capture.image())
-                    {
-                        result["image"] = json!(name);
-                        result["sha256"] = json!(digest);
-                        true
-                    } else {
-                        false
-                    };
-                    if let Some(error) = capture.detail_error() {
-                        result["detail_capture_error"] = json!(bounded_text(error));
-                    }
-                    if let Some(image) = capture.detail_image() {
-                        match save_image(directory, 80 + index, image) {
-                            Ok((name, digest)) => {
-                                result["detail_image"] = json!(name);
-                                result["detail_sha256"] = json!(digest);
+                    // Keep entered field images separate from the target
+                    // range. The old 0010 range overlapped at field eleven.
+                    let image_saved =
+                        match save_field_images(directory, 300 + index, &capture, &mut result) {
+                            Ok(()) => {
+                                self.vision.review_entered_field(
+                                    driver,
+                                    &mut capture,
+                                    directory,
+                                    index,
+                                    replay_before.as_ref(),
+                                    &mut result,
+                                );
+                                true
                             }
-                            Err(_) => {
-                                image_saved = false;
-                                result["detail_capture_error"] =
-                                    json!("The entered field detail image could not be saved");
+                            Err(reason) => {
+                                result["review_reason"] = json!(bounded_text(&reason));
+                                false
                             }
-                        }
-                    }
-                    if image_saved {
-                        match self.vision.review_field(&capture) {
-                            Ok((status, transcription)) => {
-                                result["status"] = json!(status);
-                                if let Some(transcription) = transcription {
-                                    result["transcription"] = transcription;
-                                }
-                            }
-                            Err(reason) => result["review_reason"] = json!(bounded_text(&reason)),
-                        }
-                    }
+                        };
                     if !image_saved || result["status"] != "visually_matched" {
                         self.halted = true;
                     }
@@ -1724,8 +1875,62 @@ fn save_image(directory: &Path, sequence: usize, image: &str) -> Result<(String,
     Ok((name, waypoint_domain::sha256_hex(&bytes)))
 }
 
+#[cfg(windows)]
+fn save_field_images(
+    directory: &Path,
+    sequence: usize,
+    capture: &waypoint_browser::RecordedFieldCapture,
+    field: &mut Value,
+) -> Result<(), String> {
+    let (name, digest) = save_image(directory, sequence, capture.image())?;
+    let field = field
+        .as_object_mut()
+        .ok_or("Invalid field evidence record")?;
+    field.insert("image".into(), json!(name));
+    field.insert("sha256".into(), json!(digest));
+    for key in ["detail_image", "detail_sha256", "detail_capture_error"] {
+        field.remove(key);
+    }
+    if let Some(reason) = capture.detail_error() {
+        field.insert("detail_capture_error".into(), json!(bounded_text(reason)));
+    }
+    if let Some(image) = capture.detail_image() {
+        let (name, digest) = save_image(directory, sequence + 20, image)?;
+        field.insert("detail_image".into(), json!(name));
+        field.insert("detail_sha256".into(), json!(digest));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn review_memory_wait_requires_a_valid_sample_within_its_budget() {
+        use crate::InferenceMemoryRefusal;
+        use std::time::Duration;
+        let pressure = || InferenceMemoryRefusal::Pressure {
+            available: 7 * 1024_u64.pow(3),
+            required: 8 * 1024_u64.pow(3),
+        };
+        assert_eq!(
+            super::wait_for_review_memory(|| Err(pressure()), Duration::ZERO),
+            Err(pressure())
+        );
+        let mut samples = [Err(InferenceMemoryRefusal::Unavailable), Ok(())].into_iter();
+        assert_eq!(
+            super::wait_for_review_memory(|| samples.next().unwrap(), Duration::from_millis(1)),
+            Err(InferenceMemoryRefusal::Unavailable)
+        );
+        assert_eq!(samples.next(), Some(Ok(())));
+        let mut samples = [Err(pressure()), Ok(())].into_iter();
+        assert!(super::wait_for_review_memory(
+            || samples.next().unwrap(),
+            Duration::from_millis(20)
+        )
+        .is_ok());
+        assert_eq!(samples.next(), None);
+    }
+
     #[cfg(windows)]
     #[test]
     fn history_answer_archives_are_bounded_distinct_and_never_overwritten() {
@@ -1932,6 +2137,8 @@ mod tests {
             url: String,
             selector: String,
             file_name: String,
+            #[serde(default)]
+            check_review_recovery: bool,
         }
         let path =
             PathBuf::from(std::env::var_os("WAYPOINT_UPLOAD_PROBE").expect("private fixture"));
@@ -1987,9 +2194,18 @@ mod tests {
             let initial = driver
                 .rehearsal_replay_report()
                 .map_err(|e| e.to_string())?;
-            let capture = driver
-                .rehearse_recorded_field(&form, &fixture.selector, &fixture.file_name)
-                .map_err(|e| e.to_string())?;
+            let mut capture = if fixture.check_review_recovery {
+                driver.rehearse_recorded_field_progressive(
+                    &form,
+                    &fixture.selector,
+                    &fixture.file_name,
+                    &[],
+                    |_| Ok(()),
+                )
+            } else {
+                driver.rehearse_recorded_field(&form, &fixture.selector, &fixture.file_name)
+            }
+            .map_err(|e| e.to_string())?;
             let mut observations = Vec::new();
             let started = std::time::Instant::now();
             for (index, delay) in [0, 300, 1700].iter().enumerate() {
@@ -2012,9 +2228,37 @@ mod tests {
                 assert_eq!(activity["status"], "observed");
                 observations.push(json!({"elapsed_ms":started.elapsed().as_millis(),"requested_delay_ms":delay,"native_verified":verified.is_ok(),"error":verified.err(),"image":name,"sha256":waypoint_domain::sha256_hex(&png),"replay":replay,"replay_activity":activity}));
             }
-            Ok(
-                json!({"scope":"native file-widget diagnostics only; no local-model or whole-workflow credit","appcontainer":ready.appcontainer,"capabilities":ready.capabilities,"initial_replay":initial,"observations":observations}),
-            )
+            let mut report = json!({"scope":"native file-widget diagnostics only; no local-model or whole-workflow credit","appcontainer":ready.appcontainer,"capabilities":ready.capabilities,"initial_replay":initial,"observations":observations});
+            if fixture.check_review_recovery {
+                recover_field_observation(&mut driver, &mut capture, Some(&initial), || Ok(()))?;
+                driver
+                    .verify_recorded_field_observation(&capture)
+                    .map_err(|e| e.to_string())?;
+                let refreshed = save_image(folder, 360, capture.image())?;
+                // Even the same URL and schema can be a new document. Use a
+                // fresh replay baseline so that document/value validation
+                // independently refuses the old capture after reopening.
+                driver.open(&fixture.url).map_err(|e| e.to_string())?;
+                let after_reopen = driver
+                    .rehearsal_replay_report()
+                    .map_err(|e| e.to_string())?;
+                verify_recovery_replay(&mut driver, Some(&after_reopen))?;
+                let refusal = recover_field_observation(
+                    &mut driver,
+                    &mut capture,
+                    Some(&after_reopen),
+                    || Ok(()),
+                )
+                .expect_err("A reopened document cannot reuse a previous entry");
+                report["review_recovery"] = json!({
+                    "refreshed_attachment_verified":true,
+                    "image":refreshed.0,
+                    "sha256":refreshed.1,
+                    "reopened_document_refused":refusal,
+                    "replay":driver.rehearsal_replay_report().map_err(|e| e.to_string())?,
+                });
+            }
+            Ok(report)
         })();
         let close = driver.execute(&BrowserCommand::Close);
         let report = json!({"result":result,"browser_closed":close.is_ok()});
@@ -2336,6 +2580,8 @@ mod tests {
             manifest_sha256: String,
             url: String,
             selection: crate::private_inference::Selection,
+            #[serde(default)]
+            simulate_initial_review_pressure: bool,
         }
         let path = PathBuf::from(
             std::env::var_os("WAYPOINT_AUTO_MODEL_FIXTURE")
@@ -2362,6 +2608,12 @@ mod tests {
         crate::private_inference::create_namespace(&attempt, "automatic-rehearsal").unwrap();
         let existing = crate::resident_model_status().unwrap();
         assert_eq!(existing["state"], "no_model");
+        if fixture.simulate_initial_review_pressure {
+            TEST_FIELD_MEMORY_REFUSAL.set(Some(crate::InferenceMemoryRefusal::Pressure {
+                available: 7 * 1024_u64.pow(3),
+                required: 8 * 1024_u64.pow(3),
+            }));
+        }
         let result = render(
             &fixture.source,
             &fixture.url,
@@ -2409,6 +2661,32 @@ mod tests {
             ["First name", "Email", "Country"]
         );
         assert!(fields.iter().all(|v| v["status"] == "visually_matched"));
+        if fixture.simulate_initial_review_pressure {
+            assert!(TEST_FIELD_MEMORY_REFUSAL.take().is_none());
+            assert_eq!(fields[0]["visual_recovery"]["status"], "verified");
+            assert_eq!(fields[0]["native_verified"], true);
+            assert!(fields[1..]
+                .iter()
+                .all(|field| field.get("visual_recovery").is_none()));
+            let note = &fields[0]["visual_recovery"]["initial_archive"];
+            let original = read(&attempt.join(note["file"].as_str().unwrap()), 512 * 1024).unwrap();
+            assert_eq!(note["sha256"], waypoint_domain::sha256_hex(&original));
+            let original: Value = serde_json::from_slice(&original).unwrap();
+            assert_eq!(original["reason"], "memory_pressure");
+            assert_eq!(original["field"]["status"], "visual_unavailable");
+            assert_eq!(original["field"]["control"], fields[0]["control"]);
+            assert_ne!(original["field"]["image"], fields[0]["image"]);
+            for field in [&original["field"], &fields[0]] {
+                let image = read(
+                    &screenshots.join(field["image"].as_str().unwrap()),
+                    6 * 1024 * 1024,
+                )
+                .unwrap();
+                assert_eq!(field["sha256"], waypoint_domain::sha256_hex(&image));
+            }
+            assert_eq!(result["replay"]["cached_non_read_replies"], 0);
+            assert_eq!(result["replay"]["unmanaged_child_sessions"], 0);
+        }
         let targets = result["rehearsal"]["visual_gate"]["targets"]
             .as_array()
             .unwrap();

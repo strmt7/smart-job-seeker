@@ -1029,31 +1029,44 @@ fn source_page_copy_summary(
     current_profile: Option<&str>,
     current_facts: Option<&str>,
 ) -> Value {
+    use crate::job_capture::SOURCE_SUMMARY_BYTES;
+    const INLINE_BYTES: u64 = 256 * 1024;
     let path = root.join("source-page-summary.json");
-    if let Ok(meta) = fs::symlink_metadata(&path) {
-        #[cfg(windows)]
-        let linked = {
-            use std::os::windows::fs::MetadataExt;
-            meta.file_attributes() & 0x400 != 0
-        };
-        #[cfg(not(windows))]
-        let linked = meta.file_type().is_symlink();
-        if !meta.is_file() || linked || meta.len() > 256 * 1024 {
-            return json!({"status":"unreadable"});
-        }
-    }
-    let Ok(file) = fs::File::open(path) else {
-        return Value::Null;
+    let meta = match fs::symlink_metadata(&path) {
+        Ok(meta) => meta,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Value::Null,
+        Err(_) => return json!({"status":"unreadable"}),
     };
-    let mut bytes = Vec::new();
-    if file.take(256 * 1024 + 1).read_to_end(&mut bytes).is_err() || bytes.len() > 256 * 1024 {
+    if !meta.is_file()
+        || crate::recorded_preview::linked(&meta)
+        || meta.len() > SOURCE_SUMMARY_BYTES as u64
+    {
         return json!({"status":"unreadable"});
     }
-    let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
-        return json!({"status":"unreadable"});
-    };
+    if meta.len() > INLINE_BYTES {
+        return json!({"status":"deferred","details_available":true});
+    }
+    match read_source_page_copy(&path, INLINE_BYTES as usize) {
+        Ok(value) => project_source_page_copy(value, current_profile, current_facts),
+        Err(_) => json!({"status":"unreadable"}),
+    }
+}
+
+fn read_source_page_copy(path: &Path, limit: usize) -> Result<Value, String> {
+    let bytes = crate::recorded_preview::read(path, limit)?;
+    serde_json::from_slice(&bytes).map_err(|_| "Invalid saved page-copy summary".into())
+}
+
+fn project_source_page_copy(
+    mut value: Value,
+    current_profile: Option<&str>,
+    current_facts: Option<&str>,
+) -> Value {
     if value["kind"] == "recorded_preview" {
-        let mut preview = value["result"]["preview"].clone();
+        let mut preview = value
+            .pointer_mut("/result/preview")
+            .map(Value::take)
+            .unwrap_or_default();
         let source = &preview["rehearsal"]["candidate_source"];
         if crate::job_capture::candidate_profile_bound(source) {
             preview["candidate_profile_current"] = json!(
@@ -1081,6 +1094,34 @@ fn source_page_copy_summary(
         .unwrap_or_else(|| json!({"status":"unavailable"}))
     };
     json!({"status":value["status"],"archive_written":value["result"]["archive_written"],"needs_review":value["result"]["needs_review"],"resources":value["result"]["report"]["recorded_resources"],"requests":value["result"]["report"]["requests"],"form_outline":outline})
+}
+
+/// Read one selected attempt's stored page result, with current fact revision checks.
+pub fn source_page_details(
+    ws: &Workspace,
+    job: &JobIdentityId,
+    attempt: &str,
+) -> Result<Value, String> {
+    let root = attempt_directory(ws, job, attempt)?;
+    crate::recorded_preview::directory(&root)?;
+    let value = read_source_page_copy(
+        &root.join("source-page-summary.json"),
+        crate::job_capture::SOURCE_SUMMARY_BYTES,
+    )?;
+    if value["job_id"] != job.as_str() || value["attempt_id"] != attempt {
+        return Err("Saved page result does not match this application record".into());
+    }
+    let profile = ws
+        .candidate_profile()
+        .ok()
+        .flatten()
+        .map(|raw| waypoint_domain::sha256_hex(raw.as_bytes()));
+    let facts = ws.active_facts_digest().ok();
+    Ok(json!({
+        "job_id":job.as_str(),
+        "attempt_id":attempt,
+        "details": project_source_page_copy(value, profile.as_deref(), facts.as_deref()),
+    }))
 }
 
 fn read_attempt_metadata(directory: &Path) -> Result<Value, String> {
@@ -1974,11 +2015,15 @@ impl AttemptRecord {
         self.dir.join("source-page")
     }
     pub(crate) fn source_capture_result(&self, value: &Value) -> Result<(), String> {
+        let bytes = serde_json::to_vec(value).map_err(|_| "Cannot encode page-copy summary")?;
+        if bytes.len() > crate::job_capture::SOURCE_SUMMARY_BYTES {
+            return Err("Page-copy summary exceeds its selected-report budget".into());
+        }
         let mut file = tempfile::NamedTempFile::new_in(&self.dir)
             .map_err(|_| "Cannot save page-copy summary")?;
-        serde_json::to_writer_pretty(&mut file, value)
-            .map_err(|_| "Cannot encode page-copy summary")?;
-        file.flush().map_err(|_| "Cannot save page-copy summary")?;
+        file.write_all(&bytes)
+            .and_then(|()| file.as_file().sync_all())
+            .map_err(|_| "Cannot save page-copy summary")?;
         file.persist_noclobber(self.dir.join("source-page-summary.json"))
             .map_err(|_| "Cannot preserve page-copy summary")?;
         Ok(())
@@ -2905,6 +2950,68 @@ pub fn capture_before_navigation(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn large_page_result_loads_for_one_attempt_at_its_current_revision() {
+        let root = tempfile::tempdir().unwrap();
+        let ws = Workspace::open(root.path()).unwrap();
+        let job = JobIdentityId::new("fictional-large-page-result").unwrap();
+        let attempt = "fixture";
+        let prefix = Sha256Digest::of(job.as_str());
+        let directory = root
+            .path()
+            .join("application-records")
+            .join(format!("{}-{attempt}", &prefix.as_str()[..16]));
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(
+            directory.join("attempt.json"),
+            serde_json::to_vec(&json!({
+                "job_id":job.as_str(),"attempt_id":attempt,"status":"manual_review","started_at":1
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        ws.save_candidate_profile(r#"{"email":"new@example.invalid"}"#)
+            .unwrap();
+        let record = AttemptRecord {
+            dir: directory.clone(),
+            sequence: 0,
+        };
+        let payload = "fictional".repeat(43_000);
+        let mut summary = json!({
+            "job_id":job.as_str(),"attempt_id":attempt,"status":"complete","kind":"recorded_preview",
+            "result":{"preview":{"views":[],
+                "rehearsal":{"scope":"saved_candidate_contacts",
+                    "candidate_source":{"scope":"saved_candidate_contacts","source_profile_sha256":"a".repeat(64)},
+                    "fixture_payload":payload
+                }
+            }}
+        });
+        record.source_capture_result(&summary).unwrap();
+        let saved = directory.join("source-page-summary.json");
+        let original = fs::read(&saved).unwrap();
+        assert!(original.len() > 256 * 1024);
+        let listing = list(&ws, &job).unwrap();
+        assert_eq!(
+            listing["attempts"][0]["source_page_copy"],
+            json!({"status":"deferred","details_available":true})
+        );
+        let loaded = source_page_details(&ws, &job, attempt).unwrap();
+        assert_eq!(loaded["attempt_id"], attempt);
+        assert_eq!(
+            loaded["details"]["preview"]["candidate_profile_current"],
+            false
+        );
+        assert_eq!(
+            loaded["details"]["preview"]["rehearsal"]["fixture_payload"],
+            payload
+        );
+        assert_eq!(fs::read(&saved).unwrap(), original);
+        assert!(source_page_details(&ws, &job, "other").is_err());
+        summary["attempt_id"] = json!("other");
+        fs::write(&saved, serde_json::to_vec(&summary).unwrap()).unwrap();
+        assert!(source_page_details(&ws, &job, attempt).is_err());
+    }
+
     #[test]
     fn saved_history_preview_freshness_is_current_without_rewriting_its_record() {
         let folder = tempfile::tempdir().unwrap();
