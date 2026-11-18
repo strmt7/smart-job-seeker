@@ -407,6 +407,11 @@ used by development tools and tests. Do not add WSL or Docker as product require
   Keep native geometry and scroll-state rechecks. If a heading requires a
   separate image, transcribe it independently and join it through the native
   section path. See [summary detail images](docs/g1/SUMMARY_DETAIL_IMAGES_2026-11-18.md).
+- Preserve the original native file control and form owner across review
+  sections. Verify the prepared digest and current browser file together.
+  Recheck the complete selection set after asynchronous hashing. A
+  replacement input with identical file bytes cannot stand in for the
+  original. See [terminal attachment readback](docs/g1/TERMINAL_ATTACHMENT_READBACK_2026-11-18.md).
 - An iframe's full-box center can be offscreen while its fields are visible.
   Owner availability uses a common ancestor-viewport intersection and native
   hit tests; each actual field still requires complete visual/native checks.

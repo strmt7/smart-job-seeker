@@ -278,7 +278,7 @@ function harness(api, onFinished) {
   await button(review,'View image').listeners.click();
   assert(find(review,node => node.tag==='img'));
   const summaryRecord = {scope:'offline_saved_summary',status:'pending_manual_review',
-    expected_count:2,matched_count:1,reason:'Some prepared answers need review',
+    expected_count:2,matched_count:1,
     comparisons:[{key:{sections:['Contact'],label:'Email'},status:'native_value_differs'}]};
   const summaryPreview = (final_review, final_summary, options = {}) => {
     const panel = harness(async () => {}).preview({views:[preview.views[0],{...terminal,final_review,final_summary}],
@@ -293,6 +293,11 @@ function harness(api, onFinished) {
   const checkedSummary = summaryPreview(true,{...summaryRecord,status:'answers_verified',matched_count:2,reason:undefined,comparisons:[]});
   assert(find(checkedSummary,node => node.textContent==='Summary answers verified'));
   assert(find(checkedSummary,node => node.textContent==='2 of 2 prepared answers verified in the saved summary.'));
+  const checkedFiles = summaryPreview(false,{...summaryRecord,attachment_matched_count:1,
+    comparisons:[{key:{sections:['Documents'],label:'Cover letter'},status:'attachment_content_unverified',
+      attachment:{status:'different'}}]});
+  assert(find(checkedFiles,node => node.textContent==='1 attachment matches its prepared PDF.'));
+  assert(find(checkedFiles,node => node.textContent==='Documents · Cover letter · Current file differs from the prepared PDF'));
   const detailSummary = summaryPreview(false,{...summaryRecord,detail_reads:[{
     key:{sections:['Contact'],label:'Email'},images:[
       {part:'heading',image:'0004.png',sha256:digest},{part:'answer',image:'0005.png',sha256:digest}

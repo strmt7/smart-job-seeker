@@ -79,6 +79,30 @@ pub struct RecordedSummaryCapture {
     digest: String,
 }
 
+/// A previously verified file input in the owned rehearsal.
+pub struct RecordedAttachmentWitness {
+    document: RecordedDocument,
+    control: u64,
+    form_owner: Option<u64>,
+    key: SummaryKey,
+    prepared: FileExpectation,
+}
+
+impl RecordedAttachmentWitness {
+    pub fn matches_prepared(&self, key: &SummaryKey, filename: &str, sha256: &str) -> bool {
+        self.key == *key && self.prepared.name == filename && self.prepared.sha256 == sha256
+    }
+}
+
+#[derive(serde::Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum RecordedAttachmentVerification {
+    Retained { sha256: String, size: u64 },
+    NotRetained,
+    Different,
+    Unavailable { reason: String },
+}
+
 impl RecordedSummaryCapture {
     pub fn answers(&self) -> impl Iterator<Item = (&SummaryAnswer, bool)> {
         self.native.rows.iter().map(|row| {
@@ -193,6 +217,166 @@ fn require_summary_replay(driver: &mut CdpDriver) -> Result<(), DriverError> {
 }
 
 impl CdpDriver {
+    /// Preserve the exact file control and owner for a later read-only check.
+    pub fn capture_recorded_attachment_witness(
+        &mut self,
+        capture: &RecordedFieldCapture,
+        prepared_sha256: &str,
+    ) -> Result<RecordedAttachmentWitness, DriverError> {
+        self.require_recorded_frames()?;
+        let BrowserCommand::UploadFile { file_name, .. } = &capture.command else {
+            return Err(DriverError(
+                "The recorded control does not hold an attachment".into(),
+            ));
+        };
+        let binding = capture.binding.as_ref().ok_or_else(summary_changed)?;
+        self.verify_recorded_field(capture)?;
+        let (path, admitted_sha256) = self.recorded_attachment(file_name)?;
+        if admitted_sha256 != prepared_sha256 {
+            return Err(DriverError(
+                "The prepared attachment differs from the recorded file".into(),
+            ));
+        }
+        let prepared = FileExpectation::read(&path, Some(prepared_sha256))?;
+        let context = self.file_inspection_context()?;
+        let form_owner = self.with_file_review_object(
+            json!({"backendNodeId":binding.backend}),
+            Some(context),
+            |driver, object| driver.recorded_file_form_owner(object),
+        )?;
+        if self.recorded_document()? != capture.document {
+            return Err(summary_changed());
+        }
+        self.stop_if_non_read_request_observed(capture.network_before)?;
+        Ok(RecordedAttachmentWitness {
+            document: capture.document.clone(),
+            control: binding.backend,
+            form_owner,
+            key: SummaryKey::from_field(&binding.field),
+            prepared,
+        })
+    }
+
+    fn recorded_file_form_owner(&mut self, input: &str) -> Result<Option<u64>, DriverError> {
+        let owner = self.cdp.call("Runtime.callFunctionOn", json!({
+            "objectId":input,
+            "functionDeclaration":"function() { if (this.isConnected && this.ownerDocument === document && this instanceof HTMLInputElement && this.type === 'file') return this.form; }"
+        })).map_err(derr)?;
+        let owner = &owner["result"];
+        if owner["subtype"] == "null" {
+            return Ok(None);
+        }
+        let object = owner["objectId"].as_str().ok_or_else(summary_changed)?;
+        let node = self
+            .cdp
+            .call("DOM.describeNode", json!({"objectId":object}));
+        self.release_file_review_object(object);
+        let node = &node.map_err(derr)?["node"];
+        if node["nodeName"] != "FORM" {
+            return Err(summary_changed());
+        }
+        node["backendNodeId"]
+            .as_u64()
+            .map(Some)
+            .ok_or_else(summary_changed)
+    }
+
+    /// Hash the original file inputs and recheck the set together after hashing.
+    pub fn verify_recorded_summary_attachments(
+        &mut self,
+        summary: &RecordedSummaryCapture,
+        witnesses: &[&RecordedAttachmentWitness],
+    ) -> Result<Vec<RecordedAttachmentVerification>, DriverError> {
+        self.validate_captured_frame(false)?;
+        require_summary_replay(self)?;
+        if self.recorded_document()? != summary.document {
+            return Err(summary_changed());
+        }
+        let context = self.file_inspection_context()?;
+        let mut resolved = Vec::new();
+        let mut outcomes = Vec::new();
+        for (index, witness) in witnesses.iter().enumerate() {
+            let objects = (|| -> Result<(String, Option<String>), DriverError> {
+                if witness.document != summary.document {
+                    return Err(summary_changed());
+                }
+                let (path, admitted_sha256) = self.recorded_attachment(&witness.prepared.name)?;
+                if admitted_sha256 != witness.prepared.sha256
+                    || FileExpectation::read(&path, Some(&admitted_sha256))? != witness.prepared
+                {
+                    return Err(DriverError("The prepared file changed after entry".into()));
+                }
+                let input = self
+                    .file_review_object(json!({"backendNodeId":witness.control}), Some(context))?;
+                let owner = witness
+                    .form_owner
+                    .map(|owner| {
+                        self.file_review_object(json!({"backendNodeId":owner}), Some(context))
+                    })
+                    .transpose();
+                match owner {
+                    Ok(owner) => Ok((input, owner)),
+                    Err(error) => {
+                        self.release_file_review_object(&input);
+                        Err(error)
+                    }
+                }
+            })();
+            match objects {
+                Ok((input, owner)) => {
+                    resolved.push((index, input, owner));
+                    outcomes.push(RecordedAttachmentVerification::Unavailable {
+                        reason: "The retained selection could not be checked".into(),
+                    });
+                }
+                Err(error) => outcomes.push(RecordedAttachmentVerification::Unavailable {
+                    reason: error.to_string(),
+                }),
+            }
+        }
+        let selections = resolved
+            .iter()
+            .map(|(index, input, owner)| FileInspection {
+                input,
+                expected: std::slice::from_ref(&witnesses[*index].prepared),
+                original_form: Some(owner.as_deref()),
+            })
+            .collect::<Vec<_>>();
+        let read = self.inspect_file_selections(&selections);
+        for (_, input, owner) in &resolved {
+            self.release_file_review_object(input);
+            if let Some(owner) = owner {
+                self.release_file_review_object(owner);
+            }
+        }
+        for ((index, _, _), checked) in resolved.into_iter().zip(read?) {
+            let prepared = &witnesses[index].prepared;
+            outcomes[index] = match checked {
+                FileSelectionReadback::NotRetained => RecordedAttachmentVerification::NotRetained,
+                FileSelectionReadback::Different => RecordedAttachmentVerification::Different,
+                FileSelectionReadback::Unavailable => RecordedAttachmentVerification::Unavailable {
+                    reason: "The browser could not read the retained bytes".into(),
+                },
+                FileSelectionReadback::Verified { accept } => {
+                    match check_file_accept(&accept, &prepared.name) {
+                        Ok(()) => RecordedAttachmentVerification::Retained {
+                            sha256: prepared.sha256.clone(),
+                            size: prepared.size,
+                        },
+                        Err(error) => RecordedAttachmentVerification::Unavailable {
+                            reason: error.to_string(),
+                        },
+                    }
+                }
+            };
+        }
+        if self.recorded_document()? != summary.document {
+            return Err(summary_changed());
+        }
+        require_summary_replay(self)?;
+        Ok(outcomes)
+    }
+
     /// Capture the native geometry for one row without scrolling it into view.
     /// A separated heading is captured before the label/value region.
     pub fn capture_recorded_summary_row(

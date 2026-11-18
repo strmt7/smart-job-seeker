@@ -366,6 +366,7 @@ fn record_scope(
     use waypoint_browser::{RecordedSectionOutcome, RecordedSectionStop};
     let first_view = views.len() + 1;
     let first_entry = rehearsal.as_ref().map_or(0, |run| run.fields.len());
+    let mut summary_attachments = std::collections::BTreeMap::new();
     let mut prior = Vec::new();
     let mut pending: Option<(usize, String)> = None;
     let mut pending_dialog: Option<usize> = None;
@@ -453,6 +454,20 @@ fn record_scope(
         if rehearsal.stop_at_deadline(view) {
             return Ok(());
         }
+        for (index, capture, _) in &rehearsal.captures {
+            let entry = &rehearsal.fields[*index];
+            if entry["status"] == "visually_matched" {
+                if let Some(sha256) = entry["attachment"]["sha256"].as_str() {
+                    summary_attachments
+                        .entry(*index - first_entry)
+                        .or_insert_with(|| {
+                            driver
+                                .capture_recorded_attachment_witness(capture, sha256)
+                                .map_err(|error| bounded_text(&error.to_string()))
+                        });
+                }
+            }
+        }
         let verified: Vec<_> = rehearsal
             .captures
             .iter()
@@ -497,7 +512,10 @@ fn record_scope(
                                 &form,
                                 &image,
                                 summary,
-                                &rehearsal.fields[first_entry..],
+                                crate::recorded_summary::PreparedSummary {
+                                    entries: &rehearsal.fields[first_entry..],
+                                    attachments: &summary_attachments,
+                                },
                                 |image| evidence.save(image),
                                 |input| rehearsal.vision.read_summary(input),
                             );
@@ -2729,6 +2747,7 @@ mod tests {
             #[serde(default)]
             test_detail_observations: Vec<Value>,
             expected_detail_images: Option<Vec<usize>>,
+            expected_attachment_statuses: Option<Vec<Option<String>>>,
             #[serde(default)]
             check_scroll_sentinel: bool,
             model: Option<crate::private_inference::Selection>,
@@ -2758,6 +2777,12 @@ mod tests {
             .starts_with(&target));
         let output = input.parent().unwrap().join("review-observation");
         fs::create_dir(&output).unwrap();
+        let attachment_manifest = fixture
+            .config
+            .attachments
+            .as_ref()
+            .map(|files| files.files.clone())
+            .unwrap_or_default();
         let (mut driver, ready) =
             CdpDriver::launch_rehearsal(&fixture.python, fixture.config).unwrap();
         driver.begin_recorded_call_timing().unwrap();
@@ -2770,6 +2795,7 @@ mod tests {
             let mut prior = Vec::new();
             let mut verified_entries = 0;
             let mut prepared = Vec::new();
+            let mut summary_attachments = std::collections::BTreeMap::new();
             for (index, expected) in fixture.sections.iter().enumerate() {
                 assert_eq!(form.schema.fields.len(), expected.len());
                 let mut entries = Vec::new();
@@ -2794,8 +2820,21 @@ mod tests {
                     assert!(entry.continuation().is_none());
                     if fixture.summary.is_some() {
                         let key = waypoint_browser::SummaryKey::from_field(field);
-                        prepared.push(json!({"summary_key":key,"intended_value":value,
-                            "status":"visually_matched","native_verified":true,"kind":"text"}));
+                        let mut record = json!({"summary_key":key,"intended_value":value,
+                            "status":"visually_matched","native_verified":true,"kind":entry.kind()});
+                        if matches!(entry.kind(), waypoint_browser::RecordedFieldKind::File) {
+                            let sha256 = attachment_manifest
+                                .get(value)
+                                .expect("fixture file manifest");
+                            record["attachment"] = json!({"name":value,"sha256":sha256});
+                            summary_attachments.insert(
+                                prepared.len(),
+                                driver
+                                    .capture_recorded_attachment_witness(&entry, sha256)
+                                    .map_err(|error| error.to_string()),
+                            );
+                        }
+                        prepared.push(record);
                     }
                     entries.push(entry);
                     verified_entries += 1;
@@ -2916,7 +2955,10 @@ mod tests {
                             &form,
                             &image,
                             summary,
-                            &prepared,
+                            crate::recorded_summary::PreparedSummary {
+                                entries: &prepared,
+                                attachments: &summary_attachments,
+                            },
                             |image| evidence.save(image),
                             |input| vision.read_summary(input),
                         );
@@ -2933,7 +2975,10 @@ mod tests {
                             &form,
                             &image,
                             summary,
-                            &prepared,
+                            crate::recorded_summary::PreparedSummary {
+                                entries: &prepared,
+                                attachments: &summary_attachments,
+                            },
                             |image| evidence.save(image),
                             |input| match input {
                                 crate::recorded_summary::SummaryVisual::Viewport(_) => {
@@ -3006,6 +3051,24 @@ mod tests {
             }
             if summary.replacement_url.is_some() {
                 assert_eq!(report["native_revalidated"], false);
+            }
+            if let Some(expected) = summary.expected_attachment_statuses {
+                let comparisons = report["comparisons"].as_array().unwrap();
+                let statuses: Vec<_> = comparisons
+                    .iter()
+                    .map(|check| check["attachment"]["status"].as_str().map(str::to_owned))
+                    .collect();
+                assert_eq!(statuses, expected);
+                let mut verified = 0;
+                for (check, (_, filename)) in
+                    comparisons.iter().zip(fixture.sections.iter().flatten())
+                {
+                    if check["attachment"]["status"] == "retained" {
+                        verified += 1;
+                        assert_eq!(check["attachment"]["sha256"], attachment_manifest[filename]);
+                    }
+                }
+                assert_eq!(report["attachment_matched_count"], verified);
             }
             if let Some(expected) = summary.expected_detail_images {
                 let details = report["detail_reads"]

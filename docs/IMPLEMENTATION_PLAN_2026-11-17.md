@@ -390,6 +390,11 @@ Separate heading and answer crops preserve exact scoped comparisons.
 Further work covers nested scroll containers, embedded summaries,
 attachment byte verification and held-out layouts.
 
+[Terminal attachment readback](g1/TERMINAL_ATTACHMENT_READBACK_2026-11-18.md)
+binds retained native file inputs to the prepared PDFs after the summary
+image is read. Held-out workflows must include both retained selections
+and server-managed or detached attachments.
+
 1. Enumerate every required section/control and relevant repeated record again.
    Establish which controls are currently applicable, hidden, unresolved or
    intentionally unanswered.

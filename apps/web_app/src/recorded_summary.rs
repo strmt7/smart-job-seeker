@@ -1,8 +1,17 @@
 //! Reconcile prepared answers with independent native and visual review evidence.
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 use waypoint_applications::driver::{DriverError, LiveForm};
-use waypoint_browser::{CdpDriver, RecordedSummaryCapture, SummaryAnswer, SummaryKey};
+use waypoint_browser::{
+    CdpDriver, RecordedAttachmentVerification, RecordedAttachmentWitness, RecordedSummaryCapture,
+    SummaryAnswer, SummaryKey,
+};
+
+pub(super) struct PreparedSummary<'a> {
+    pub entries: &'a [Value],
+    pub attachments: &'a BTreeMap<usize, Result<RecordedAttachmentWitness, String>>,
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -195,7 +204,7 @@ pub(super) fn inspect(
     form: &LiveForm,
     image: &str,
     native: Result<Box<RecordedSummaryCapture>, DriverError>,
-    fields: &[Value],
+    prepared: PreparedSummary<'_>,
     mut save: impl FnMut(&str) -> Result<(String, String), String>,
     mut read: impl FnMut(SummaryVisual<'_>) -> Result<Value, String>,
 ) -> Value {
@@ -215,7 +224,7 @@ pub(super) fn inspect(
     let mut result = json!({"status":"pending_manual_review","scope":"offline_saved_summary",
         "native_sha256":native.digest(),"native_incomplete":native.incomplete(),
         "native_rows":rows.iter().map(|(answer,in_image)|json!({"answer":answer,"in_image":in_image})).collect::<Vec<_>>(),
-        "expected_count":fields.len(),"matched_count":0});
+        "expected_count":prepared.entries.len(),"matched_count":0});
     let mut parsed = match visual {
         Ok(raw) => {
             let parsed = parse_visual(&raw).map_err(str::to_owned);
@@ -224,7 +233,8 @@ pub(super) fn inspect(
         }
         Err(reason) => Err(reason),
     };
-    let expected = fields
+    let expected = prepared
+        .entries
         .iter()
         .map(ExpectedAnswer::from_entry)
         .collect::<Result<Vec<_>, _>>()
@@ -248,39 +258,123 @@ pub(super) fn inspect(
             }
         }
     }
+    let inspected = (|| {
+        let expected = expected?;
+        let visual = parsed?;
+        let (mut comparisons, matched, extra_native, extra_visual) =
+            compare_answers(&expected, &rows, &visual.observations);
+        let final_phase = visual.phase == Phase::FinalReview;
+        let attachments = if final_phase && !native.incomplete() {
+            verify_attachment_answers(driver, &native, &prepared, &expected, &mut comparisons)
+        } else {
+            0
+        };
+        Ok::<_, String>((
+            comparisons,
+            matched + attachments,
+            attachments,
+            extra_native,
+            extra_visual,
+            final_phase,
+        ))
+    })();
     if let Err(reason) = driver.verify_recorded_summary(form, &native) {
         result["reason"] = json!(reason.to_string());
         result["native_revalidated"] = json!(false);
         return result;
     }
     result["native_revalidated"] = json!(true);
-    let (expected, visual) = match (expected, parsed) {
-        (Ok(expected), Ok(visual)) => (expected, visual),
-        (Err(error), _) | (_, Err(error)) => {
-            result["reason"] = json!(error);
-            return result;
-        }
-    };
-    let (comparisons, matched, extra_native, extra_visual) =
-        compare_answers(&expected, &rows, &visual.observations);
+    let (comparisons, matched, attachments, extra_native, extra_visual, final_phase) =
+        match inspected {
+            Ok(result) => result,
+            Err(error) => {
+                result["reason"] = json!(error);
+                return result;
+            }
+        };
     result["comparisons"] = json!(comparisons);
     result["matched_count"] = json!(matched);
+    result["attachment_matched_count"] = json!(attachments);
     result["extra_native_count"] = json!(extra_native);
     result["extra_visual_count"] = json!(extra_visual);
-    let reason = if visual.phase != Phase::FinalReview {
+    let reason = if !final_phase {
         "The image did not establish a final application review screen"
     } else if native.incomplete() {
         "The summary contains rows whose labels or values could not be bound"
-    } else if expected.is_empty() || extra_native + extra_visual > 0 {
+    } else if prepared.entries.is_empty() || extra_native + extra_visual > 0 {
         "The summary and the prepared answers cover different fields"
-    } else if matched != expected.len() {
-        "Some prepared answers need review"
+    } else if matched != prepared.entries.len() {
+        return result;
     } else {
         result["status"] = json!("answers_verified");
         return result;
     };
     result["reason"] = json!(reason);
     result
+}
+
+fn verify_attachment_answers(
+    driver: &mut CdpDriver,
+    native: &RecordedSummaryCapture,
+    prepared: &PreparedSummary<'_>,
+    expected: &[ExpectedAnswer<'_>],
+    comparisons: &mut [Value],
+) -> usize {
+    let mut entries = Vec::new();
+    let mut witnesses = Vec::new();
+    for (index, (answer, check)) in expected.iter().zip(comparisons.iter_mut()).enumerate() {
+        if check["status"] != "attachment_content_unverified" {
+            continue;
+        }
+        let manifest = &prepared.entries[index]["attachment"];
+        let witness = match prepared.attachments.get(&index) {
+            Some(Ok(witness))
+                if manifest["name"] == answer.value
+                    && manifest["sha256"].as_str().is_some_and(|sha256| {
+                        witness.matches_prepared(&answer.key, answer.value, sha256)
+                    }) =>
+            {
+                witness
+            }
+            Some(Ok(_)) => {
+                check["attachment"] = json!({"status":"source_mismatch"});
+                continue;
+            }
+            Some(Err(reason)) => {
+                check["attachment"] = json!({"status":"unavailable","reason":reason});
+                continue;
+            }
+            None => {
+                check["attachment"] = json!({"status":"unavailable","reason":"The original file selection was not recorded"});
+                continue;
+            }
+        };
+        entries.push(index);
+        witnesses.push(witness);
+    }
+    if witnesses.is_empty() {
+        return 0;
+    }
+    match driver.verify_recorded_summary_attachments(native, &witnesses) {
+        Ok(results) => {
+            let mut verified = 0;
+            for (index, result) in entries.into_iter().zip(results) {
+                if matches!(result, RecordedAttachmentVerification::Retained { .. }) {
+                    comparisons[index]["status"] = json!("matched");
+                    verified += 1;
+                }
+                comparisons[index]["attachment"] = json!(result);
+            }
+            verified
+        }
+        Err(error) => {
+            let reason = error.to_string();
+            for index in entries {
+                comparisons[index]["attachment"] = json!({"status":"unavailable","reason":reason});
+            }
+            0
+        }
+    }
 }
 
 fn detail_targets(
@@ -305,7 +399,6 @@ fn detail_targets(
             continue;
         };
         if source.value != row.value
-            || source.attachment
             || sources.next().is_some()
             || native_keys
                 .iter()

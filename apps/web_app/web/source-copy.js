@@ -240,6 +240,10 @@
         if (expected !== null && matched !== null && matched <= expected) {
           details.append(el('p', `${matched} of ${expected} prepared answers verified in the saved summary.`, 'footnote'));
         }
+        const checkedFiles = count(summary.attachment_matched_count);
+        if (checkedFiles > 0 && matched !== null && checkedFiles <= matched) {
+          details.append(el('p', `${checkedFiles} ${checkedFiles === 1 ? 'attachment matches its' : 'attachments match their'} prepared PDF${checkedFiles === 1 ? '' : 's'}.`, 'footnote'));
+        }
         if (typeof summary.reason === 'string') details.append(el('p', summary.reason.slice(0, 500), 'footnote'));
         if (!verifiedSummary && Array.isArray(summary.comparisons)) {
           const reasons = {
@@ -253,11 +257,18 @@
             visual_value_differs: 'Visible value differs',
             attachment_content_unverified: 'Attachment contents need review',
           };
+          const fileReasons = {
+            not_retained: 'Original file selection was lost',
+            different: 'Current file differs from the prepared PDF',
+            source_mismatch: 'File record differs from the prepared PDF',
+          };
           const affected = summary.comparisons.filter(item => item?.key && typeof item.key.label === 'string' && reasons[item.status]);
           if (affected.length) {
             const list = el('ul');
             for (const item of affected.slice(0, 40)) {
-              list.append(el('li', `${scopedLabel(item.key)} · ${reasons[item.status]}`));
+              const reason = item.status === 'attachment_content_unverified'
+                ? fileReasons[item.attachment?.status] || reasons[item.status] : reasons[item.status];
+              list.append(el('li', `${scopedLabel(item.key)} · ${reason}`));
             }
             details.append(list);
             if (affected.length > 40) details.append(el('p', 'More summary checks are saved in the application record.', 'footnote'));

@@ -21,6 +21,8 @@
 //!   them.
 
 mod captured_frame;
+mod file_readback;
+use file_readback::{FileExpectation, FileInspection, FileSelectionReadback};
 mod conditional_field;
 #[cfg(all(test, windows))]
 mod conditional_field_qualification;
@@ -39,8 +41,8 @@ pub use captured_frame::{
 pub use captured_frame::{DialogChoice, DialogDescription, RecordedDialog, RecordedDialogOutcome};
 #[cfg(windows)]
 pub use captured_frame::{
-    RecordedSectionOutcome, RecordedSectionStop, RecordedSummaryCapture, RecordedSummaryRegion,
-    SummaryAnswer, SummaryKey,
+    RecordedAttachmentVerification, RecordedAttachmentWitness, RecordedSectionOutcome,
+    RecordedSectionStop, RecordedSummaryCapture, RecordedSummaryRegion, SummaryAnswer, SummaryKey,
 };
 pub mod capture_discovery;
 pub mod capture_privacy;
@@ -2698,69 +2700,65 @@ impl CdpDriver {
             .node_id(selector)?
             .ok_or_else(|| DriverError("File field not found".into()))?;
         let object = self.file_input_object(node, pinned_hash.is_some())?;
-        let available = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function() { return (this.isConnected && !this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]')) && this instanceof HTMLInputElement && this.type === 'file' && !this.matches(':disabled'); }","returnByValue":true})).map_err(derr)?;
-        if available.get("exceptionDetails").is_some()
-            || available.pointer("/result/value").and_then(Value::as_bool) != Some(true)
-        {
-            return Err(DriverError(
-                "File field is unavailable; review it manually".into(),
-            ));
-        }
-        let accept = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function() { return (this.isConnected && !this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]')) && !this.matches(':disabled') ? this.accept : null; }","returnByValue":true})).map_err(derr)?;
-        let accept = accept
-            .pointer("/result/value")
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                DriverError("Cannot inspect the file field's declared formats".into())
-            })?;
-        let mut names = std::collections::HashSet::new();
-        for path in paths {
-            let metadata = std::fs::metadata(path)
-                .map_err(|_| DriverError("Cannot read an attachment".into()))?;
-            if !metadata.is_file() {
-                return Err(DriverError("Attachment is not a regular file".into()));
-            }
-            let filename = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .ok_or_else(|| DriverError("Cannot inspect the attachment filename".into()))?;
-            if !names.insert(filename.to_lowercase()) {
-                return Err(DriverError(
-                    "Choose files with distinct attachment names".into(),
-                ));
-            }
-            check_file_accept(accept, filename)?;
-        }
-        if let Some(previous) = previous {
-            if previous.is_empty() {
-                let empty = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function() { return this.isConnected && this instanceof HTMLInputElement && this.type === 'file' && !this.matches(':disabled') && !this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]') && this.files && this.files.length === 0; }","returnByValue":true})).map_err(derr)?;
-                if empty.get("exceptionDetails").is_some()
-                    || empty.pointer("/result/value").and_then(Value::as_bool) != Some(true)
-                {
-                    return Err(DriverError("The file field already contains an unreviewed selection; inspect it manually".into()));
-                }
-            } else {
-                self.verify_local_files(selector, previous).map_err(|_| {
-                    DriverError("The file selection changed; inspect it manually".into())
-                })?;
-            }
-        }
-        if let Some(expected) = pinned_hash {
-            use std::io::Read;
-            let file = std::fs::File::open(&paths[0])
-                .map_err(|_| DriverError("Cannot read staged attachment".into()))?;
-            let mut bytes = Vec::new();
-            file.take(10 * 1024 * 1024 + 1)
-                .read_to_end(&mut bytes)
-                .map_err(|_| DriverError("Cannot read staged attachment".into()))?;
-            if paths.len() != 1
-                || bytes.len() > 10 * 1024 * 1024
-                || waypoint_domain::sha256_hex(&bytes) != expected
+        let accepted = (|| {
+            let available = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function() { return (this.isConnected && !this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]')) && this instanceof HTMLInputElement && this.type === 'file' && !this.matches(':disabled'); }","returnByValue":true})).map_err(derr)?;
+            if available.get("exceptionDetails").is_some()
+                || available.pointer("/result/value").and_then(Value::as_bool) != Some(true)
             {
                 return Err(DriverError(
-                    "Staged attachment differs from its verified inventory".into(),
+                    "File field is unavailable; review it manually".into(),
                 ));
             }
+            let accept = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function() { return (this.isConnected && !this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]')) && !this.matches(':disabled') ? this.accept : null; }","returnByValue":true})).map_err(derr)?;
+            let accept = accept
+                .pointer("/result/value")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    DriverError("Cannot inspect the file field's declared formats".into())
+                })?;
+            let mut names = std::collections::HashSet::new();
+            for path in paths {
+                let metadata = std::fs::metadata(path)
+                    .map_err(|_| DriverError("Cannot read an attachment".into()))?;
+                if !metadata.is_file() {
+                    return Err(DriverError("Attachment is not a regular file".into()));
+                }
+                let filename = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .ok_or_else(|| DriverError("Cannot inspect the attachment filename".into()))?;
+                if !names.insert(filename.to_lowercase()) {
+                    return Err(DriverError(
+                        "Choose files with distinct attachment names".into(),
+                    ));
+                }
+                check_file_accept(accept, filename)?;
+            }
+            if let Some(previous) = previous {
+                if previous.is_empty() {
+                    let empty = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function() { return this.isConnected && this instanceof HTMLInputElement && this.type === 'file' && !this.matches(':disabled') && !this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]') && this.files && this.files.length === 0; }","returnByValue":true})).map_err(derr)?;
+                    if empty.get("exceptionDetails").is_some()
+                        || empty.pointer("/result/value").and_then(Value::as_bool) != Some(true)
+                    {
+                        return Err(DriverError("The file field already contains an unreviewed selection; inspect it manually".into()));
+                    }
+                } else {
+                    self.verify_local_files(selector, previous).map_err(|_| {
+                        DriverError("The file selection changed; inspect it manually".into())
+                    })?;
+                }
+            }
+            Ok(())
+        })();
+        self.release_file_review_object(&object);
+        accepted?;
+        if let Some(expected) = pinned_hash {
+            if paths.len() != 1 {
+                return Err(DriverError(
+                    "A recorded file selection needs one prepared attachment".into(),
+                ));
+            }
+            FileExpectation::read(&paths[0], Some(expected))?;
         }
         // Verification obtains a fresh document and invalidates earlier CDP node IDs.
         let node = self
@@ -2776,36 +2774,10 @@ impl CdpDriver {
     }
 
     fn file_input_object(&mut self, node: u64, isolated: bool) -> Result<String, DriverError> {
-        let mut params = json!({"nodeId":node});
-        if isolated {
-            let tree = self
-                .cdp
-                .call("Page.getFrameTree", json!({}))
-                .map_err(derr)?;
-            let frame = tree
-                .pointer("/frameTree/frame/id")
-                .and_then(Value::as_str)
-                .ok_or_else(|| DriverError("File inspection frame is unavailable".into()))?;
-            let world = self
-                .cdp
-                .call(
-                    "Page.createIsolatedWorld",
-                    json!({
-                        "frameId":frame, "worldName":"Smart Jobseeker file verification"
-                    }),
-                )
-                .map_err(derr)?;
-            params["executionContextId"] = json!(world["executionContextId"]
-                .as_u64()
-                .filter(|id| *id > 0)
-                .ok_or_else(|| DriverError("File verification world is unavailable".into()))?);
-        }
-        let resolved = self.cdp.call("DOM.resolveNode", params).map_err(derr)?;
-        resolved
-            .pointer("/object/objectId")
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-            .ok_or_else(|| DriverError("Cannot inspect file field".into()))
+        let context = isolated
+            .then(|| self.file_inspection_context())
+            .transpose()?;
+        self.file_review_object(json!({"nodeId":node}), context)
     }
 
     /// Check whether the selected input still holds the staged local file.
@@ -2834,64 +2806,32 @@ impl CdpDriver {
         if paths.is_empty() || paths.len() > 5 || (pinned_hash.is_some() && paths.len() != 1) {
             return Err(DriverError("Invalid attachment set".into()));
         }
-        let mut expected = Vec::with_capacity(paths.len());
-        for path in paths {
-            let name = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .ok_or_else(|| {
-                    DriverError("File name cannot be represented in the browser".into())
-                })?;
-            let size = std::fs::metadata(path)
-                .map_err(|e| DriverError(format!("Cannot read attachment: {e}")))?
-                .len();
-            // Bound memory in both the host and the browser when hashing selected files.
-            if size > 10 * 1024 * 1024 {
-                return Err(DriverError("Attachment is too large to verify".into()));
-            }
-            use std::io::Read;
-            let file = std::fs::File::open(path)
-                .map_err(|_| DriverError("Cannot read attachment".into()))?;
-            let mut bytes = Vec::new();
-            file.take(10 * 1024 * 1024 + 1)
-                .read_to_end(&mut bytes)
-                .map_err(|_| DriverError("Cannot read attachment".into()))?;
-            if bytes.len() as u64 != size {
-                return Err(DriverError("Attachment changed during verification".into()));
-            }
-            let hash = waypoint_domain::sha256_hex(&bytes);
-            if pinned_hash.is_some_and(|expected| expected != hash) {
-                return Err(DriverError(
-                    "Staged attachment differs from its verified inventory".into(),
-                ));
-            }
-            expected.push(json!({"name":name,"size":size,"sha256":hash}));
-        }
+        let expected = paths
+            .iter()
+            .map(|path| FileExpectation::read(path, pinned_hash))
+            .collect::<Result<Vec<_>, _>>()?;
         let node = self
             .node_id(selector)?
             .ok_or_else(|| DriverError("File field not found".into()))?;
-        let object = self.file_input_object(node, pinned_hash.is_some())?;
-        let retained = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"async function(expected) { const matches = () => this.isConnected && !this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]') && this instanceof HTMLInputElement && this.type === 'file' && !this.matches(':disabled') && (expected.length === 1 || this.multiple) && this.files && this.files.length === expected.length && expected.every((file, i) => this.files[i].name === file.name && this.files[i].size === file.size); if (!matches() || !globalThis.crypto?.subtle) return false; try { const files = Array.from(this.files); for (let i = 0; i < files.length; i++) { const digest = await crypto.subtle.digest('SHA-256', await files[i].arrayBuffer()); const hex = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join(''); if (hex !== expected[i].sha256) return false; } return matches() && files.every((file, i) => this.files[i] === file); } catch (_) { return false; } }","arguments":[{"value":expected}],"awaitPromise":true,"returnByValue":true})).map_err(derr)?;
-        if retained.get("exceptionDetails").is_some()
-            || retained.pointer("/result/value").and_then(Value::as_bool) != Some(true)
-        {
+        let context = pinned_hash
+            .is_some()
+            .then(|| self.file_inspection_context())
+            .transpose()?;
+        let mut retained =
+            self.with_file_review_object(json!({"nodeId":node}), context, |driver, input| {
+                driver.inspect_file_selections(&[FileInspection {
+                    input,
+                    expected: &expected,
+                    original_form: None,
+                }])
+            })?;
+        let Some(FileSelectionReadback::Verified { accept }) = retained.pop() else {
             return Err(DriverError(
                 "File was not retained by the field; review the attachment manually".into(),
             ));
-        }
-        let accept = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function() { return (this.isConnected && !this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]')) && !this.matches(':disabled') ? this.accept : null; }","returnByValue":true})).map_err(derr)?;
-        let accept = accept
-            .pointer("/result/value")
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                DriverError("Cannot inspect the file field's declared formats".into())
-            })?;
-        for path in paths {
-            let name = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .ok_or_else(|| DriverError("Cannot inspect the attachment filename".into()))?;
-            check_file_accept(accept, name)?;
+        };
+        for file in &expected {
+            check_file_accept(&accept, &file.name)?;
         }
         Ok(())
     }
