@@ -38,6 +38,9 @@ The workspace passed 1,484 tests with 622 ignored. Clippy, the Windows build,
 172 UI scripts and the dependency license, ban and source checks passed. The
 final native run sampled at least 29,795,426,304 bytes of available host RAM.
 Its browser process job peaked at 385,859,584 bytes of commit.
+The first hosted build flagged a stale embedded license inventory after the
+HTTP-date dependency was added. The regenerated inventory passed the same
+vendor verification, inventory unit tests and locked-graph check locally.
 
 ## Public search and application routes
 
