@@ -282,6 +282,7 @@
         "Local inference with evaluated bounded runtime public research; no PII query leakage, remote-model fallback or transfer of research network authority to candidate actions"
       ],
       "evidence": [
+        "docs/COMPETITIVE_RECHECK_2026-11-18.md",
         "docs/g1/WORKFLOW_LIMITS_2026-11-18.md",
         "docs/g1/SCROLLABLE_APPLICATION_REVIEW_2026-11-18.md",
         "docs/g1/MIXED_APPLICATION_WORKFLOW_2026-11-18.md",
@@ -326,7 +327,7 @@
         "Measure the local model on the frozen corpus; provide actionable review records rather than invented answers.",
         "Qualify native-supported inference profiles per role, including projector/renderer/parser and advertised effort. Retain actual thinking/final/tool observations and sufficient admitted budgets; do not force maximum effort onto every primitive or promote from component probes. Incorporate current primary-source research and the adapted catalog guidance without treating instructions as runtime implementation."
       ],
-      "next_action": "Freeze new application families and exercise document-bound navigation on unfamiliar repeated and conditional layouts. Compare literal and deliberative reads on the unchanged file-label images, preserving conflicts and exact scope. Integrate the independent candidate isolation work from R05 before qualifying server-managed behavior.",
+      "next_action": "Freeze new application families and exercise document-bound navigation on unfamiliar repeated and conditional layouts. Compare scope-bound, abstaining field assignment with the current mapper using FormFilla as the reference. Compare literal and deliberative reads on the unchanged file-label images, preserving conflicts and exact scope. Integrate the independent candidate isolation work from R05 before qualifying server-managed behavior.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "start_requirements": [
         "The frozen schema2 known-source initial-control case and native mutation fixture admit investigation of the observed actuator failure. This does not admit broad planner promotion; that still requires the varied held-out tranche and full workflow truth.",
@@ -461,6 +462,7 @@
         "Labeled retrieval and actual-route reachability evidence"
       ],
       "evidence": [
+        "docs/COMPETITIVE_RECHECK_2026-11-18.md",
         "docs/g1/SEARCH_PROVIDER_RECOVERY_2026-11-18.md",
         "docs/g1/SEARCH_PAGE_RECOVERY_2026-11-18.md",
         "docs/g1/WORKFLOW_LIMITS_2026-11-18.md",
@@ -474,7 +476,7 @@
         "Retain original ads and verify actual application routes; classify freshness, closure, login/challenge and email-only outcomes.",
         "Measure labeled retrieval and route reachability; add sources only for measured coverage benefit."
       ],
-      "next_action": "Preserve resumable plans and observations across separate provider runs. Improve the selection of current vacancies using listing identity, employer-page signals and stale-route feedback. Measure retrieval and actual application-route reachability against labeled current postings. The three-query FreeSerp run returned 30 links, with both inspected vacancy candidates reaching manual review.",
+      "next_action": "Preserve resumable plans and observations across separate provider runs. Reuse public ATS contracts and existing application-route checks to improve the selection of current vacancies using listing identity, employer-page signals and stale-route feedback. Measure retrieval and actual application-route reachability against labeled current postings. The three-query FreeSerp run returned 30 links, with both inspected vacancy candidates reaching manual review.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package."
     },
     {
