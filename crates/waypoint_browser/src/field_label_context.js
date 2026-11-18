@@ -1,7 +1,7 @@
-function waypointFieldLabelContext(tightFileLabels = false) {
+function waypointFieldLabelContext(tightFileLabels = false, projectInline = true) {
     // Fixed read-only geometry query. No field values, expected labels, model
     // instructions, scrolling, focus or page mutation enter this operation.
-    if (!this.isConnected || typeof tightFileLabels !== 'boolean') return null;
+    if (!this.isConnected || typeof tightFileLabels !== 'boolean' || typeof projectInline !== 'boolean') return null;
     // Only the fixed native file-detail caller opts into text-range label
     // geometry. Existing text/select crops keep their original element bounds.
     if (tightFileLabels && (this.localName !== 'input' || this.type !== 'file')) return null;
@@ -87,5 +87,34 @@ function waypointFieldLabelContext(tightFileLabels = false) {
     if (left < 0 || top < 0 || right > innerWidth || bottom > innerHeight || right-left > 704 || bottom-top > 384) return null;
     left = Math.max(0, left-8); top = Math.max(0, top-8);
     right = Math.min(innerWidth, right+8); bottom = Math.min(innerHeight, bottom+8);
-    return {bounds:[left,top,right,top,right,bottom,left,bottom]};
+    // DOM ranges in same-origin frames use child viewport coordinates. Bind
+    // the rendered crop to each native frame owner before using page pixels.
+    let view = this.ownerDocument.defaultView;
+    for (let frames = 0; projectInline && view && view !== view.top; frames++) {
+        if (frames >= 4) return null;
+        const owner = view.frameElement, outer = owner?.ownerDocument.defaultView;
+        if (!owner?.isConnected || !outer || outer !== view.parent) return null;
+        if (Math.abs(owner.clientWidth - view.innerWidth) > .5 || Math.abs(owner.clientHeight - view.innerHeight) > .5) return null;
+        const box = owner.getBoundingClientRect(), style = outer.getComputedStyle(owner);
+        if (Math.abs(box.width - owner.offsetWidth) > .5 || Math.abs(box.height - owner.offsetHeight) > .5
+            || [style.paddingLeft, style.paddingTop, style.paddingRight, style.paddingBottom].some(value => parseFloat(value) !== 0)) return null;
+        let parent = owner;
+        for (let depth = 0; parent; parent = parent.parentElement) {
+            if (depth++ >= 64) return null;
+            const css = outer.getComputedStyle(parent);
+            if (css.transform !== 'none' || css.perspective !== 'none' || css.translate !== 'none'
+                || css.rotate !== 'none' || css.scale !== 'none' || Number(css.zoom) !== 1
+                || css.visibility !== 'visible' || Number(css.opacity) === 0) return null;
+        }
+        const x = box.left + owner.clientLeft, y = box.top + owner.clientTop;
+        left += x; right += x; top += y; bottom += y;
+        if (left < 0 || top < 0 || right > outer.innerWidth || bottom > outer.innerHeight) return null;
+        const dx = Math.min(.5, (right - left) / 4), dy = Math.min(.5, (bottom - top) / 4);
+        if (![left + dx, right - dx].every(px => [top + dy, bottom - dy]
+            .every(py => outer.document.elementFromPoint(px, py) === owner))
+            || outer.document.elementFromPoint((left + right) / 2, (top + bottom) / 2) !== owner) return null;
+        view = outer;
+    }
+    if (!view) return null;
+    return {bounds:[left,top,right,top,right,bottom,left,bottom], viewport:[view.innerWidth,view.innerHeight]};
 }

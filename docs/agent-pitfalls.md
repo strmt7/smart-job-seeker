@@ -37,6 +37,13 @@ Consult the entries relevant to the code or workflow under review. The linked ch
   Diagnose incomplete reasoning from native completion metadata, not empty final
   text alone; preserve the original failed run.
 
+- An inline frame's DOM ranges use child viewport coordinates. Parent-page
+  capture needs verified offsets through each owner, plus native hit testing.
+  A crop with the right width can still show the page title instead of the
+  field. Check the actual pixels and keep geometry checks on both sides of
+  capture. The [scrollable application review](g1/SCROLLABLE_APPLICATION_REVIEW_2026-11-18.md)
+  records the two paired same-origin observations and the remaining navigation gap.
+
 - A short control crop can truncate a long question even when the control is
   fully visible. Preserve the original image and use current native-associated
   labels/headings for a separate bounded detail; do not supply expected text to

@@ -2757,6 +2757,8 @@ mod tests {
             sections: Vec<Vec<(String, String)>>,
             #[serde(default)]
             measure_first_section: bool,
+            #[serde(default)]
+            embedded: bool,
             summary: Option<SummaryQualification>,
         }
 
@@ -2772,6 +2774,8 @@ mod tests {
             expected_attachment_statuses: Option<Vec<Option<String>>>,
             #[serde(default)]
             check_scroll_sentinel: bool,
+            #[serde(default)]
+            check_panel_scroll: bool,
             model: Option<crate::private_inference::Selection>,
             replacement_url: Option<String>,
         }
@@ -2814,6 +2818,17 @@ mod tests {
             let mut form = driver
                 .open(&ready.entry_url)
                 .map_err(|error| error.to_string())?;
+            if fixture.embedded {
+                let captured = driver
+                    .captured_frames()
+                    .map_err(|error| error.to_string())?;
+                assert_eq!(captured.uninspected, 0);
+                assert!(!captured.truncated);
+                assert_eq!(captured.frames.len(), 1);
+                form = driver
+                    .enter_captured_frame(&captured.frames[0])
+                    .map_err(|error| error.to_string())?;
+            }
             let mut prior = Vec::new();
             let mut verified_entries = 0;
             let mut prepared = Vec::new();
@@ -2922,7 +2937,7 @@ mod tests {
                     "Page",
                     &form,
                     &image,
-                    false,
+                    fixture.embedded,
                     (1, index + 1, index + 1),
                 )?;
                 assert_eq!(view["field_count"], 0);
@@ -2935,7 +2950,26 @@ mod tests {
                 );
                 let mut model_admission = Value::Null;
                 let mut summary_scroll_events = Value::Null;
+                let mut panel_scroll = Value::Null;
                 if let Some(qualification) = &fixture.summary {
+                    let submit = &controls.controls[0].selector;
+                    let observe_panel = |driver: &mut CdpDriver| -> Result<(i64, u64), String> {
+                        let top = driver
+                            .read_attribute(submit, "data-panel-top")
+                            .map_err(|error| error.to_string())?
+                            .and_then(|value| value.parse().ok())
+                            .ok_or("Panel position was not observed")?;
+                        let events = driver
+                            .read_attribute(submit, "data-panel-events")
+                            .map_err(|error| error.to_string())?
+                            .and_then(|value| value.parse().ok())
+                            .ok_or("Panel scroll events were not observed")?;
+                        Ok((top, events))
+                    };
+                    let panel_before = qualification
+                        .check_panel_scroll
+                        .then(|| observe_panel(&mut driver))
+                        .transpose()?;
                     let summary = summary.ok_or("The native review summary was missing")?;
                     if let Some(replacement) = &qualification.replacement_url {
                         let replacement_form = driver
@@ -3028,15 +3062,33 @@ mod tests {
                     );
                     if qualification.check_scroll_sentinel {
                         let events = driver
-                            .read_attribute("#submit", "data-scroll-events")
+                            .read_attribute(submit, "data-scroll-events")
                             .map_err(|error| error.to_string())?;
                         assert_eq!(events.as_deref(), Some("0"));
                         summary_scroll_events = json!(0);
                     }
+                    if let Some((top, events)) = panel_before {
+                        let after = observe_panel(&mut driver)?;
+                        assert_eq!(after.0, top);
+                        assert!(after.1 > events);
+                        let final_replay = driver
+                            .rehearsal_replay_report()
+                            .map_err(|error| error.to_string())?;
+                        assert_eq!(final_replay["blocked"], 0);
+                        assert_eq!(final_replay["cached_non_read_replies"], 0);
+                        assert_eq!(final_replay["external_delivery"], "not_performed_by_replay");
+                        panel_scroll =
+                            json!({"before":top,"after":after.0,"event_count":after.1-events});
+                    }
+                }
+                if fixture.embedded {
+                    driver
+                        .leave_captured_frame()
+                        .map_err(|error| error.to_string())?;
                 }
                 return Ok(
                     json!({"entry_fields":verified_entries,"sections":index+1,"view":view,"replay":replay,
-                        "delivery_control_unchanged":true,"summary_scroll_events":summary_scroll_events,
+                        "delivery_control_unchanged":true,"summary_scroll_events":summary_scroll_events,"panel_scroll":panel_scroll,
                         "model_admission":model_admission}),
                 );
             }

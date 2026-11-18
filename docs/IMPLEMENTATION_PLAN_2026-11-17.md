@@ -353,6 +353,11 @@ are the next completion gates. [Rehearsal evidence](g1/REHEARSAL_PROGRESS_2026-1
 5. Detect cycles, unchanged pages, stale references and unexpected external
    targets. Stop with a useful pending-review reason and preserved archive when
    the next safe operation cannot be established.
+6. Bind same-origin inline form fields, navigation controls and final review
+   to the same current child document. The frozen inline-frame rehearsal now
+   verifies both first-section fields and stops when the parent-document
+   census misses the child's Continue button. Preserve separate frame leases,
+   reject mixed or stale targets, and verify the unchanged inline fixture.
 
 ### R04.3 — Repeated, conditional and complex controls
 
@@ -394,8 +399,11 @@ repeated records, attachment widgets and unavailable values.
 [Summary detail images](g1/SUMMARY_DETAIL_IMAGES_2026-11-18.md) extend this
 verification below the initial viewport of the main recorded document.
 Separate heading and answer crops preserve exact scoped comparisons.
-Further work covers nested scroll containers, embedded summaries,
-attachment byte verification and held-out layouts.
+The [scrollable summary checkpoint](g1/SCROLLABLE_APPLICATION_REVIEW_2026-11-18.md)
+extends this to nested scrollports and separately managed embedded frames.
+The capture verifies the native answers and restores the original position
+before releasing images. Same-origin navigation and broader layouts remain
+acceptance work.
 
 [Terminal attachment readback](g1/TERMINAL_ATTACHMENT_READBACK_2026-11-18.md)
 binds retained native file inputs to the prepared PDFs after the summary

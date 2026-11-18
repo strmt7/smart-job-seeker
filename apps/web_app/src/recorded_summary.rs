@@ -127,7 +127,7 @@ fn read_region(
         let regions = driver
             .capture_recorded_summary_row(native, row)
             .map_err(|error| error.to_string())?
-            .ok_or("The complete row could not be captured without interacting with the page")?;
+            .ok_or("The complete row could not be bound to a readable image")?;
         for (index, region) in regions.iter().enumerate() {
             let (name, digest) = save(&region.image)?;
             let part = if index + 1 == regions.len() {
@@ -139,7 +139,8 @@ fn read_region(
                 .as_array_mut()
                 .expect("image receipt")
                 .push(json!({
-                   "image":name,"sha256":digest,"clip":region.clip,"part":part
+                   "image":name,"sha256":digest,"clip":region.clip,"part":part,
+                   "capture_mode":region.mode,"viewport":region.viewport
                 }));
         }
         let (last, headings) = regions.split_last().ok_or("The detail image is missing")?;

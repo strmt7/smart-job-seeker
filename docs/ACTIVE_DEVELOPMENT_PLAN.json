@@ -253,6 +253,7 @@
         "apps/web_app/src/rehearsal_facts.rs",
         "crates/waypoint_browser/src/lib.rs",
         "crates/waypoint_browser/src/recorded_summary.rs",
+        "crates/waypoint_browser/src/recorded_summary_viewport.js",
         "apps/web_app/src/attachment_mapping.rs",
         "apps/web_app/src/suggestions.rs",
         "crates/waypoint_applications/src/form_mapping.rs",
@@ -281,6 +282,7 @@
         "Local inference with evaluated bounded runtime public research; no PII query leakage, remote-model fallback or transfer of research network authority to candidate actions"
       ],
       "evidence": [
+        "docs/g1/SCROLLABLE_APPLICATION_REVIEW_2026-11-18.md",
         "docs/g1/MIXED_APPLICATION_WORKFLOW_2026-11-18.md",
         "docs/g1/FINAL_SUMMARY_VERIFICATION_2026-11-18.md",
         "docs/g1/SUMMARY_DETAIL_IMAGES_2026-11-18.md",
@@ -323,7 +325,7 @@
         "Measure the local model on the frozen corpus; provide actionable review records rather than invented answers.",
         "Qualify native-supported inference profiles per role, including projector/renderer/parser and advertised effort. Retain actual thinking/final/tool observations and sufficient admitted budgets; do not force maximum effort onto every primitive or promote from component probes. Incorporate current primary-source research and the adapted catalog guidance without treating instructions as runtime implementation."
       ],
-      "next_action": "Freeze additional unseen application families and qualify them from candidate materials through independently verified final review. Include several-page document review, repeated and conditional controls, embeds and nested scrolling. Retain server-managed and detached-file review outcomes. Measure whole-workflow completion and pilot literal file inspection against the measured xhigh latency without weakening the exact checks.",
+      "next_action": "Bind the same-origin form's navigation census to its native child owner, frame, loader and document scope. Carry that scope to terminal review and rerun the unchanged embedded fixture. Extend the safe path to independently frozen application families, repeated/conditional controls and varied PDF layouts. Preserve server-managed and detached-file review outcomes and measure complete, uninterrupted journeys.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "start_requirements": [
         "The frozen schema2 known-source initial-control case and native mutation fixture admit investigation of the observed actuator failure. This does not admit broad planner promotion; that still requires the varied held-out tranche and full workflow truth.",
@@ -355,7 +357,7 @@
         "2026-11-14: native number entry with exact source/unit and native constraints;6contained native cases pass, schema4 independent truth keeps legacy criteria. Mixed contacts/two distinct placeholder PDFs/checked employment/qualification/native-number case verifies9/9 known,unknown0/2,zero critical/qualification-source mismatches after retained300s browser-budget failure. Bounded16entries/900s, immutable per-entry progress files9/9hashes checked; stop at no_forward_control, workflow not_qualified. Windows1448passed/618ignored, Clippy/build/fmt,31corpus tests and139fixture-onlybrowser cases pass. SetupAPI-driven, not full UI/discovery/tailoring or held-out qualification; performance remains open.",
         "2026-11-15: production capability probe now requires completed expected JSON and observable thinking with a separate exact final answer; retained old768-token baseline length stop, then2048-token/90sec/brief-arithmetic protocol passes2/2native baseline checks. Three adversarial tests and one nativeHTTP protocol matrix pass. Final Windowsworkspace1452passed/618ignored, warnings-deniedClippy/debugbuild pass. This is capability/configuration evidence, not universal workflow completion or maximum-effort profile promotion."
       ],
-      "open_checkpoint": "Both saved workflows now pass seven of seven native and visual final-review comparisons with both retained PDF byte digests. The first held-out run verified seven entries and stopped at six of seven final-review rows because a single-row crop contained a sibling. Its paired repair passed through the standard private launcher. Fresh held-out workflow coverage, live server-dependent behavior and full discovery-to-tailoring integration remain open."
+      "open_checkpoint": "Qwen verifies three of three final-review answers and one retained PDF in each of the scrolling-panel and separately managed iframe fixtures. Native browser tests confirm exact scroll restoration and defer an answer mutated during scrolling. Corrected same-origin field crops verify both first-section fields before the retained no_forward_control stop. Same-origin navigation and terminal binding, fresh held-out workflow coverage, live server-dependent behavior and discovery-to-tailoring integration remain open."
     },
     {
       "id": "R05",

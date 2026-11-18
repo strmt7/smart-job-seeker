@@ -205,6 +205,12 @@ enum FieldContextCrop {
     Radio,
 }
 
+#[derive(PartialEq, serde::Deserialize)]
+struct FieldLabelContextBounds {
+    bounds: [f64; 8],
+    viewport: [f64; 2],
+}
+
 // A radio's question and option text usually extend beyond its tiny input box.
 // Share the same bounded context in the page and in isolated child documents.
 fn radio_context_bounds(control: [f64; 4], viewport: [f64; 4]) -> Result<[f64; 4], DriverError> {
@@ -2281,16 +2287,11 @@ impl CdpDriver {
         selector: &str,
         tight_file_labels: bool,
     ) -> Result<(String, bool), DriverError> {
-        if self.captured_scope.is_some() {
-            return Err(DriverError(
-                "Embedded controls keep their existing bounded context".into(),
-            ));
-        }
         let node = self
             .node_id(selector)?
             .ok_or_else(|| DriverError("Field is unavailable for detail capture".into()))?;
         if let Some(bounds) = self.field_label_context_bounds(node, tight_file_labels)? {
-            let image = self.screenshot_bounds(&bounds, false, false, false)?;
+            let image = self.screenshot_viewport_bounds(bounds.bounds, bounds.viewport, false)?;
             if self
                 .field_label_context_bounds(node, tight_file_labels)?
                 .as_ref()
@@ -2301,6 +2302,11 @@ impl CdpDriver {
                 ));
             }
             return Ok((image, true));
+        }
+        if self.captured_scope.is_some() {
+            return Err(DriverError(
+                "No unambiguous embedded label crop is available".into(),
+            ));
         }
         let model = self
             .cdp
@@ -2319,7 +2325,7 @@ impl CdpDriver {
         &mut self,
         node: u64,
         tight_file_labels: bool,
-    ) -> Result<Option<Vec<f64>>, DriverError> {
+    ) -> Result<Option<FieldLabelContextBounds>, DriverError> {
         let resolved = self
             .cdp
             .call("DOM.resolveNode", json!({"nodeId":node}))
@@ -2331,7 +2337,7 @@ impl CdpDriver {
         let found = self.cdp.call(
             "Runtime.callFunctionOn",
             json!({"objectId":object,
-            "functionDeclaration":include_str!("field_label_context.js"),"arguments":[{"value":tight_file_labels}],"returnByValue":true}),
+            "functionDeclaration":include_str!("field_label_context.js"),"arguments":[{"value":tight_file_labels},{"value":self.captured_scope.is_none()}],"returnByValue":true}),
         );
         let released = self
             .cdp
@@ -2347,20 +2353,13 @@ impl CdpDriver {
         if value["unavailable"] == true {
             return Ok(None);
         }
-        let bounds = value["bounds"]
-            .as_array()
-            .filter(|bounds| bounds.len() == 8)
-            .ok_or_else(|| {
+        serde_json::from_value(value.clone())
+            .map(Some)
+            .map_err(|_| {
                 DriverError(
                     "Associated labels are clipped, hidden or exceed the detail budget".into(),
                 )
-            })?;
-        let numbers: Option<Vec<_>> = bounds
-            .iter()
-            .map(|v| v.as_f64().filter(|n| n.is_finite()))
-            .collect();
-        let numbers = numbers.ok_or_else(|| DriverError("Invalid field label bounds".into()))?;
-        Ok(Some(numbers))
+            })
     }
 
     /// Capture post-entry context, including more of a native file chooser's

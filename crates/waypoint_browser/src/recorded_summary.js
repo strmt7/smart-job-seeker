@@ -1,5 +1,6 @@
-(() => {
+(rowIndex => {
   const rows = [];
+  let selected = null;
   const result = { rows, incomplete: false,
     viewport: [scrollX, scrollY, innerWidth, innerHeight, devicePixelRatio] };
   const headings = 'legend, h2, h3, h4, h5, h6, [role="heading"]';
@@ -79,7 +80,8 @@
       result.incomplete = true;
       return;
     }
-    const rects = [...sectionNodes, label, value].map(textBounds);
+    const nodes = [...sectionNodes, label, value];
+    const rects = nodes.map(textBounds);
     const entry = { answer: { key, value: displayed },
       bounds: rects.some(rect => rect === null) ? null : rects };
     bytes += encoder.encode(JSON.stringify(entry)).length;
@@ -87,6 +89,7 @@
       result.incomplete = true;
       return;
     }
+    if (rows.length === rowIndex) selected = nodes;
     rows.push(entry);
   }
 
@@ -114,5 +117,5 @@
       }
     }
   }
-  return result;
-})()
+  return rowIndex === null ? result : { result, selected };
+})

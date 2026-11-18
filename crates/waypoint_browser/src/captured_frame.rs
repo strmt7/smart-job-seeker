@@ -473,6 +473,13 @@ pub(super) struct CapturedPointerPoint {
     child_width: f64,
     child_height: f64,
 }
+
+#[derive(PartialEq)]
+struct CapturedFrameProjection {
+    session: String,
+    offset: [f64; 2],
+    viewport: [f64; 2],
+}
 fn frame_caption(raw: &str) -> Option<String> {
     let raw = raw.trim();
     if raw.is_empty() || url::Url::parse(raw).is_ok() {
@@ -1057,8 +1064,7 @@ impl CdpDriver {
                 | RecordedFieldKind::Number
                 | RecordedFieldKind::Select
                 | RecordedFieldKind::File
-        ) && self.captured_scope.is_none()
-        {
+        ) {
             let detail = if matches!(kind, RecordedFieldKind::File) {
                 self.screenshot_file_detail_bound(selector)
             } else {
@@ -1793,10 +1799,9 @@ impl CdpDriver {
         x: f64,
         y: f64,
     ) -> Result<Option<CapturedPointerPoint>, DriverError> {
-        let Some(scope) = self.captured_scope.as_ref() else {
+        if self.captured_scope.is_none() {
             return Ok(None);
-        };
-        let frame = scope.frame.clone();
+        }
         self.validate_captured_frame(false)?;
         let resolved = self
             .cdp
@@ -1830,29 +1835,91 @@ impl CdpDriver {
         {
             return Err(review());
         }
+        let projection = self.captured_frame_projection([numbers[2], numbers[3]], &[[x, y]])?;
+        Ok(Some(CapturedPointerPoint {
+            session: projection.session,
+            x: projection.offset[0] + x,
+            y: projection.offset[1] + y,
+            width: projection.viewport[0],
+            height: projection.viewport[1],
+            child_width: numbers[2],
+            child_height: numbers[3],
+        }))
+    }
+
+    /// Bind viewport points to the current frame owner using native hit tests.
+    fn captured_frame_projection(
+        &mut self,
+        [width, height]: [f64; 2],
+        points: &[[f64; 2]],
+    ) -> Result<CapturedFrameProjection, DriverError> {
+        let frame = self
+            .captured_scope
+            .as_ref()
+            .ok_or_else(review)?
+            .frame
+            .clone();
         let owner = self.parent_frame_owner(&frame)?;
-        let point=self.with_protocol_session(&frame.parent_session,|driver|{
+        self.with_protocol_session(&frame.parent_session,|driver|{
             let resolved=driver.cdp.call("DOM.resolveNode",json!({"nodeId":owner})).map_err(derr)?;
             let object=resolved.pointer("/object/objectId").and_then(Value::as_str).ok_or_else(review)?;
-            let checked=driver.cdp.call("Runtime.callFunctionOn",json!({"objectId":object,"functionDeclaration":r#"function(x,y,width,height){
+            let checked=driver.cdp.call("Runtime.callFunctionOn",json!({"objectId":object,"functionDeclaration":r#"function(points,width,height){
                 if(!this.isConnected || !(this instanceof HTMLIFrameElement) || this.closest('a[href],button:not([type="button"]),input[type="submit" i],input[type="image" i]')) return null;
                 if(Math.abs(this.clientWidth-width)>.5 || Math.abs(this.clientHeight-height)>.5) return null;
                 const rect=this.getBoundingClientRect(),style=getComputedStyle(this);
                 if([style.paddingLeft,style.paddingTop,style.paddingRight,style.paddingBottom].some(value=>parseFloat(value)!==0) || Math.abs(rect.width-this.offsetWidth)>.5 || Math.abs(rect.height-this.offsetHeight)>.5) return null;
                 for(let current=this,depth=0;current;current=current.parentElement){if(++depth>64)return null;const s=getComputedStyle(current);if(s.transform!=='none' || s.perspective!=='none' || s.translate!=='none' || s.rotate!=='none' || s.scale!=='none' || Number(s.zoom)!==1 || s.visibility!=='visible' || Number(s.opacity)===0)return null;}
-                const px=rect.left+this.clientLeft+x,py=rect.top+this.clientTop+y;
-                if(px<0 || py<0 || px>=innerWidth || py>=innerHeight || document.elementFromPoint(px,py)!==this)return null;
-                return {x:px,y:py,width:innerWidth,height:innerHeight};
-            }"#,"arguments":[{"value":x},{"value":y},{"value":numbers[2]},{"value":numbers[3]}],"returnByValue":true}));
+                const left=rect.left+this.clientLeft,top=rect.top+this.clientTop;
+                if(!points.every(([x,y])=>{
+                    const px=left+x,py=top+y;
+                    return x>=0 && y>=0 && x<width && y<height && px>=0 && py>=0 && px<innerWidth && py<innerHeight && document.elementFromPoint(px,py)===this;
+                })) return null;
+                return {left,top,width:innerWidth,height:innerHeight};
+            }"#,"arguments":[{"value":points},{"value":width},{"value":height}],"returnByValue":true}));
             let released=driver.cdp.call("Runtime.releaseObject",json!({"objectId":object}));
             let checked=checked.map_err(derr)?;released.map_err(derr)?;
             if checked.get("exceptionDetails").is_some(){return Err(review());}
             let checked=checked.pointer("/result/value").ok_or_else(review)?;
-            let values:Vec<_>=["x","y","width","height"].iter().filter_map(|key|checked[key].as_f64().filter(|v|v.is_finite())).collect();
-            if values.len()!=4 || values[0]<0.0 || values[1]<0.0 || values[0]>=values[2] || values[1]>=values[3] {return Err(review());}
-            Ok(CapturedPointerPoint { session: frame.parent_session.clone(), x:values[0],y:values[1],width:values[2],height:values[3],child_width:numbers[2],child_height:numbers[3] })
+            let values:Vec<_>=["left","top","width","height"].iter().filter_map(|key|checked[key].as_f64().filter(|v|v.is_finite())).collect();
+            if values.len()!=4 || values[2]<=0.0 || values[3]<=0.0 {return Err(review());}
+            Ok(CapturedFrameProjection { session: frame.parent_session.clone(), offset:[values[0],values[1]],viewport:[values[2],values[3]] })
+        })
+    }
+
+    /// Capture a native viewport rectangle in the document that renders it.
+    pub(super) fn screenshot_viewport_bounds(
+        &mut self,
+        mut quad: [f64; 8],
+        viewport: [f64; 2],
+        allow_larger_element: bool,
+    ) -> Result<String, DriverError> {
+        if self.captured_scope.is_none() {
+            return self.screenshot_bounds(&quad, false, allow_larger_element, false);
+        }
+        let [left, top, right, _, _, bottom, _, _] = quad;
+        let dx = 0.5_f64.min((right - left) / 4.);
+        let dy = 0.5_f64.min((bottom - top) / 4.);
+        let points = [
+            [left + dx, top + dy],
+            [right - dx, top + dy],
+            [right - dx, bottom - dy],
+            [left + dx, bottom - dy],
+            [(left + right) / 2., (top + bottom) / 2.],
+        ];
+        let projected = self.captured_frame_projection(viewport, &points)?;
+        for point in quad.as_chunks_mut::<2>().0 {
+            point[0] += projected.offset[0];
+            point[1] += projected.offset[1];
+        }
+        let image = self.with_captured_parent_capture(|driver| {
+            driver.screenshot_bounds(&quad, false, allow_larger_element, false)
         })?;
-        Ok(Some(point))
+        if self.captured_frame_projection(viewport, &points)? != projected {
+            return Err(DriverError(
+                "The embedded viewport moved during capture".into(),
+            ));
+        }
+        Ok(image)
     }
     /// A parent-rendered viewport image, never an asserted full child-document capture.
     pub fn screenshot_captured_frame(&mut self) -> Result<String, DriverError> {
@@ -2084,7 +2151,7 @@ mod tests {
                     let image=image.ok_or_else(||DriverError(format!("File detail missing: {error:?}")))?;
                     if !associated {return Err(DriverError("File label association was not bound".into()));}
                     let node=driver.node_id("#upload")?.ok_or_else(||DriverError("File input disappeared".into()))?;
-                    let bounds=driver.field_label_context_bounds(node,true)?.ok_or_else(||DriverError("File label context disappeared".into()))?;
+                    let bounds=driver.field_label_context_bounds(node,true)?.ok_or_else(||DriverError("File label context disappeared".into()))?.bounds;
                     let (width,height)=(bounds[2]-bounds[0],bounds[5]-bounds[1]);
                     if !(340.0..=720.0).contains(&width) || !(40.0..=400.0).contains(&height) {return Err(DriverError("File-only bounds exceed their complete context budget".into()));}
                     crate::rehearsal_capture::write_new(&folder,&format!("file-{name}.base64.private.txt"),image.as_bytes()).map_err(DriverError)?;
