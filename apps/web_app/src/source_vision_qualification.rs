@@ -7,11 +7,9 @@ use waypoint_applications::form_mapping::{
     BrowserCommand, FormFieldType, FormSchema, PacketValue, ProposedMapping,
 };
 
-/// Test-only evidence: retain actual completion/usage even when production
-/// correctly refuses a truncated response. No hook exists in product builds.
-pub(crate) fn retain_native_response(request: &Value, response: &Value) -> Result<(), String> {
+fn native_report_directory() -> Result<Option<PathBuf>, String> {
     let Some(output) = std::env::var_os("WAYPOINT_OWNED_VISION_REPORT") else {
-        return Ok(());
+        return Ok(None);
     };
     let output = PathBuf::from(output);
     let root = output
@@ -26,11 +24,35 @@ pub(crate) fn retain_native_response(request: &Value, response: &Value) -> Resul
     if !root.starts_with(target) {
         return Err("Vision receipts must remain under target".into());
     }
-    static SEQUENCE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    if sequence >= 32 {
-        return Err("Native vision receipt budget exhausted".into());
+    Ok(Some(root))
+}
+
+pub(crate) fn native_stderr_path() -> Result<Option<PathBuf>, String> {
+    if std::env::var_os("WAYPOINT_OWNED_RUNTIME_TRACE").as_deref()
+        != Some(std::ffi::OsStr::new("1"))
+    {
+        return Ok(None);
     }
+    let Some(root) = native_report_directory()? else {
+        return Ok(None);
+    };
+    let path = root.join("ollama-native.private.log");
+    match std::fs::symlink_metadata(&path) {
+        Ok(_) => return Err("The native model log already exists".into()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.to_string()),
+    }
+    Ok(Some(path))
+}
+
+/// Test-only evidence: retain actual completion/usage even when production
+/// correctly refuses a truncated response. No hook exists in product builds.
+pub(crate) fn retain_native_response(request: &Value, response: &Value) -> Result<(), String> {
+    let Some(root) = native_report_directory()? else {
+        return Ok(());
+    };
+    static SEQUENCE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    static RETAINED_BYTES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let directory = root.join("vision-native");
     std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
     let mut request = request.clone();
@@ -40,6 +62,15 @@ pub(crate) fn retain_native_response(request: &Value, response: &Value) -> Resul
     request["images"] = json!({"base64_sha256":waypoint_domain::Sha256Digest::of(image).as_str()});
     let bytes = serde_json::to_vec_pretty(&json!({"request":request,"response":response}))
         .map_err(|e| e.to_string())?;
+    use std::sync::atomic::Ordering::Relaxed;
+    RETAINED_BYTES
+        .try_update(Relaxed, Relaxed, |retained| {
+            retained
+                .checked_add(bytes.len())
+                .filter(|total| *total <= 64 * 1024 * 1024)
+        })
+        .map_err(|_| "Native vision receipt storage budget exhausted")?;
+    let sequence = SEQUENCE.fetch_add(1, Relaxed);
     use std::io::Write;
     std::fs::OpenOptions::new()
         .write(true)

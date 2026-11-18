@@ -253,6 +253,14 @@ class ChildContainment:
         self._handle = handle
         self._kernel32 = kernel32
 
+    def peak_job_commit_bytes(self) -> int:
+        information = _JobObjectExtendedLimitInformation()
+        if self._handle is None or not self._kernel32.QueryInformationJobObject(
+            self._handle, 9, ctypes.byref(information), ctypes.sizeof(information), None
+        ):
+            raise RuntimeError(f"owned job memory query failed ({ctypes.get_last_error()})")
+        return int(information.peak_job_memory_used)
+
     def terminate(self, process: subprocess.Popen[bytes]) -> None:
         """Purpose: Terminate the contained child and every descendant.
         Inputs: process is the root child associated with this containment object.

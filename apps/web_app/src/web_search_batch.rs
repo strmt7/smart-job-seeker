@@ -398,14 +398,17 @@ fn start_requests(
     if task.is_some() {
         return Err("A batch search is running or awaiting its result".into());
     }
-    let (tx, rx) = mpsc::sync_channel(1);
+    // Every planned page can enqueue at most one result. Leave one slot for
+    // completion so collecting pages is independent of the HTTP/UI loop.
+    // Both entry points bound the plan at 50 pages and results at 600 links.
+    let total = requests.len();
+    let (tx, rx) = mpsc::sync_channel(total + 1);
     let cancel = Arc::new(AtomicBool::new(false));
     let stop = cancel.clone();
     let timed_out = Arc::new(AtomicBool::new(false));
     let unreported = Arc::new(AtomicBool::new(false));
     let worker_timeout = timed_out.clone();
     let worker_unreported = unreported.clone();
-    let total = requests.len();
     let plan = requests
         .iter()
         .map(|(query, page, _)| (query.clone(), *page))
@@ -476,10 +479,7 @@ fn start_requests(
                 break;
             }
         }
-        // A completed page may still occupy the one-slot channel when the
-        // user cancels. Do not keep a worker waiting indefinitely for a
-        // client that may never poll; disconnection preserves cancellation
-        // and the buffered page is still available to the receiver.
+        // The completion slot also lets cancellation retain buffered pages.
         let _ = send_completion(
             &tx,
             limit_reached,
@@ -1777,6 +1777,7 @@ mod tests {
         let _lock = TEST_LOCK.lock().unwrap();
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
+        let (finished, responses) = mpsc::channel();
         let provider = std::thread::spawn(move || {
             for (query, page) in [("first", 1), ("second", 1), ("first", 2), ("second", 2)] {
                 let (mut stream, _) = listener.accept().unwrap();
@@ -1793,6 +1794,7 @@ mod tests {
                 )
                 .unwrap();
             }
+            finished.send(()).unwrap();
         });
         start(
             "fair-pages".into(),
@@ -1801,6 +1803,7 @@ mod tests {
             2,
         )
         .unwrap();
+        let collected_without_polling = responses.recv_timeout(Duration::from_secs(8)).is_ok();
         let deadline = Instant::now() + Duration::from_secs(12);
         let mut pages = Vec::new();
         loop {
@@ -1827,6 +1830,10 @@ mod tests {
             ]
         );
         provider.join().unwrap();
+        assert!(
+            collected_without_polling,
+            "client polling stalled the search worker"
+        );
     }
 
     #[test]

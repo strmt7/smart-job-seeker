@@ -370,6 +370,17 @@ function harness(api, onFinished) {
   assert(find(tested,node => node.textContent==='Child answer · Text verified in form · visual review unavailable'));
   assert(find(tested,node => node.textContent==='Unclear field · Text verified in form · image review failed'));
   assert(find(tested,node => node.textContent==='Clear field · Text and image match'));
+  const qualificationBatches = harness(async () => {}).preview({
+    ...rehearsal, rehearsal: {...rehearsal.rehearsal, qualification_plans: [
+      {view:1,status:'proposed',plan:{proposals:[{}, {}, {}, {}]}},
+      {view:1,status:'proposed',plan:{proposals:[{}],manual_review:[{}]}},
+      {view:1,status:'needs_review',omitted_eligible_fields:2},
+      {view:2,status:'proposed',plan:{proposals:[{}]}},
+    ]},
+  }, {});
+  assert(find(qualificationBatches,node => node.textContent==='5 answers prepared from reviewed qualifications.'));
+  assert(find(qualificationBatches,node => node.textContent==='Some qualification questions need review. See the saved answer plans.'));
+  assert(!find(qualificationBatches,node => node.textContent==='4 answers prepared from reviewed qualifications.'));
   for (const [plan, message] of [
     [{view:1,status:'needs_review'}, 'Document matching needs review; no attachment was chosen automatically.'],
     [{view:1,status:'proposed',decisions:[{document_id:null}]}, '1 upload control needs a document choice.'],

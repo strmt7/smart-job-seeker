@@ -225,6 +225,21 @@ quality or resource qualification. The shared qualification runner checks host
 RAM every 500 ms and closes only its own containment below a 3 GiB reserve.
 See [scope, evidence and remaining gates](SOURCE_COPY_WORKFLOW.md).
 
+## Private local-model rehearsal
+
+Use `py -3.13 -B tools/qualify_private_rehearsal.py --help` for the launcher.
+Give it a fictional saved copy under `target/` and the explicit installed model
+manifest and store. A `journey` in the fixture carries independent expected
+sections and final-review truth to the grader. The production actor receives the
+saved application and model settings.
+
+The launcher defaults to up to 16 GiB of aggregate job commit with a 6 GiB
+physical-memory reserve. `--job-memory-gib` and `--host-reserve-gib` adjust the
+test envelope, subject to live host admission and a 3 GiB minimum reserve.
+The outer timeout includes setup and cleanup. `--trace-native` keeps bounded
+private vision receipts and runtime diagnostics in the evidence directory.
+Report test counts and confirmed teardown alongside application outcomes.
+
 ## Document workflow qualification
 
 `tools/qualify_document_journey.py --control <test-owned-folder-under-target>

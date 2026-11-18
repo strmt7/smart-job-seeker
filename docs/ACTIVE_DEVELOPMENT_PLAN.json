@@ -250,7 +250,9 @@
       "paths": [
         "apps/web_app/src/form_task.rs",
         "apps/web_app/src/recorded_preview.rs",
+        "apps/web_app/src/rehearsal_facts.rs",
         "crates/waypoint_browser/src/lib.rs",
+        "crates/waypoint_browser/src/recorded_summary.rs",
         "apps/web_app/src/attachment_mapping.rs",
         "apps/web_app/src/suggestions.rs",
         "crates/waypoint_applications/src/form_mapping.rs",
@@ -279,6 +281,7 @@
         "Local inference with evaluated bounded runtime public research; no PII query leakage, remote-model fallback or transfer of research network authority to candidate actions"
       ],
       "evidence": [
+        "docs/g1/MIXED_APPLICATION_WORKFLOW_2026-11-18.md",
         "docs/g1/FINAL_SUMMARY_VERIFICATION_2026-11-18.md",
         "docs/g1/SUMMARY_DETAIL_IMAGES_2026-11-18.md",
         "docs/g1/TERMINAL_ATTACHMENT_READBACK_2026-11-18.md",
@@ -316,10 +319,11 @@
         "Connect candidate-supported facts and native/visual observations to a small typed action planner.",
         "Implement bounded choose/enter/attach/section/repeated-history decisions with independent current-state validation.",
         "After every action, read back native state and perform local-model visual review; detect stale state and no progress.",
+        "Replace lossy first-N limits and duplicate deadlines with bounded continuation and explicit review accounting under the shared workflow deadline.",
         "Measure the local model on the frozen corpus; provide actionable review records rather than invented answers.",
         "Qualify native-supported inference profiles per role, including projector/renderer/parser and advertised effort. Retain actual thinking/final/tool observations and sufficient admitted budgets; do not force maximum effort onto every primitive or promote from component probes. Incorporate current primary-source research and the adapted catalog guidance without treating instructions as runtime implementation."
       ],
-      "next_action": "Qualify full held-out application rehearsals with the production local actor, covering mixed PDFs, conditional and repeated questions, and independent terminal review. Measure whole-workflow outcomes, retained attachment bytes, and reasons that server-managed or detached attachments require review. Extend native coverage to embedded and nested scroll layouts after preserving section identity and stable pixels.",
+      "next_action": "Freeze additional unseen application families and qualify them from candidate materials through independently verified final review. Include several-page document review, repeated and conditional controls, embeds and nested scrolling. Retain server-managed and detached-file review outcomes. Measure whole-workflow completion and pilot literal file inspection against the measured xhigh latency without weakening the exact checks.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "start_requirements": [
         "The frozen schema2 known-source initial-control case and native mutation fixture admit investigation of the observed actuator failure. This does not admit broad planner promotion; that still requires the varied held-out tranche and full workflow truth.",
@@ -351,7 +355,7 @@
         "2026-11-14: native number entry with exact source/unit and native constraints;6contained native cases pass, schema4 independent truth keeps legacy criteria. Mixed contacts/two distinct placeholder PDFs/checked employment/qualification/native-number case verifies9/9 known,unknown0/2,zero critical/qualification-source mismatches after retained300s browser-budget failure. Bounded16entries/900s, immutable per-entry progress files9/9hashes checked; stop at no_forward_control, workflow not_qualified. Windows1448passed/618ignored, Clippy/build/fmt,31corpus tests and139fixture-onlybrowser cases pass. SetupAPI-driven, not full UI/discovery/tailoring or held-out qualification; performance remains open.",
         "2026-11-15: production capability probe now requires completed expected JSON and observable thinking with a separate exact final answer; retained old768-token baseline length stop, then2048-token/90sec/brief-arithmetic protocol passes2/2native baseline checks. Three adversarial tests and one nativeHTTP protocol matrix pass. Final Windowsworkspace1452passed/618ignored, warnings-deniedClippy/debugbuild pass. This is capability/configuration evidence, not universal workflow completion or maximum-effort profile promotion."
       ],
-      "open_checkpoint": "One mixed development field case now verifies9/9 known with zero unknown/critical entries, including native number and both selected PDFs. First attempt failed its browser lifetime budget and remains visible. Review application is not recognized, final workflow observation is absent, and controller time643.753s needs profiling. APIs staged inputs and PDFs are placeholders: full UI/discovery/tailoring/final document/ATS/held-out acceptance remains open. Progress snapshots preserve partial historical evidence, never final/current validity. Native27B thinking/vision/tool configuration is component-qualified only; the production actor and model-selection/custom-store path still require paired whole-workflow qualification before adoption."
+      "open_checkpoint": "Both saved workflows now pass seven of seven native and visual final-review comparisons with both retained PDF byte digests. The first held-out run verified seven entries and stopped at six of seven final-review rows because a single-row crop contained a sibling. Its paired repair passed through the standard private launcher. Fresh held-out workflow coverage, live server-dependent behavior and full discovery-to-tailoring integration remain open."
     },
     {
       "id": "R05",
@@ -439,6 +443,7 @@
       "title": "Broad discovery and real application-route verification",
       "paths": [
         "apps/web_app/src/search_planner.rs",
+        "apps/web_app/src/web_search_batch.rs",
         "crates/waypoint_research/src/lib.rs",
         "crates/waypoint_connectors/src/lib.rs"
       ],
@@ -448,7 +453,8 @@
         "Labeled retrieval and actual-route reachability evidence"
       ],
       "evidence": [
-        "docs/g1/UNSEEN_FAMILIES_AND_QUESTION_CONTEXT_2026-11-13.md"
+        "docs/g1/UNSEEN_FAMILIES_AND_QUESTION_CONTEXT_2026-11-13.md",
+        "docs/g1/MIXED_APPLICATION_WORKFLOW_2026-11-18.md"
       ],
       "execution_batch": "D",
       "steps": [
@@ -457,7 +463,7 @@
         "Retain original ads and verify actual application routes; classify freshness, closure, login/challenge and email-only outcomes.",
         "Measure labeled retrieval and route reachability; add sources only for measured coverage benefit."
       ],
-      "next_action": "Qualify free-provider availability/recovery and retained backoff through actual UI. Two3-query provider batches each attempted1/left2 unattempted: FreeSerp general index unavailable and SearXNG HTTP429; neither is successful whole-web retrieval. Then measure varied query expansions and actual application-route reachability.",
+      "next_action": "Build and qualify independently configured provider recovery and durable page cursors, then measure broad query expansion and application-route reachability through the UI. The bounded queue fetched four loopback pages before the first client poll. Earlier live provider batches attempted one of three pages each and failed on provider availability or HTTP 429.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package."
     },
     {

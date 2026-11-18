@@ -2,17 +2,14 @@
 //! Model agreement is evidence, never authorization or independent fact verification.
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{
-    collections::HashSet,
-    time::{Duration, Instant},
-};
+use std::collections::HashSet;
 use waypoint_applications::form_mapping::{FormField, FormFieldType};
 use waypoint_inference::{Inference, InferenceError, UsageReport};
 
 pub(crate) const MAX_FACTS: usize = 32;
 const MAX_FACT_BYTES: usize = 1000;
 const MAX_CALLS: usize = 24;
-pub(crate) const MAX_FIELDS: usize = 4;
+const FIELDS_PER_BATCH: usize = 4;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Fact {
@@ -125,10 +122,14 @@ pub(crate) fn eligible(field: &FormField) -> bool {
         && !field.label.trim().is_empty()
         && field.label.len() <= 1000
 }
+
+pub(crate) fn batches(fields: &mut [FormField]) -> std::slice::Chunks<'_, FormField> {
+    fields.sort_by_key(|field| !field.required);
+    fields.chunks(FIELDS_PER_BATCH)
+}
 struct Budget<'a> {
     inner: &'a mut dyn Inference,
     calls: usize,
-    started: Instant,
 }
 impl Inference for Budget<'_> {
     fn probe(&mut self) -> Result<waypoint_inference::CapabilityReport, InferenceError> {
@@ -143,7 +144,8 @@ impl Inference for Budget<'_> {
         prompt: &str,
         max: u32,
     ) -> Result<(Value, UsageReport), InferenceError> {
-        if self.calls >= MAX_CALLS || self.started.elapsed() > Duration::from_secs(240) {
+        // The guarded runtime applies the workflow deadline to each request.
+        if self.calls >= MAX_CALLS {
             return Err(InferenceError::StructuredOutputFailed(
                 "Qualification planning budget reached; remaining questions need review".into(),
             ));
@@ -229,7 +231,7 @@ pub(crate) fn propose(
     snapshot: &Snapshot,
 ) -> Result<Value, String> {
     snapshot.validate()?;
-    if fields.is_empty() || fields.len() > MAX_FIELDS || fields.iter().any(|f| !eligible(f)) {
+    if fields.is_empty() || fields.len() > FIELDS_PER_BATCH || fields.iter().any(|f| !eligible(f)) {
         return Err(
             "Choose one to four available text questions for reviewed qualifications".into(),
         );
@@ -241,7 +243,6 @@ pub(crate) fn propose(
     let mut llm = Budget {
         inner: llm,
         calls: 0,
-        started: Instant::now(),
     };
     let mut proposals = Vec::new();
     let mut manual = Vec::new();
@@ -348,6 +349,35 @@ pub(crate) fn resolve(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn qualification_batches_offer_every_field_and_prioritize_required_questions() {
+        let mut fields: Vec<FormField> = (0..7)
+            .map(|index| {
+                serde_json::from_value(json!({
+                    "selector":format!("#question-{index}"),"label":format!("Question {index}"),
+                    "field_type":"text","required":index%2==1,"sensitive":false
+                }))
+                .unwrap()
+            })
+            .collect();
+        let planned = batches(&mut fields)
+            .map(|batch| {
+                batch
+                    .iter()
+                    .map(|field| field.selector.as_str())
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            planned,
+            [
+                vec!["#question-1", "#question-3", "#question-5", "#question-0"],
+                vec!["#question-2", "#question-4", "#question-6"],
+            ]
+        );
+    }
+
     #[test]
     fn quantity_entry_keeps_independent_question_source_and_review_barriers() {
         let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
@@ -538,7 +568,6 @@ mod tests {
         let mut budget = Budget {
             inner: &mut native,
             calls: 0,
-            started: Instant::now(),
         };
         for _ in 0..MAX_CALLS {
             budget.generate_structured("fixture", "", 1).unwrap();

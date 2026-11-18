@@ -498,6 +498,10 @@ mod windows {
                 .env("OLLAMA_KEEP_ALIVE", "5m")
                 .env("LLAMA_ARG_CACHE_RAM", "512")
                 .env("LLAMA_ARG_CTX_CHECKPOINTS", "1");
+            #[cfg(test)]
+            if let Some(log) = crate::source_vision_qualification::native_stderr_path()? {
+                command = command.stderr_file(log);
+            }
             for (key, name) in [
                 ("USERPROFILE", "profile"),
                 ("LOCALAPPDATA", "local"),

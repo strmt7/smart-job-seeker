@@ -27,6 +27,12 @@ Attempt history now builds detailed rows after selecting the page, with
 measured lower peak commit for a populated fictional archive. End-to-end
 workflow, installer and real-form isolation gates remain open.
 
+The [18 November mixed application checkpoint](g1/MIXED_APPLICATION_WORKFLOW_2026-11-18.md)
+records saved-form journeys, qualification batching and search
+execution with delayed collection. Its measurements cover the listed local
+fixtures. Use the [execution limits plan](IMPLEMENTATION_PLAN_2026-11-17.md#r046--execution-limits-and-continuation)
+to audit the remaining cutoffs and resume behavior before release.
+
 ## Source and evidence scope
 
 - Local branch: `main`; review base `ec415d566d9410da774f56aa7eebecc46cf15c8f`

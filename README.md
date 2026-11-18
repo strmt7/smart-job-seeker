@@ -5,34 +5,19 @@
 [![caveman](https://img.shields.io/static/v1?label=&message=caveman&color=555&logo=github&logoColor=white)](https://github.com/JuliusBrussee/caveman)
 [![crawl4ai](https://img.shields.io/static/v1?label=&message=crawl4ai&color=555&logo=github&logoColor=white)](https://github.com/unclecode/crawl4ai)
 
-Smart Jobseeker is a Windows-first, local job-search and application-assistance prototype written in Rust. Its current interface is a local web page; it uses local tools, including Ollama for optional model-assisted features. The prototype is under active development and is not yet a complete enterprise product.
+Smart Jobseeker is a Windows-first job-search and application-assistance
+prototype. Its Rust backend serves a local web workspace and can use Ollama for
+model-assisted work. The reviewed Qwen 3.8 27B default runs saved-form rehearsals.
+The [mixed application checkpoint](docs/g1/MIXED_APPLICATION_WORKFLOW_2026-11-18.md)
+records review outcomes and the scope of current verification.
 
-**Current status:** The app remains a prototype. The [interface contract](docs/design/2026-11-smart-jobseeker/README.md) records the latest visual/resizing checkpoint; the [earlier web checkpoint](docs/WEB_PROTOTYPE_CHECKPOINT.md) retains historical evidence. Neither establishes current end-to-end readiness. No hiring-uplift, superiority or "undetectable AI" claims are made.
-
-The [17 November repository overview](docs/REPO_OVERVIEW_2026-11-17.md) and
-[detailed implementation plan](docs/IMPLEMENTATION_PLAN_2026-11-17.md) are the
-current development entry points. The app remains a prototype. The reviewed
-Qwen 3.8 27B default is connected to rehearsal; whole-product runtime consistency
-and representative complete workflows remain unfinished. A native
-[256k Q8 capacity test](docs/g1/QWEN_256K_CONTEXT_2026-11-17.md) succeeded, but
-long-context accuracy and default-runtime integration are separate open gates.
-
-Earlier [completion planning](docs/COMPLETION_PLAN.md) retains the preceding product work and evidence gates; no readiness date is established.
-
-The [11 November repository review](docs/REPO_STATE_REVIEW_2026-11-11.md) separates
-verified functionality, open problems and development inefficiencies. Its
-[earlier execution plan](docs/COMPLETION_PLAN_2026-11-11.md) remains historical;
-the [active queue](docs/ACTIVE_DEVELOPMENT_PLAN.json) tracks the ongoing goal.
-
-The [14 November readiness assessment and plan](docs/RELEASE_READINESS_AND_NEXT_PLAN_2026-11-14.md)
-records that checkpoint's measured gaps and execution sequence. Reviewed qualification
-answers/corrections are connected; exact text-field quantities now pass the
-two development cases. Broad numeric grounding, complete journeys and
-release qualification remain unfinished.
-
-The [14 November direction review](docs/RELEASE_DIRECTION_REVIEW_2026-11-14.md) records
-that checkpoint's release gaps, primary-source research and implementation sequence
-for local inference with internet-connected agent tools.
+The [repository overview](docs/REPO_OVERVIEW_2026-11-17.md) describes what works
+and what remains open. The [implementation plan](docs/IMPLEMENTATION_PLAN_2026-11-17.md)
+and [active queue](docs/ACTIVE_DEVELOPMENT_PLAN.json) track development. See the
+[interface contract](docs/design/2026-11-smart-jobseeker/README.md) for layout and
+resizing behavior. Representative workflows, clean-host installation and
+[long-context model quality](docs/g1/QWEN_256K_CONTEXT_2026-11-17.md) still need
+release qualification.
 
 [Saved-page controls](docs/PUBLIC_FORM_OUTLINES.md) show observed labels and
 question groups under a job's page-copy details and application records.

@@ -81,11 +81,22 @@ def ensure_host_reserve():
 
 
 def run(command: list[str], environment: dict[str, str], log: Path, seconds: int = 240,
-        memory_limit_bytes: int = 4 * 1024**3) -> dict:
-    if type(seconds) is not int or not 1 <= seconds <= 3600:
-        raise ValueError('Command timeout must be a bounded integer')
-    budget = admit_child_memory_bytes(memory_limit_bytes)
+        memory_limit_bytes: int = 4 * 1024**3, *,
+        host_reserve_bytes: int | None = None, watched_logs: tuple[Path, ...] = ()) -> dict:
+    if type(seconds) is not int or seconds < 1:
+        raise ValueError('Command timeout must be a positive integer')
+    if host_reserve_bytes is None:
+        budget = admit_child_memory_bytes(memory_limit_bytes)
+    else:
+        if (type(host_reserve_bytes) is not int or host_reserve_bytes < 3 * 1024**3
+                or type(memory_limit_bytes) is not int or memory_limit_bytes <= 0):
+            raise ValueError('Invalid production-profile RAM budget')
+        if memory_limit_bytes + host_reserve_bytes > available_physical_bytes():
+            raise RuntimeError('Insufficient host RAM for the requested app job and reserve')
+        budget = memory_limit_bytes
     containment = None
+    peak = None
+    peak_error = None
     started = time.monotonic()
     with log.open('xb') as output:
         process = subprocess.Popen(command, cwd=REPO, env=environment, stdin=subprocess.DEVNULL,
@@ -98,11 +109,19 @@ def run(command: list[str], environment: dict[str, str], log: Path, seconds: int
             while process.poll() is None:
                 if time.monotonic() - memory_checked >= .5:
                     ensure_host_reserve()
+                    if host_reserve_bytes is not None and available_physical_bytes() < host_reserve_bytes:
+                        raise RuntimeError('Qualification reached the declared host RAM reserve')
+                    if any(path.is_file() and path.stat().st_size > 8 * 1024**2 for path in watched_logs):
+                        raise RuntimeError('Qualification native log budget exceeded')
                     memory_checked = time.monotonic()
                 if time.monotonic() - started > seconds or log.stat().st_size > 8 * 1024**2:
                     raise RuntimeError('Qualification time or log budget exceeded')
                 time.sleep(.05)
             code = process.wait(timeout=5)
+            try:
+                peak = containment.peak_job_commit_bytes()
+            except RuntimeError as error:
+                peak_error = str(error)
         finally:
             try:
                 if containment is not None:
@@ -113,7 +132,8 @@ def run(command: list[str], environment: dict[str, str], log: Path, seconds: int
             finally:
                 process.wait(timeout=5)
     result = {'command': command, 'exit_code': code, 'seconds': round(time.monotonic() - started, 3),
-              'job_memory_limit': budget, 'log_sha256': digest(log)}
+              'job_memory_limit': budget, 'peak_job_commit_bytes': peak, 'job_memory_observation_error': peak_error,
+              'log_sha256': digest(log)}
     return result
 
 

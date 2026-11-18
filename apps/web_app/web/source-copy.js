@@ -363,12 +363,19 @@
           if(plan.archive_error)details.append(el('p','History answer evidence could not be saved. Further entry stopped.','review-label'));
           if(plan.omitted_eligible_fields>0||Array.isArray(plan.entry_deferred)&&plan.entry_deferred.length)details.append(el('p','Some history fields remain outside this rehearsal or need manual handling.','review-label'));
         }
-        for(const plan of (Array.isArray(rehearsal.qualification_plans)?rehearsal.qualification_plans:[]).filter(plan=>plan?.view===viewNumber)) {
-          const proposed=Array.isArray(plan.plan?.proposals)?plan.plan.proposals.length:0;
-          details.append(el('p',plan.status==='proposed'?`${proposed} answer${proposed===1?'':'s'} prepared from reviewed qualifications.`:'Qualification answers need review.',plan.status==='proposed'?'footnote':'review-label'));
-          const unanswered=Array.isArray(plan.plan?.manual_review)?plan.plan.manual_review.length:0;
-          if(unanswered||plan.omitted_eligible_fields>0)details.append(el('p','Some questions remain unanswered or outside this rehearsal. Review the saved plan.','review-label'));
-          if(plan.archive_error)details.append(el('p','Qualification evidence could not be saved. Further entry stopped.','review-label'));
+        const qualificationPlans = (Array.isArray(rehearsal.qualification_plans) ? rehearsal.qualification_plans : [])
+          .filter(plan => plan?.view === viewNumber);
+        const preparedAnswers = qualificationPlans.reduce((total, plan) => total +
+          (plan.status === 'proposed' && Array.isArray(plan.plan?.proposals) ? plan.plan.proposals.length : 0), 0);
+        if (preparedAnswers > 0) {
+          details.append(el('p', `${preparedAnswers} answer${preparedAnswers === 1 ? '' : 's'} prepared from reviewed qualifications.`, 'footnote'));
+        }
+        if (qualificationPlans.some(plan => plan.status !== 'proposed' || plan.omitted_eligible_fields > 0 ||
+          (Array.isArray(plan.plan?.manual_review) && plan.plan.manual_review.length > 0))) {
+          details.append(el('p', 'Some qualification questions need review. See the saved answer plans.', 'review-label'));
+        }
+        if (qualificationPlans.some(plan => plan.archive_error)) {
+          details.append(el('p', 'Qualification evidence could not be saved. Further entry stopped.', 'review-label'));
         }
         if(rehearsal.history_error)details.append(el('p','The saved career history could not be verified.','review-label'));
         const documentPlan = Array.isArray(rehearsal.attachment_plans) ? rehearsal.attachment_plans.find(plan => plan?.view === viewNumber) : null;

@@ -178,9 +178,8 @@ fn plan_clips(row: &NativeRow, page: (f64, f64)) -> Option<Vec<SummaryClip>> {
     if heading_count > 8 || bounds.len() != heading_count + 2 {
         return None;
     }
-    if let Some(full) = SummaryClip::around(bounds, page) {
-        return Some(vec![full]);
-    }
+    // Connecting a heading to a later row in one crop can include other rows
+    // or make the heading look like the label. Read the native parts independently.
     let mut regions = bounds[..heading_count]
         .iter()
         .map(|heading| SummaryClip::around(std::slice::from_ref(heading), page))
@@ -535,6 +534,43 @@ impl CdpDriver {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn review_details_separate_the_heading_from_one_answer_row() {
+        let mut row = NativeRow {
+            answer: SummaryAnswer {
+                key: SummaryKey {
+                    sections: vec!["Documents".into()],
+                    label: "Writing sample file".into(),
+                },
+                value: "sample.pdf".into(),
+            },
+            bounds: Some(
+                [
+                    [50., 700., 72., 20.],
+                    [50., 744., 94., 18.],
+                    [180., 744., 95., 18.],
+                ]
+                .into_iter()
+                .map(|document| NativeTextBounds {
+                    document,
+                    in_image: false,
+                    page_clip: true,
+                })
+                .collect(),
+            ),
+        };
+        let page = (1000., 1200.);
+        let clips = plan_clips(&row, page).unwrap();
+        assert_eq!(clips.len(), 2);
+        assert!(clips[0].y + clips[0].height < clips[1].y);
+
+        row.answer.key.sections.clear();
+        row.bounds.as_mut().unwrap().remove(0);
+        let ungrouped = plan_clips(&row, page).unwrap();
+        assert_eq!(ungrouped.len(), 1);
+        assert_eq!(ungrouped[0].y, clips[1].y);
+    }
 
     #[test]
     fn key_recovers_known_prefixes_and_preserves_punctuation_in_leaf() {

@@ -898,6 +898,9 @@ impl RehearsalVision {
             Ok((status, transcription)) => {
                 result["status"] = json!(status);
                 if let Some(transcription) = transcription {
+                    if let Some(reason) = transcription["failure_reason"].as_str() {
+                        result["review_reason"] = json!(bounded_text(reason));
+                    }
                     result["transcription"] = transcription;
                 }
             }
@@ -1316,7 +1319,7 @@ impl Rehearsal {
         }
         let mut qualification_sources = std::collections::BTreeMap::new();
         if let Some(facts) = &self.qualifications {
-            let eligible: Vec<_> = form
+            let mut eligible: Vec<_> = form
                 .schema
                 .fields
                 .iter()
@@ -1340,29 +1343,45 @@ impl Rehearsal {
                 })
                 .cloned()
                 .collect();
-            let offered: Vec<_> = eligible
-                .iter()
-                .take(crate::rehearsal_facts::MAX_FIELDS)
-                .cloned()
-                .collect();
-            if !offered.is_empty() {
-                let mut report = json!({"view":view,"source":facts.metadata(),"eligible_fields":eligible.len(),"offered_fields":offered.len(),"omitted_eligible_fields":eligible.len()-offered.len(),"status":"needs_review"});
-                match self
-                    .vision
-                    .plan_qualifications(&offered, facts)
-                    .and_then(|plan| {
-                        crate::rehearsal_facts::resolve(&offered, facts, &plan)
-                            .map(|resolved| (plan, resolved))
-                    }) {
-                    Ok((plan, resolved)) => {
-                        report["status"] = json!("proposed");
-                        report["plan"] = plan;
-                        for (mapping, source) in resolved {
-                            qualification_sources.insert(mapping.field_selector.clone(), source);
-                            mappings.push(mapping);
+            let eligible_count = eligible.len();
+            let batches = crate::rehearsal_facts::batches(&mut eligible);
+            let batch_count = batches.len();
+            let mut considered = 0;
+            for (batch, fields) in batches.enumerate() {
+                let stop = if std::time::Instant::now() >= self.vision.deadline {
+                    Some("time_budget_reached")
+                } else if self.vision.model.is_none() {
+                    Some("local_model_needs_review")
+                } else {
+                    None
+                };
+                let offered = if stop.is_some() { &[] } else { fields };
+                let mut report = json!({"view":view,"source":facts.metadata(),
+                    "eligible_fields":eligible_count,"batch":batch+1,"batch_count":batch_count,
+                    "offered_fields":offered.len(),"omitted_eligible_fields":if stop.is_some(){eligible_count-considered}else{0},
+                    "status":"needs_review"});
+                if let Some(reason) = stop {
+                    report["reason"] = json!(reason);
+                } else {
+                    match self
+                        .vision
+                        .plan_qualifications(offered, facts)
+                        .and_then(|plan| {
+                            crate::rehearsal_facts::resolve(offered, facts, &plan)
+                                .map(|resolved| (plan, resolved))
+                        }) {
+                        Ok((plan, resolved)) => {
+                            report["status"] = json!("proposed");
+                            report["plan"] = plan;
+                            for (mapping, source) in resolved {
+                                qualification_sources
+                                    .insert(mapping.field_selector.clone(), source);
+                                mappings.push(mapping);
+                            }
                         }
+                        Err(error) => report["reason"] = json!(bounded_text(&error)),
                     }
-                    Err(error) => report["reason"] = json!(bounded_text(&error)),
+                    considered += offered.len();
                 }
                 match archive_candidate_answers(
                     directory,
@@ -1380,6 +1399,9 @@ impl Rehearsal {
                 self.qualification_plans.push(report);
                 if self.halted {
                     return None;
+                }
+                if stop.is_some() {
+                    break;
                 }
             }
         }
@@ -3248,7 +3270,17 @@ mod tests {
         #[serde(deny_unknown_fields)]
         struct Journey {
             sections: Vec<Vec<(String, String)>>,
+            #[serde(default)]
             stops_at_repeated_section: bool,
+            #[serde(default)]
+            conditional_replans: usize,
+            final_review: Option<FinalReview>,
+        }
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct FinalReview {
+            attachments: std::collections::BTreeMap<String, String>,
+            untouched: Vec<String>,
         }
         let path = PathBuf::from(
             std::env::var_os("WAYPOINT_AUTO_MODEL_FIXTURE")
@@ -3332,18 +3364,33 @@ mod tests {
             .unwrap();
         if let Some(journey) = &fixture.journey {
             assert!(!journey.sections.is_empty());
+            assert!(!journey.stops_at_repeated_section || journey.final_review.is_none());
             let expected: Vec<_> = journey.sections.iter().flatten().collect();
             assert_eq!(fields.len(), expected.len());
             assert_eq!(
                 result["rehearsal"]["halted"],
-                journey.stops_at_repeated_section
+                journey.stops_at_repeated_section || journey.final_review.is_some()
             );
-            let sections = result["rehearsal"]["sections"].as_array().unwrap();
+            let observed_sections = result["rehearsal"]["sections"].as_array().unwrap();
+            let sections: Vec<_> = observed_sections
+                .iter()
+                .filter(|section| section["status"] != "conditional_reinspection")
+                .collect();
+            assert_eq!(
+                observed_sections.len() - sections.len(),
+                journey.conditional_replans
+            );
+            assert_eq!(
+                result["rehearsal"]["conditional_replans"],
+                journey.conditional_replans
+            );
             assert_eq!(sections.len(), journey.sections.len());
             assert!(sections[..sections.len() - 1]
                 .iter()
                 .all(|section| section["status"] == "advanced"));
-            let last_reason = if journey.stops_at_repeated_section {
+            let last_reason = if journey.final_review.is_some() {
+                "no_editable_fields"
+            } else if journey.stops_at_repeated_section {
                 "no_new_section"
             } else {
                 "no_forward_control"
@@ -3352,7 +3399,7 @@ mod tests {
             assert_eq!(
                 targets.len(),
                 fields.len() + journey.sections.len()
-                    - usize::from(!journey.stops_at_repeated_section)
+                    - usize::from(last_reason == "no_forward_control")
             );
             let checkpoints = result["rehearsal"]["progress_checkpoints"]
                 .as_array()
@@ -3380,6 +3427,60 @@ mod tests {
                 assert_eq!(saved["entry_index"], index + 1);
                 assert_eq!(saved["fields"].as_array().unwrap().len(), 1);
                 assert_eq!(saved["fields"][0]["native_value"], *value);
+            }
+            if let Some(review) = &journey.final_review {
+                let views = result["views"].as_array().unwrap();
+                let view_number = sections.last().unwrap()["review_view"].as_u64().unwrap();
+                let view = &views[view_number as usize - 1];
+                let summary = &view["final_summary"];
+                let image = read(
+                    &screenshots.join(view["image"].as_str().unwrap()),
+                    6 * 1024 * 1024,
+                )
+                .unwrap();
+                assert_eq!(view["sha256"], waypoint_domain::sha256_hex(&image));
+                assert_eq!(view["final_review"], true);
+                assert_eq!(summary["status"], "answers_verified");
+                assert_eq!(summary["expected_count"], fields.len());
+                assert_eq!(summary["matched_count"], fields.len());
+                assert_eq!(summary["native_revalidated"], true);
+                assert_eq!(
+                    summary["attachment_matched_count"],
+                    review.attachments.len()
+                );
+                let mut retained = std::collections::BTreeMap::new();
+                for (check, field) in summary["comparisons"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .zip(fields)
+                {
+                    assert_eq!(check["status"], "matched");
+                    assert_eq!(check["key"], field["summary_key"]);
+                    if field["kind"] == "file" {
+                        assert_eq!(check["attachment"]["status"], "retained");
+                        assert_eq!(check["attachment"]["sha256"], field["attachment"]["sha256"]);
+                        let name = field["attachment"]["name"].as_str().unwrap();
+                        let digest = check["attachment"]["sha256"].as_str().unwrap();
+                        assert!(retained
+                            .insert(name.to_owned(), digest.to_owned())
+                            .is_none());
+                    }
+                }
+                assert_eq!(retained, review.attachments);
+                for label in &review.untouched {
+                    assert!(views
+                        .iter()
+                        .any(|view| view["fields"].as_array().is_some_and(|items| items
+                            .iter()
+                            .any(|field| field["label"] == label.as_str()
+                                && field["required"] == false))));
+                    assert!(fields.iter().all(|field| field["label"] != label.as_str()));
+                }
+                assert_eq!(
+                    result["replay"]["external_delivery"],
+                    "not_performed_by_replay"
+                );
             }
         } else {
             assert_eq!(result["rehearsal"]["halted"], false);

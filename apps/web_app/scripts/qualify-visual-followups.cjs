@@ -119,18 +119,29 @@ async function bounded(promise,label,ms=15000){let timer;try{return await Promis
 
  await page.evaluate(()=>{
   const host=element('section','','answer-draft');host.id='facts-result-qualification';host.style.padding='20px';
-  host.append(window.WaypointSourceCopies.previewView({candidate_facts_current:false,views:[{kind:'page',label:'Fictional reviewed qualifications',fields:[{label:'Technical skills'}]}],rehearsal:{scope:'saved_candidate_materials',candidate_source:{contacts_selected:false,facts_selected:true,documents:[]},qualification_plans:[{view:1,status:'proposed',plan:{proposals:[{}],manual_review:[{}]},archive:{file:'answers/facts-plan-001.json'}}],fields:[{view:1,label:'Technical skills',kind:'text',status:'visually_matched',native_verified:true,candidate_facts:{proposal:{sources:[{id:'fictional-source'}]}}}]}},element,{inline:true}));document.querySelector('#workspace-pane').append(host);
+  const qualificationPlans = [
+   {view:1,status:'proposed',plan:{proposals:[{}, {}, {}, {}]},archive:{file:'answers/facts-plan-001.json'}},
+   {view:1,status:'proposed',plan:{proposals:[{}],manual_review:[{}]},archive:{file:'answers/facts-plan-002.json'}},
+  ];
+  host.append(window.WaypointSourceCopies.previewView({candidate_facts_current:false,views:[{kind:'page',label:'Fictional reviewed qualifications',fields:[{label:'Technical skills'}]}],rehearsal:{scope:'saved_candidate_materials',candidate_source:{contacts_selected:false,facts_selected:true,documents:[]},qualification_plans:qualificationPlans,fields:[{view:1,label:'Technical skills',kind:'text',status:'visually_matched',native_verified:true,candidate_facts:{proposal:{sources:[{id:'fictional-source'}]}}}]}},element,{inline:true}));document.querySelector('#workspace-pane').append(host);
  });
  const factsResult=page.locator('#facts-result-qualification');
- for(const width of [320,390,768,1440,1920]){
+ for(const [width,zoom] of [[320,1],[390,1],[768,1],[1440,1],[1920,1],[960,2]]){
+  await controller.evaluate(async({origin,zoom})=>{
+   const tabs=await chrome.tabs.query({url:origin+'/*'});
+   await chrome.tabs.setZoom(tabs[0].id,zoom);
+  },{origin,zoom});
   await resizeViewport({width,height:1000});await factsResult.scrollIntoViewIfNeeded();
-  assert.equal(await factsResult.evaluate(el=>el.scrollWidth>el.clientWidth+1||document.documentElement.scrollWidth>innerWidth+1),false,`Qualification result overflow at ${width}`);
+  assert.equal(await factsResult.evaluate(el=>el.scrollWidth>el.clientWidth+1||document.documentElement.scrollWidth>innerWidth+1),false,`Qualification result overflow at ${width}px and ${zoom} zoom`);
   assert.equal(await factsResult.getByText('Reviewed qualifications have changed since this rehearsal. Review these saved answers before using them.',{exact:true}).count(),1);
   assert.equal(await factsResult.getByText('1 reviewed qualification source',{exact:true}).count(),1);
-  assert.equal(await factsResult.getByText('Some questions remain unanswered or outside this rehearsal. Review the saved plan.',{exact:true}).count(),1);
-  evidence.cases.push(`reviewed qualification provenance and revision warning at ${width}px`);
+  assert.equal(await factsResult.getByText('5 answers prepared from reviewed qualifications.',{exact:true}).count(),1);
+  assert.equal(await factsResult.getByText('Some qualification questions need review. See the saved answer plans.',{exact:true}).count(),1);
+  evidence.cases.push(`reviewed qualification provenance and revision warning at ${width}px and ${zoom} zoom`);
   if(width===390||width===1440)await captureViewport(`facts-result-${width}.png`);
+  if(zoom===2)await captureViewport('facts-result-200.png');
  }
+ await controller.evaluate(async({origin})=>{const tabs=await chrome.tabs.query({url:origin+'/*'});await chrome.tabs.setZoom(tabs[0].id,1);},{origin});
  const laterImage={name:'0100.png',sha256:crypto.createHash('sha256').update(Buffer.from(crops[0],'base64')).digest('hex'),image_base64:crops[0]};
  await page.evaluate(async image=>{
   const host=element('section','','answer-draft');

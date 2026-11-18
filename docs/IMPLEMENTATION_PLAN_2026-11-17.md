@@ -209,6 +209,13 @@ exit. Do not advertise a target as an achieved time bound.
 5. Exercise normal exit, timeout, cancellation, parent termination, load failure,
    broken native helper, abandoned UI and restart. Include an owned child that
    exits while its native process object remains inspectable.
+6. Replace the single-adapter assumption with verified selection of the device
+   the local runtime actually uses. Qualify integrated-plus-discrete Windows
+   systems and explicit device overrides with native allocation observations.
+7. Evaluate the current 16 GiB model-file gate separately from disk integrity
+   and live resource admission. Qualify modest offload with larger supported
+   models and several context sizes, including the 256k profile. Use measured
+   total commit and host availability to define eligible configurations.
 
 **Acceptance:** every lifecycle ends with independently checked owned-tree and
 listener outcomes, or an explicit cleanup failure. Sustained memory qualification
@@ -436,6 +443,35 @@ field or grant authority by itself.
 **Acceptance:** complete unfamiliar source-to-final-review workflows, not only
 field matches, pass independent truth. Include changed layouts and equivalent
 wordings without production branches keyed to the test employer/ATS.
+
+### R04.6 — Execution limits and continuation
+
+1. Audit production limits by entry point. Record the resource or correctness
+   property each bound protects and the exact outcome it triggers. Remove
+   redundant deadlines, caller wait requirements and counts that silently drop
+   eligible work. Qualify each removal through its normal entry point.
+2. Keep request sizes bounded while continuing across all eligible work.
+   Qualification planning now batches questions in required-first order under
+   the workflow deadline. Apply the same contract to document passages and
+   search pages where a single request cannot cover the input. Keep counts for
+   offered, verified, deferred and failed items and retain actionable next steps.
+3. Use a single task deadline and explicit cancellation across local inference,
+   browser control and artifact writing. Estimate how many complete checked
+   operations fit before reaching capacity. Checkpoint the last verified state
+   when work needs another run. Re-observe current state before resuming.
+4. Bind inference input and output budgets to the admitted native configuration
+   and representative task measurements. Qualify 256k separately for factual
+   retrieval, visual accuracy and host headroom. Keep incomplete native replies,
+   allocation failures and visual discrepancies distinguishable in records.
+5. Keep search execution independent of UI polling and add independently
+   configured provider recovery with durable page cursors, backoff and provenance.
+   Preserve source permissions and surface how much of the plan was attempted,
+   retained and verified. Verify application routes separately from listing hits.
+6. Replace premature progression stops with source-bound current-state evidence.
+   Test partial review and continuation through conditional sections, repeated
+   labels, custom controls and offscreen attachments. Require equivalent native
+   and visual outcomes and intact isolation. Freeze unseen layouts and measure
+   whole-workflow completion, review reasons and process-tree teardown.
 
 ## R05 — Independent candidate isolation and external-action authority
 
