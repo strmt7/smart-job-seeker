@@ -100,7 +100,7 @@ try {
     [IO.File]::WriteAllText((Join-Path $fakeOpenSsl 'bin/libcrypto-fixture.dll'), 'fixture')
     function cargo {
         $global:WaypointBuildTestCargoArgs = @($args)
-        if ($args[0] -eq 'test' -and [System.Diagnostics.Process]::GetCurrentProcess().SessionId -ne 0 -and $env:WAYPOINT_ISOLATED_BROWSER_TESTS_ONLY -cne '1') { throw 'The desktop test lane did not require an isolated browser.' }
+        if ($args[0] -eq 'test' -and $env:WAYPOINT_ISOLATED_BROWSER_TESTS_ONLY -cne '1') { throw 'The build helper test lane did not require an isolated browser.' }
         if ($env:WAYPOINT_TEST_FLAG_MODE -eq 'build') {
             if ($env:WAYPOINT_TEST_EXPECT_CRT -eq 'static' -and $env:CARGO_ENCODED_RUSTFLAGS -cne ('-Copt-level=1' + ([char]0x1f).ToString() + '-Ctarget-feature=+crt-static')) { throw 'Default static CRT flag was not passed to Cargo.' }
             if ($env:WAYPOINT_TEST_EXPECT_CRT -eq 'caller' -and $env:CARGO_ENCODED_RUSTFLAGS -cne '-Copt-level=1') { throw 'Opt-out did not preserve the caller CRT flags.' }
@@ -131,7 +131,7 @@ try {
     $encodedWasPresent = Test-Path Env:CARGO_ENCODED_RUSTFLAGS
     Remove-Item Env:WAYPOINT_ISOLATED_BROWSER_TESTS_ONLY -ErrorAction SilentlyContinue
     & $script -OpenSslRoot $fakeOpenSsl -StaticCrt -Test -TestFilter fixture
-    if (Test-Path Env:WAYPOINT_ISOLATED_BROWSER_TESTS_ONLY) { throw 'The desktop test restriction leaked into the caller environment.' }
+    if (Test-Path Env:WAYPOINT_ISOLATED_BROWSER_TESTS_ONLY) { throw 'The isolated browser requirement leaked into the caller environment.' }
     if ($global:WaypointBuildTestCargoArgs -contains '--workspace' -or $global:WaypointBuildTestCargoArgs -notcontains 'waypoint_web') { throw 'Default test package selection changed.' }
     & $script -OpenSslRoot $fakeOpenSsl -StaticCrt -Test -NoRun
     if ($global:WaypointBuildTestCargoArgs -notcontains '--no-run' -or $global:WaypointBuildTestCargoArgs -contains '--ignored') { throw 'Compile-only tests lost their execution boundary.' }

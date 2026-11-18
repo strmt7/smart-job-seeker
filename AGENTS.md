@@ -305,13 +305,15 @@ used by development tools and tests. Do not add WSL or Docker as product require
   the user explicitly requests that interaction in a future instruction. This
   constraint applies to agent work, not to the user's own use of the product.
 - Windows can show firewall permission dialogs for an unrestricted headless
-  browser. Run the unrestricted rehearsal network controls only in a
-  non-interactive Windows session. On the user's desktop, the qualifier runs
-  the pipe-backed isolated fixture and lifecycle checks. Preserve both scopes
-  and their separate test counts. Leave host firewall settings intact.
+  browser. Use private pipes and the isolated headless engine for local
+  rehearsals, including unattended runs. Unrestricted network comparisons
+  require explicit selection on a dedicated non-interactive Windows runner.
+  Preserve the separate test counts. Compare Windows firewall event records
+  before and after live desktop qualification and investigate new records tied
+  to the owned runtime. Leave host firewall settings intact.
 - Run the unrestricted `cdp_live` suite on a dedicated runner. On a Windows
-  desktop, the build helper and owned qualification launcher pass the isolated
-  browser requirement to child processes before they run. Use saved-copy or
+  desktop, use the build helper or owned qualification launcher. The build helper
+  requires an isolated browser for all test children. Use saved-copy or
   recorded-frame vision checks on the desktop. The legacy `vision` and
   `vision-system` suites require non-interactive session 0.
   Use Playwright's existing pipe connection for interface and browser-zoom

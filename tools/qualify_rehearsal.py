@@ -199,14 +199,16 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--engine', type=Path, required=True)
     parser.add_argument('--python', type=Path, default=Path(sys.executable))
+    parser.add_argument('--network-controls', action='store_true',
+        help='Run the matched unrestricted browser comparisons on a dedicated Windows runner (session 0)')
     parser.add_argument('--public-egress', action='store_true',
-        help='Opt in to a temporary free public HTTPS receiver; fictional markers only, no account/key')
+        help='Include the public HTTPS comparison on a dedicated Windows runner; fictional markers only')
     args = parser.parse_args()
     if os.name != 'nt':
         parser.error('This qualification requires 64-bit Windows')
     session_id = windows_session_id()
-    network_controls = session_id == 0
-    if args.public_egress and not network_controls:
+    network_controls = args.network_controls or args.public_egress
+    if network_controls and session_id != 0:
         parser.error('Unrestricted browser controls require a non-interactive Windows session (session 0).')
     if not args.python.is_absolute() or not args.python.is_file():
         parser.error('Python must be an explicit absolute executable')
@@ -232,6 +234,8 @@ def main() -> int:
     environment.pop('WAYPOINT_BROWSER', None)
     environment.update(WAYPOINT_REHEARSAL_CONFIG=str(path), WAYPOINT_REHEARSAL_CONFIG_SHA256=digest(path),
                        WAYPOINT_REHEARSAL_PYTHON=str(args.python), PYTHONUTF8='1', CARGO_BUILD_JOBS='2')
+    if not network_controls:
+        environment['WAYPOINT_ISOLATED_BROWSER_TESTS_ONLY'] = '1'
     sources = [REPO / 'crates/waypoint_browser' / item for item in [
         'Cargo.toml', 'src/cdp.rs', 'src/lib.rs', 'src/rehearsal.rs', 'src/rehearsal_worker.py', 'src/rehearsal_replay.py',
         'tests/rehearsal_live.rs', 'tests/test_rehearsal_windows.py', 'tests/support/rehearsal_network.rs',

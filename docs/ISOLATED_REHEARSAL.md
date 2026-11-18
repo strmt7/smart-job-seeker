@@ -190,19 +190,21 @@ captured-site interaction. Do not infer recovery ownership from a PID alone.
 
 ```powershell
 py -3.13 -X utf8 -B tools/qualify_rehearsal.py --engine <absolute-headless-shell-directory>
-# Non-interactive Windows session 0 only. Temporary public receiver and fictional markers.
+# Dedicated non-interactive Windows runner (session 0) only.
+py -3.13 -X utf8 -B tools/qualify_rehearsal.py --engine <absolute-headless-shell-directory> --network-controls
+# The public comparison also starts a temporary receiver for fictional markers.
 py -3.13 -X utf8 -B tools/qualify_rehearsal.py --engine <absolute-headless-shell-directory> --public-egress
 py -3.13 -X utf8 -B crates/waypoint_browser/tests/test_rehearsal_worker.py -v
 ```
 
-On the user's desktop the command runs one isolated browser fixture, the
-consumer-failure recovery check and seven Python lifecycle checks. The
-isolated browser uses private control pipes. The command never creates the
-unrestricted comparison engine in a desktop session.
+By default the command runs one isolated browser fixture, the consumer-failure
+recovery check and seven Python lifecycle checks. The isolated browser uses
+private control pipes. This selection is the same in every Windows session.
 
-In non-interactive Windows session 0 the command also runs the three matched
-unrestricted network controls. The public option adds one Rust observation
-check and independent receiver verification in that session. These controls
+`--network-controls` selects the three matched unrestricted checks.
+`--public-egress` also adds one Rust observation and independent receiver
+verification. The options require a dedicated Windows runner in session 0.
+Both are refused before engine staging in an interactive session. These controls
 remain separate qualification evidence. Each command uses an owned job,
 enforces time and log budgets, verifies unchanged source hashes, and retains
 private results, executed test counts, scoped resource observations and a PNG
@@ -220,9 +222,18 @@ session guard before launch. Private evidence is under
 `target/quiet-rehearsal-7cf70dfc` and
 `target/rehearsal-qualification-8ov6h4wb`.
 
-The Windows build helper and shared qualification launcher require isolated
-browser launches for their desktop children. The unrestricted CDP launcher
-checks that requirement before creating a profile. Run the raw `cdp_live`
+The follow-up made this isolated selection the default for every session.
+Both comparison flags were refused before engine inspection in desktop session
+1. A fresh default run passed nine checks and closed four recorded browser
+sessions. Windows recorded zero new browser-related firewall events between
+records 51134 and 51176. The results are under
+`target/rehearsal-qualification-go9ryzfz` and the `silent-rehearsal.private.json`
+receipt under `target/archived-document-transition-f5558d98/integration/`.
+
+The Windows build helper requires isolated browsers for all test children.
+The shared qualification launcher also enforces isolation for desktop children.
+The unrestricted CDP launcher checks the requirement before creating a profile.
+Run the raw `cdp_live`
 suite on a dedicated test runner. The legacy raw and system vision suites use
 unrestricted CDP and require Windows session 0. Use the isolated saved-copy
 vision workflow for local desktop qualification.

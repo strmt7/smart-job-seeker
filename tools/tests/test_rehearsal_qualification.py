@@ -16,20 +16,42 @@ with patch.object(sys, 'path', [str(TOOLS), *sys.path]):
 
 
 class TestQualificationDenominators(unittest.TestCase):
-    def test_interactive_public_egress_is_refused_before_allocating_a_runtime(self):
-        argv = ['qualify_rehearsal.py', '--engine', 'unused', '--public-egress']
-        with patch.object(qualification, 'os', SimpleNamespace(name='nt')), \
-                patch.object(qualification, 'windows_session_id', return_value=1), \
-                patch.object(sys, 'argv', argv), patch.object(sys, 'stderr'), \
-                patch.object(qualification, 'inventory') as inventory, \
-                patch.object(qualification.tempfile, 'mkdtemp') as allocate, \
-                patch.object(qualification, 'run') as launch:
-            with self.assertRaises(SystemExit) as failure:
-                qualification.main()
-            self.assertEqual(failure.exception.code, 2)
-            inventory.assert_not_called()
-            allocate.assert_not_called()
-            launch.assert_not_called()
+    def test_interactive_controls_are_refused_before_allocating_a_runtime(self):
+        for option in ['--network-controls', '--public-egress']:
+            argv = ['qualify_rehearsal.py', '--engine', 'unused', option]
+            with self.subTest(option=option), \
+                    patch.object(qualification, 'os', SimpleNamespace(name='nt')), \
+                    patch.object(qualification, 'windows_session_id', return_value=1), \
+                    patch.object(sys, 'argv', argv), patch.object(sys, 'stderr'), \
+                    patch.object(qualification, 'inventory') as inventory, \
+                    patch.object(qualification.tempfile, 'mkdtemp') as allocate, \
+                    patch.object(qualification, 'run') as launch:
+                with self.assertRaises(SystemExit) as failure:
+                    qualification.main()
+                self.assertEqual(failure.exception.code, 2)
+                inventory.assert_not_called()
+                allocate.assert_not_called()
+                launch.assert_not_called()
+
+    def test_default_qualification_keeps_session_zero_isolated(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            argv = ['qualify_rehearsal.py', '--engine', temp]
+            environment = {'WAYPOINT_BROWSER': 'unexpected-browser.exe'}
+            with patch.object(qualification, 'os', SimpleNamespace(name='nt', environ=environment)), \
+                    patch.object(qualification, 'windows_session_id', return_value=0), \
+                    patch.object(sys, 'argv', argv), \
+                    patch.object(qualification, 'inventory', return_value={}), \
+                    patch.object(qualification.shutil, 'which', return_value='fixture-cargo'), \
+                    patch.object(qualification.tempfile, 'mkdtemp', return_value=temp), \
+                    patch.object(qualification, 'run', side_effect=RuntimeError('before launch')) as launch:
+                with self.assertRaisesRegex(RuntimeError, 'before launch'):
+                    qualification.main()
+            command, child_environment, _ = launch.call_args.args
+            self.assertIn('isolated_driver_fills_navigates_captures_and_removes_profile', command)
+            self.assertEqual(child_environment['WAYPOINT_ISOLATED_BROWSER_TESTS_ONLY'], '1')
+            self.assertNotIn('WAYPOINT_BROWSER', child_environment)
+            self.assertFalse((folder / 'control-engine').exists())
 
     def test_ram_monitor_keeps_observing_after_history_fills(self):
         available = [2] + [8] * 900 + [4]

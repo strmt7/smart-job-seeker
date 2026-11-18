@@ -22,7 +22,6 @@ if ($Ignored -and (-not $Test -or -not $TestFilter)) { throw '-Ignored requires 
 if ($NoCapture -and -not $Test) { throw '-NoCapture requires -Test.' }
 if ($OpenSslInstaller -and $PSBoundParameters.ContainsKey('OpenSslRoot') -and $OpenSslRoot) { throw 'Choose either -OpenSslRoot or -OpenSslInstaller.' }
 if (-not $PSBoundParameters.ContainsKey('StaticCrt')) { $StaticCrt = [bool]$Release }
-$desktopTest = $Test -and ([System.Diagnostics.Process]::GetCurrentProcess().SessionId -ne 0)
 $repo = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '../../..')).Path
 if ($OpenSslInstaller) {
     New-Item -ItemType Directory -Path (Join-Path $repo 'target') -Force | Out-Null
@@ -107,7 +106,7 @@ $previousIsolatedBrowserTests = $env:WAYPOINT_ISOLATED_BROWSER_TESTS_ONLY
 $hadIsolatedBrowserTests = Test-Path Env:WAYPOINT_ISOLATED_BROWSER_TESTS_ONLY
 Push-Location $repo
 try {
-    if ($desktopTest) { $env:WAYPOINT_ISOLATED_BROWSER_TESTS_ONLY = '1' }
+    if ($Test) { $env:WAYPOINT_ISOLATED_BROWSER_TESTS_ONLY = '1' }
     $operation = if ($Test) { 'test' } elseif ($Clippy) { 'clippy' } else { 'build' }
     $cargoArgs = if ($Workspace) { @($operation,'--workspace') } else { @($operation,'-p','waypoint_web') }
     if ($Release) { $cargoArgs += '--release' }
@@ -161,7 +160,7 @@ try {
     Write-Host "Built $executable with SQLCipher; its OpenSSL runtime is beside it."
 } finally {
     Pop-Location
-    if ($desktopTest) {
+    if ($Test) {
         if ($hadIsolatedBrowserTests) { $env:WAYPOINT_ISOLATED_BROWSER_TESTS_ONLY = $previousIsolatedBrowserTests } else { Remove-Item Env:WAYPOINT_ISOLATED_BROWSER_TESTS_ONLY -ErrorAction SilentlyContinue }
     }
     if ($StaticCrt) {
