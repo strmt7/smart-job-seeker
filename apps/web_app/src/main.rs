@@ -3648,38 +3648,36 @@ fn serve_request(
             if !(1..=5).contains(&pages) {
                 return Err("Choose 1 to 5 pages per search phrase".into());
             }
-            if let Some(plan) = body.get("page_plan") {
+            let checkpoint_saved = if let Some(plan) = body.get("page_plan") {
                 let pairs = selected_search_pages(plan, &queries, pages)?;
-                let prior = match body
+                let retry_source_task = body
                     .get("retry_source_task")
                     .filter(|value| !value.is_null())
-                {
-                    Some(value) => web_search_batch::previous_successful_history(
-                        ws,
-                        value.as_str().ok_or("Invalid previous search identity")?,
-                    )?,
-                    None => Vec::new(),
-                };
+                    .map(|value| value.as_str().ok_or("Invalid previous search identity"))
+                    .transpose()?;
+                let prior = retry_source_task
+                    .map(|source| web_search_batch::previous_successful_history(ws, source))
+                    .transpose()?
+                    .unwrap_or_default();
                 web_search_batch::start_selected_with_freshness(
+                    Some(ws),
                     id.clone(),
                     provider.to_owned(),
                     pairs,
                     prior,
                     prefer_fresh,
-                )?;
+                    retry_source_task,
+                )?
             } else {
                 web_search_batch::start_with_freshness(
+                    Some(ws),
                     id.clone(),
                     provider.to_owned(),
                     queries,
                     pages as u8,
                     prefer_fresh,
-                )?;
-            }
-            // Make the plan recoverable before acknowledging the start. Search
-            // can continue in memory if secure persistence is unavailable, but
-            // the client must be told that restart recovery is not yet assured.
-            let checkpoint_saved = matches!(web_search_batch::persist_progress(ws), Ok(true));
+                )?
+            };
             json_reply(
                 stream,
                 "200 OK",
@@ -3691,13 +3689,7 @@ fn serve_request(
             let acknowledged = body["acknowledged"].as_u64().unwrap_or(0);
             let acknowledged =
                 usize::try_from(acknowledged).map_err(|_| "Invalid batch acknowledgement")?;
-            let mut result = web_search_batch::poll(id, acknowledged)?;
-            if matches!(result["status"].as_str(), Some("complete" | "failed")) {
-                let _ = web_search_batch::persist_completed(ws);
-                result = web_search_batch::poll(id, acknowledged)?;
-            } else if result["status"] == "running" && web_search_batch::checkpoint_failed(id)? {
-                result["checkpoint_failed"] = json!(true);
-            }
+            let result = web_search_batch::status(ws, id, acknowledged)?;
             json_reply(stream, "200 OK", result);
         }
         "/api/web-search/batch-pending" => {
@@ -9868,20 +9860,7 @@ fn serve_loop_with_runtime(
     let mut next_email_collect = Instant::now();
     let mut next_draft_save = Instant::now();
     let mut next_discovery_collect = Instant::now();
-    let mut next_web_search_save = Instant::now();
     while !stop.load(std::sync::atomic::Ordering::Acquire) {
-        if Instant::now() >= next_web_search_save {
-            next_web_search_save = Instant::now()
-                + match web_search_batch::persist_progress(&ws)
-                    .and_then(|_| web_search_batch::persist_completed(&ws))
-                {
-                    Ok(_) => Duration::from_secs(5),
-                    Err(error) => {
-                        eprintln!("Web search history could not be saved: {error}");
-                        Duration::from_secs(30)
-                    }
-                };
-        }
         if Instant::now() >= next_discovery_collect {
             if let Err(error) = discovery_task::collect_background(&mut ws) {
                 eprintln!("Background discovery collection failed: {error}");
@@ -10035,11 +10014,8 @@ fn serve_loop_with_runtime(
     if let Err(error) = fit_task::shutdown() {
         eprintln!("Assessment shutdown needs review: {error}");
     }
-    if let Err(error) = web_search_batch::collect_background()
-        .and_then(|_| web_search_batch::persist_progress(&ws).map(|_| ()))
-        .and_then(|_| web_search_batch::persist_completed(&ws).map(|_| ()))
-    {
-        eprintln!("Web search history could not be saved during shutdown: {error}");
+    if let Err(error) = web_search_batch::shutdown() {
+        eprintln!("Web search shutdown needs review: {error}");
     }
     if let Some(worker) = index_worker {
         if worker.join().is_err() {
@@ -13559,18 +13535,16 @@ mod tests {
             assert!(Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(20));
         }
-        assert!(web_search_batch::persist_completed(&ws).unwrap());
         worker.join().unwrap();
         drop(ws);
         let reopened = open(dir.path());
-        let (_, bytes) = reopened.latest_web_search().unwrap().unwrap();
-        let stored: Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(stored["prior_history"].as_array().unwrap().len(), 1);
-        assert_eq!(
-            stored["prior_history"][0]["data"]["results"][0]["title"],
-            "Previous"
-        );
-        assert!(!String::from_utf8(bytes).unwrap().contains("injected"));
+        let stored = reopened.latest_web_search_run().unwrap().unwrap();
+        assert_eq!(stored.task_id, id);
+        assert_eq!(stored.prior_pages.len(), 1);
+        assert_eq!(stored.pages.len(), 1);
+        assert!(stored.terminal.is_some());
+        let carried: Value = serde_json::from_slice(&stored.prior_pages[0]).unwrap();
+        assert_eq!(carried["data"]["results"][0]["title"], "Previous");
     }
 
     #[test]

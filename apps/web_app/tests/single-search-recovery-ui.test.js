@@ -22,7 +22,12 @@ async function runFixture(saved, active, results = [{title: 'Fictional role'}]) 
             throw Error(`Unexpected selector ${selector}`);
         } },
         sessionStorage: { getItem: key => storage.get(key) || null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) },
-        element: (_tag, text) => ({ text }), webCandidate: item => ({ text: item.title }),
+        element: (tag, text) => ({
+            tag, text, children: [], events: {},
+            append(...children) { this.children.push(...children); },
+            addEventListener(name, fn) { this.events[name] = fn; },
+        }),
+        webCandidate: item => ({ text: item.title, candidate: true }),
         searchCoverage: () => 'fixture coverage', notify: message => { throw Error(message); },
         setTimeout: callback => callback(),
         api: async (path, body) => {
@@ -48,8 +53,16 @@ async function runFixture(saved, active, results = [{title: 'Fictional role'}]) 
     assert.equal(replay.storage.get('waypoint-web-search'), 'new-task');
     assert.ok(!replay.calls.some(([path]) => path === '/api/web-search/start'));
     const empty = await runFixture('empty-task', null, []);
-    assert.ok(empty.panel.rows.some(row => row.text.includes('does not mean there are no matching jobs')));
+    assert.ok(empty.panel.rows.some(row => row.text.includes('provider returned no candidates for this query')));
     assert.ok(empty.panel.rows.some(row => row.text.includes('remove search operators')));
     assert.ok(!newer.panel.rows.some(row => row.text.includes('remove search operators')));
+    const many = await runFixture('large-task', null, Array.from({length: 620}, (_, i) => ({title: `Role ${i + 1}`})));
+    assert.equal(many.panel.rows.filter(row => row.candidate).length, 40);
+    const controls = many.panel.rows.find(row => row.tag === 'div');
+    assert.equal(controls.children[0].disabled, true);
+    assert.equal(controls.children[1].text, 'Candidates 1–40 of 620');
+    controls.children[2].events.click();
+    assert.ok(many.panel.rows.some(row => row.text === 'Role 41'));
+    assert.ok(!many.panel.rows.some(row => row.text === 'Role 1'));
     console.log('Single-search recovery UI checks passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

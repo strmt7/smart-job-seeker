@@ -1,8 +1,11 @@
 //! Bounded, user-initiated SearXNG-compatible search. Results are candidates,
 //! not verified jobs, and are never opened or submitted by this module.
 use serde_json::{json, Value};
+use std::collections::{hash_map::Entry, HashMap};
 use std::sync::{mpsc, Mutex};
 use url::Url;
+
+const SEARCH_PAGE_BYTES: usize = 2 * 1024 * 1024;
 
 struct Task {
     id: String,
@@ -283,9 +286,9 @@ pub(crate) fn fetch(url: &Url) -> Result<String, FetchError> {
             url.path(),
             url.query().map(|q| format!("?{q}")).unwrap_or_default()
         );
-        waypoint_net::request_loopback(address, "GET", &target, None, 15000, 2 * 1024 * 1024)
+        waypoint_net::request_loopback(address, "GET", &target, None, 15000, SEARCH_PAGE_BYTES)
     } else {
-        waypoint_net::get_capped(url.as_str(), 15000, 2 * 1024 * 1024)
+        waypoint_net::get_capped(url.as_str(), 15000, SEARCH_PAGE_BYTES)
     }
     .map_err(|e| FetchError::from(e.to_string()))?;
     if response.status == 429 {
@@ -397,7 +400,13 @@ fn parse_result_set(
         .ok_or("Provider returned no results array")?;
     let mut links: Vec<Value> = Vec::new();
     let mut repeated: Vec<Value> = Vec::new();
-    let mut seen = std::collections::HashSet::new();
+    enum ResultSlot {
+        Candidate(usize),
+        Repeated(usize),
+        Omitted,
+    }
+    let mut seen = HashMap::new();
+    let mut remaining = SEARCH_PAGE_BYTES;
     let examined = results.len();
     let mut previously_seen = 0;
     let mut within_page_duplicates = 0usize;
@@ -523,59 +532,85 @@ fn parse_result_set(
             .filter(|c| !c.is_control())
             .take(80)
             .collect();
-        if !seen.insert(url.to_string()) {
-            within_page_duplicates += 1;
-            if let Some(earlier) = links
-                .iter_mut()
-                .chain(repeated.iter_mut())
-                .find(|entry| entry["url"] == url.as_str())
-            {
-                if sponsored_marker {
-                    earlier["provider_sponsored_marker"] = json!(true);
-                }
-                merge_result_provenance(
-                    earlier,
-                    &title,
-                    title_missing,
-                    &snippet,
-                    &engines,
-                    engines_limited,
-                    published_date.trim(),
-                );
-                if earlier["indexed_date"] == "" && !indexed_date.trim().is_empty() {
-                    earlier["indexed_date"] = json!(indexed_date.trim());
-                } else if !indexed_date.trim().is_empty()
-                    && earlier["indexed_date"].as_str() != Some(indexed_date.trim())
-                {
-                    let dates = earlier["alternative_indexed_dates"]
-                        .as_array_mut()
-                        .expect("search result index dates");
-                    if !dates
-                        .iter()
-                        .any(|date| date.as_str() == Some(indexed_date.trim()))
+        let slot = match seen.entry(url.to_string()) {
+            Entry::Vacant(slot) => slot,
+            Entry::Occupied(slot) => {
+                within_page_duplicates += 1;
+                let earlier = match *slot.get() {
+                    ResultSlot::Candidate(index) => links.get_mut(index),
+                    ResultSlot::Repeated(index) => repeated.get_mut(index),
+                    ResultSlot::Omitted => None,
+                };
+                if let Some(earlier) = earlier {
+                    if sponsored_marker {
+                        earlier["provider_sponsored_marker"] = json!(true);
+                    }
+                    merge_result_provenance(
+                        earlier,
+                        &title,
+                        title_missing,
+                        &snippet,
+                        &engines,
+                        engines_limited,
+                        published_date.trim(),
+                    );
+                    if earlier["indexed_date"] == "" && !indexed_date.trim().is_empty() {
+                        earlier["indexed_date"] = json!(indexed_date.trim());
+                    } else if !indexed_date.trim().is_empty()
+                        && earlier["indexed_date"].as_str() != Some(indexed_date.trim())
                     {
-                        if dates.len() < 4 {
-                            dates.push(json!(indexed_date.trim()));
-                        } else {
-                            earlier["dates_limited"] = json!(true);
+                        let dates = earlier["alternative_indexed_dates"]
+                            .as_array_mut()
+                            .expect("search result index dates");
+                        if !dates
+                            .iter()
+                            .any(|date| date.as_str() == Some(indexed_date.trim()))
+                        {
+                            if dates.len() < 4 {
+                                dates.push(json!(indexed_date.trim()));
+                            } else {
+                                earlier["dates_limited"] = json!(true);
+                            }
                         }
                     }
                 }
+                continue;
             }
-            continue;
-        }
+        };
+        let candidate = json!({"url":url.as_str(),"title":title,"title_missing":title_missing,"snippet":snippet,"engines":engines,"engines_limited":engines_limited,"provider_sponsored_marker":sponsored_marker,"published_date":published_date.trim(),"indexed_date":indexed_date.trim(),"alternative_published_dates":[],"alternative_indexed_dates":[],"dates_limited":false});
         if excluded.contains(url.as_str()) {
             previously_seen += 1;
             if repeated.len() < 10 {
-                repeated.push(json!({"url":url.as_str(),"title":title,"title_missing":title_missing,"snippet":snippet,"engines":engines,"engines_limited":engines_limited,"provider_sponsored_marker":sponsored_marker,"published_date":published_date.trim(),"indexed_date":indexed_date.trim(),"alternative_published_dates":[],"alternative_indexed_dates":[],"dates_limited":false}));
+                slot.insert(ResultSlot::Repeated(repeated.len()));
+                repeated.push(candidate);
+            } else {
+                slot.insert(ResultSlot::Omitted);
             }
             continue;
         }
-        if links.len() < 100 {
-            links.push(json!({"url":url.as_str(),"title":title,"title_missing":title_missing,"snippet":snippet,"engines":engines,"engines_limited":engines_limited,"provider_sponsored_marker":sponsored_marker,"published_date":published_date.trim(),"indexed_date":indexed_date.trim(),"alternative_published_dates":[],"alternative_indexed_dates":[],"dates_limited":false}));
+        let size = candidate.to_string().len() + 1;
+        if size <= remaining {
+            remaining -= size;
+            slot.insert(ResultSlot::Candidate(links.len()));
+            links.push(candidate);
         } else {
+            slot.insert(ResultSlot::Omitted);
             result_limit_omitted += 1;
         }
+    }
+    // Merging another engine's report can add information to an admitted row.
+    // Account for the final size of the retained rows before handing them off.
+    if within_page_duplicates > 0 {
+        let mut remaining = SEARCH_PAGE_BYTES;
+        links.retain(|candidate| {
+            let size = candidate.to_string().len() + 1;
+            if size > remaining {
+                result_limit_omitted += 1;
+                return false;
+            }
+            remaining -= size;
+            true
+        });
     }
     let unavailable = data.get("unresponsive_engines").and_then(Value::as_array);
     let mut unavailable_names = Vec::new();
@@ -1093,27 +1128,33 @@ mod tests {
         assert_eq!(complete_page["results_examined"], 100);
         assert_eq!(complete_page["limited"], false);
 
-        let valid: Vec<Value> = (0..101)
+        let valid: Vec<Value> = (0..620)
             .map(|i| json!({"title":"Role","url":format!("https://example.org/{i}")}))
             .collect();
-        let limited = parse(&json!({"results":valid}).to_string()).unwrap();
-        assert_eq!(limited["results"].as_array().unwrap().len(), 100);
-        assert_eq!(limited["results_examined"], 101);
-        assert_eq!(limited["result_limit_omitted"], 1);
-        assert_eq!(limited["results_rejected"], 0);
-        assert_eq!(limited["limited"], true);
+        let complete_page = parse(&json!({"results":valid}).to_string()).unwrap();
+        assert_eq!(complete_page["results"].as_array().unwrap().len(), 620);
+        assert_eq!(complete_page["results_examined"], 620);
+        assert_eq!(complete_page["result_limit_omitted"], 0);
+        assert_eq!(complete_page["results_rejected"], 0);
+        assert_eq!(complete_page["limited"], false);
 
-        let mut rows: Vec<Value> = (0..101)
+        let mut rows: Vec<Value> = (0..10_000)
             .map(|i| json!({"url":format!("https://example.org/{i}")}))
             .collect();
         rows.push(json!({"url":"https://example.org/0", "title":"Updated title", "engine":"second engine"}));
-        rows.push(json!({"url":"https://example.org/100"}));
-        let after_cap = parse(&json!({"results":rows}).to_string()).unwrap();
+        rows.push(json!({"url":"https://example.org/9999"}));
+        let provider_response = json!({"results":rows}).to_string();
+        assert!(provider_response.len() < SEARCH_PAGE_BYTES);
+        let after_cap = parse(&provider_response).unwrap();
         assert_eq!(after_cap["results"][0]["title"], "Updated title");
         assert_eq!(after_cap["results"][0]["engines"], json!(["second engine"]));
-        assert_eq!(after_cap["result_limit_omitted"], 1);
+        let result_count = after_cap["results"].as_array().unwrap().len();
+        assert!(result_count > 620 && result_count < 10_000);
+        assert!(after_cap["results"].to_string().len() <= SEARCH_PAGE_BYTES + 1);
+        assert_eq!(after_cap["result_limit_omitted"], 10_000 - result_count);
         assert_eq!(after_cap["within_page_duplicates"], 2);
         assert_eq!(after_cap["results_rejected"], 0);
+        assert_eq!(after_cap["limited"], true);
 
         let invalid = vec![json!({"title":"No URL"}); 35];
         let complete = parse(&json!({"results":invalid}).to_string()).unwrap();

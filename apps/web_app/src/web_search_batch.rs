@@ -1,4 +1,5 @@
 //! Sequential, user-approved web-search phrases. Results are unverified candidates.
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
     collections::{HashMap, HashSet},
@@ -7,8 +8,41 @@ use std::{
         mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError},
         Arc, Mutex,
     },
+    thread::JoinHandle,
     time::{Duration, Instant},
 };
+use waypoint_workspace::{WebSearchWriter, Workspace};
+
+const CURSOR_VERSION: u8 = 1;
+
+#[derive(Serialize, Deserialize)]
+struct SearchPage {
+    query: String,
+    page: u8,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SearchPlan {
+    version: u8,
+    plan: Vec<SearchPage>,
+    provider: String,
+    prefer_fresh: bool,
+    retry_source_task: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+enum Outcome {
+    Complete {
+        cancelled: bool,
+        limit_reached: bool,
+    },
+    Failed {
+        error: String,
+        fetched_unreported_pages: usize,
+    },
+}
+
 struct Task {
     id: String,
     rx: Receiver<Message>,
@@ -17,20 +51,20 @@ struct Task {
     plan: Vec<(String, u8)>,
     provider: Option<String>,
     processed: usize,
-    saved_processed: Option<usize>,
-    checkpoint_failed: bool,
+    prefer_fresh: bool,
     pending: Option<Value>,
     history: Vec<Value>,
     prior_history: Vec<Value>,
     timed_out: Arc<AtomicBool>,
     unreported: Arc<AtomicBool>,
+    worker: Option<JoinHandle<()>>,
 }
 enum Message {
     Query(String, u8, Result<Value, String>),
-    Done(bool),
+    Done(Outcome, bool),
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
-static COMPLETED: Mutex<Option<(String, Value, bool)>> = Mutex::new(None);
+static COMPLETED: Mutex<Option<(String, Value)>> = Mutex::new(None);
 #[cfg(test)]
 pub(crate) static TEST_LOCK: Mutex<()> = Mutex::new(());
 
@@ -40,23 +74,85 @@ pub(crate) static TEST_LOCK: Mutex<()> = Mutex::new(());
 const SAVED_PAGE_BUDGET: usize = 8 * 1024 * 1024;
 const PAGE_ENVELOPE_BYTES: usize = 256;
 
+fn saved_search(ws: &Workspace) -> Result<Option<(String, Value)>, String> {
+    let Some(run) = ws
+        .latest_web_search_run()
+        .map_err(|error| error.to_string())?
+    else {
+        return ws
+            .latest_web_search()
+            .map_err(|error| error.to_string())?
+            .map(|(id, bytes)| {
+                let saved: Value = serde_json::from_slice(&bytes)
+                    .map_err(|_| "Saved web search history is invalid")?;
+                if !matches!(saved["status"].as_str(), Some("complete" | "failed"))
+                    || !saved["history"].is_array()
+                {
+                    return Err("Saved web search history is invalid".into());
+                }
+                Ok((id, saved))
+            })
+            .transpose();
+    };
+    let plan: SearchPlan =
+        serde_json::from_slice(&run.plan).map_err(|_| "Saved search plan is invalid")?;
+    if plan.version != CURSOR_VERSION || run.planned != plan.plan.len() {
+        return Err("Saved search cursor uses an unsupported plan".into());
+    }
+    let mut history = Vec::with_capacity(run.pages.len());
+    for (index, (bytes, expected)) in run.pages.iter().zip(&plan.plan).enumerate() {
+        let page: Value =
+            serde_json::from_slice(bytes).map_err(|_| "Saved search page is invalid")?;
+        if page["query"] != expected.query
+            || page["page"] != expected.page
+            || page["processed"] != index + 1
+            || page["total"] != run.planned
+            || (page["error"].is_string() == page["data"]["results"].is_array())
+        {
+            return Err("Saved search page does not match its plan".into());
+        }
+        history.push(page);
+    }
+    let prior_history = run
+        .prior_pages
+        .iter()
+        .map(|bytes| serde_json::from_slice::<Value>(bytes))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| "Saved earlier search results are invalid")?;
+    let recovered_partial = run.terminal.is_none();
+    let outcome = match run.terminal {
+        Some(bytes) => serde_json::from_slice(&bytes)
+            .map_err(|_| "Saved search outcome is invalid")?,
+        None => Outcome::Failed {
+            error: "The app stopped before this search finished; another provider request may have been in progress".into(),
+            fetched_unreported_pages: 0,
+        },
+    };
+    let mut result = terminal_result(&outcome, run.planned, &history, true);
+    result["history"] = json!(history);
+    result["prior_history"] = json!(prior_history);
+    result["plan"] = json!(plan.plan);
+    result["provider"] = json!(plan.provider);
+    result["prefer_fresh"] = json!(plan.prefer_fresh);
+    result["retry_source_task"] = json!(plan.retry_source_task);
+    if recovered_partial {
+        result["recovered_partial"] = json!(true);
+    }
+    Ok(Some((run.task_id, result)))
+}
+
 /// Load only successfully collected pages from the user-sealed previous
 /// search. A retry must bind to the exact saved task, not arbitrary client data.
 pub fn previous_successful_history(
-    ws: &waypoint_workspace::Workspace,
+    ws: &Workspace,
     source_task: &str,
 ) -> Result<Vec<Value>, String> {
-    let (id, bytes) = ws
-        .latest_web_search()
-        .map_err(|error| error.to_string())?
-        .ok_or("The earlier search history is unavailable")?;
+    let (id, saved) = saved_search(ws)?.ok_or("The earlier search history is unavailable")?;
     if id != source_task {
         return Err(
             "The earlier search changed; review the current results before retrying".into(),
         );
     }
-    let saved: Value =
-        serde_json::from_slice(&bytes).map_err(|_| "Saved web search history is invalid")?;
     let history = saved["history"]
         .as_array()
         .ok_or("Saved web search history is invalid")?;
@@ -73,9 +169,6 @@ pub fn previous_successful_history(
         group["data"]["results"]
             .as_array()
             .ok_or("Saved search page is invalid")?;
-        if groups.len() >= 50 {
-            return Err("Too many earlier results to carry into a retry".into());
-        }
         groups.push(group.clone());
     }
     if serde_json::to_vec(&groups)
@@ -99,7 +192,7 @@ pub fn pending() -> Result<Value, String> {
         None => {
             let completed = COMPLETED.lock().map_err(|_| "Web search unavailable")?;
             match completed.as_ref() {
-                Some((id, result, _)) => {
+                Some((id, result)) => {
                     json!({"active":false,"last":{"task_id":id,"result":result}})
                 }
                 None => json!({"active":false}),
@@ -134,16 +227,6 @@ fn send(
     }
 }
 
-fn send_completion(
-    tx: &SyncSender<Message>,
-    limited: bool,
-    cancel: &AtomicBool,
-    timed_out: &AtomicBool,
-    timeout: Duration,
-) -> bool {
-    send(tx, Message::Done(limited), cancel, timed_out, timeout)
-}
-
 fn protected_provider_call(
     operation: impl FnOnce() -> (Result<Value, String>, bool) + std::panic::UnwindSafe,
 ) -> (Result<Value, String>, bool) {
@@ -175,6 +258,46 @@ fn coverage(total: usize, history: &[Value]) -> Value {
         }
     }
     json!({"requested_pages":total,"attempted_pages":history.len(),"succeeded_pages":succeeded,"failed_pages":failed,"unattempted_pages":total.saturating_sub(history.len()),"limited_pages":limited,"pages_with_unresponsive_engines":engines_unavailable,"pages_with_unknown_engine_availability":availability_unknown})
+}
+
+fn page_receipt(
+    query: &str,
+    page: u8,
+    processed: usize,
+    total: usize,
+    result: &Result<Value, String>,
+) -> Value {
+    let mut receipt = json!({
+        "status":"running","processed":processed,"total":total,"query":query,"page":page
+    });
+    match result {
+        Ok(data) => receipt["data"] = data.clone(),
+        Err(error) => receipt["error"] = json!(error),
+    }
+    receipt
+}
+
+fn terminal_result(outcome: &Outcome, total: usize, history: &[Value], saved: bool) -> Value {
+    let mut result = json!(outcome);
+    let mut report = coverage(total, history);
+    if let Outcome::Failed {
+        fetched_unreported_pages,
+        ..
+    } = outcome
+    {
+        let attempted = history.len().saturating_add(*fetched_unreported_pages);
+        report["fetched_unreported_pages"] = json!(fetched_unreported_pages);
+        report["attempted_pages"] = json!(attempted);
+        report["unattempted_pages"] = json!(total.saturating_sub(attempted));
+    }
+    result["processed"] = json!(history.len());
+    result["total"] = json!(total);
+    result["history_saved"] = json!(saved);
+    result["coverage"] = report;
+    if saved {
+        result["cursor"] = json!({"version":CURSOR_VERSION,"committed_pages":history.len()});
+    }
+    result
 }
 
 // Comparison key only: preserve the original URL in the result. Remove a
@@ -308,16 +431,17 @@ fn retain_batch_budget(data: &mut Value, query: &str, seen: &mut BatchSeen) -> b
 
 #[cfg(test)]
 pub fn start(id: String, provider: String, queries: Vec<String>, pages: u8) -> Result<(), String> {
-    start_with_freshness(id, provider, queries, pages, false)
+    start_with_freshness(None, id, provider, queries, pages, false).map(|_| ())
 }
 
 pub fn start_with_freshness(
+    ws: Option<&Workspace>,
     id: String,
     provider: String,
     queries: Vec<String>,
     pages: u8,
     prefer_fresh: bool,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     if crate::web_search::busy() {
         return Err("A web search is active".into());
     }
@@ -343,7 +467,7 @@ pub fn start_with_freshness(
             requests.push((query.clone(), page, page_url));
         }
     }
-    start_requests(id, provider, requests, Vec::new())
+    start_requests(ws, id, provider, requests, Vec::new(), prefer_fresh, None)
 }
 
 /// Start only explicitly requested query/page pairs, for a user-reviewed retry.
@@ -363,24 +487,23 @@ pub fn start_selected_with_history(
     pairs: Vec<(String, u8)>,
     prior_history: Vec<Value>,
 ) -> Result<(), String> {
-    start_selected_with_freshness(id, provider, pairs, prior_history, false)
+    start_selected_with_freshness(None, id, provider, pairs, prior_history, false, None).map(|_| ())
 }
 
 pub fn start_selected_with_freshness(
+    ws: Option<&Workspace>,
     id: String,
     provider: String,
     pairs: Vec<(String, u8)>,
     prior_history: Vec<Value>,
     prefer_fresh: bool,
-) -> Result<(), String> {
+    retry_source_task: Option<&str>,
+) -> Result<bool, String> {
     if crate::web_search::busy() {
         return Err("A web search is active".into());
     }
     if pairs.is_empty() || pairs.len() > 50 {
         return Err("Choose 1 to 50 search pages".into());
-    }
-    if prior_history.len().saturating_add(pairs.len()) > 50 {
-        return Err("The earlier results and requested retry exceed the 50-page history limit; save or review the earlier results and start a new search".into());
     }
     let mut seen = HashSet::new();
     let mut phrases = HashSet::new();
@@ -397,15 +520,26 @@ pub fn start_selected_with_freshness(
         let url = crate::web_search::request_url_with_freshness(&provider, &query, prefer_fresh)?;
         requests.push((query, page, crate::web_search::page_url(&url, page)));
     }
-    start_requests(id, provider, requests, prior_history)
+    start_requests(
+        ws,
+        id,
+        provider,
+        requests,
+        prior_history,
+        prefer_fresh,
+        retry_source_task,
+    )
 }
 
 fn start_requests(
+    ws: Option<&Workspace>,
     id: String,
     provider: String,
     requests: Vec<(String, u8, url::Url)>,
     prior_history: Vec<Value>,
-) -> Result<(), String> {
+    prefer_fresh: bool,
+    retry_source_task: Option<&str>,
+) -> Result<bool, String> {
     let initial_seen = seen_from_prior(&prior_history)?;
     if initial_seen.saved_bytes >= SAVED_PAGE_BUDGET {
         return Err("Earlier results fill the search history size limit; save or review them before starting a new search".into());
@@ -418,6 +552,37 @@ fn start_requests(
     // completion so collecting pages is independent of the HTTP/UI loop.
     // Both entry points bound the plan at 50 pages and size-limit the history.
     let total = requests.len();
+    let plan: Vec<_> = requests
+        .iter()
+        .map(|(query, page, _)| (query.clone(), *page))
+        .collect();
+    let provider = provider.trim().to_owned();
+    let journal = if let Some(ws) = ws {
+        let metadata = SearchPlan {
+            version: CURSOR_VERSION,
+            plan: plan
+                .iter()
+                .map(|(query, page)| SearchPage {
+                    query: query.clone(),
+                    page: *page,
+                })
+                .collect(),
+            provider: provider.clone(),
+            prefer_fresh,
+            retry_source_task: retry_source_task.map(str::to_owned),
+        };
+        let header = serde_json::to_vec(&metadata).map_err(|error| error.to_string())?;
+        let prior = prior_history
+            .iter()
+            .map(serde_json::to_vec)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?;
+        ws.begin_web_search_run(&id, total, &header, &prior)
+            .map_err(|error| format!("Could not save the search plan: {error}"))?
+    } else {
+        None
+    };
+    let durable = journal.is_some();
     let (tx, rx) = mpsc::sync_channel(total + 1);
     let cancel = Arc::new(AtomicBool::new(false));
     let stop = cancel.clone();
@@ -425,97 +590,162 @@ fn start_requests(
     let unreported = Arc::new(AtomicBool::new(false));
     let worker_timeout = timed_out.clone();
     let worker_unreported = unreported.clone();
-    let plan = requests
-        .iter()
-        .map(|(query, page, _)| (query.clone(), *page))
-        .collect();
+    let worker = std::thread::Builder::new()
+        .name("web-search".into())
+        .spawn(move || {
+            run_worker(
+                requests,
+                initial_seen,
+                journal,
+                tx,
+                stop,
+                worker_timeout,
+                worker_unreported,
+            );
+        })
+        .map_err(|error| format!("Could not start web search worker: {error}"))?;
     *task = Some(Task {
         id,
         rx,
         cancel,
         total,
         plan,
-        provider: (provider.trim().len() <= 2048).then(|| provider.trim().to_owned()),
+        provider: (provider.len() <= 2048).then_some(provider),
         processed: 0,
-        saved_processed: None,
-        checkpoint_failed: false,
+        prefer_fresh,
         pending: None,
         history: Vec::new(),
         prior_history,
         timed_out,
         unreported,
+        worker: Some(worker),
     });
-    drop(task);
-    std::thread::spawn(move || {
-        let mut seen = initial_seen;
-        let mut limit_reached = false;
-        for (index, (query, page, url)) in requests.into_iter().enumerate() {
-            if stop.load(Ordering::Acquire) {
-                break;
-            }
-            if index > 0 {
-                for _ in 0..10 {
-                    if stop.load(Ordering::Acquire) {
-                        break;
-                    }
-                    std::thread::sleep(Duration::from_millis(100));
+    Ok(durable)
+}
+
+fn run_worker(
+    requests: Vec<(String, u8, url::Url)>,
+    mut seen: BatchSeen,
+    journal: Option<WebSearchWriter>,
+    tx: SyncSender<Message>,
+    stop: Arc<AtomicBool>,
+    timed_out: Arc<AtomicBool>,
+    unreported: Arc<AtomicBool>,
+) {
+    let total = requests.len();
+    let mut saved_pages = 0;
+    let mut limit_reached = false;
+    let mut failure = None;
+    for (index, (query, page, url)) in requests.into_iter().enumerate() {
+        if index > 0 {
+            for _ in 0..10 {
+                if stop.load(Ordering::Acquire) {
+                    break;
                 }
-            }
-            if stop.load(Ordering::Acquire) {
-                break;
-            }
-            let (result, provider_stop) =
-                protected_provider_call(|| match crate::web_search::fetch(&url) {
-                    Ok(body) => {
-                        let parsed =
-                            crate::web_search::parse_provider(&body, &url, &seen.originals);
-                        // An unusable response indicates that this provider is
-                        // not delivering the requested search. Surface the
-                        // failure and leave the rest of the plan unattempted.
-                        let stop = parsed.is_err();
-                        (parsed, stop)
-                    }
-                    Err(error) => (Err(error.message), error.stop_batch),
-                });
-            let result = result.map(|mut data| {
-                limit_reached = retain_batch_budget(&mut data, &query, &mut seen);
-                data
-            });
-            if !send(
-                &tx,
-                Message::Query(query, page, result),
-                &stop,
-                &worker_timeout,
-                Duration::from_secs(30),
-            ) {
-                worker_unreported.store(true, Ordering::Release);
-                return;
-            }
-            if limit_reached || provider_stop {
-                break;
+                std::thread::sleep(Duration::from_millis(100));
             }
         }
-        // The completion slot also lets cancellation retain buffered pages.
-        let _ = send_completion(
+        if stop.load(Ordering::Acquire) {
+            break;
+        }
+        let (result, provider_stop) =
+            protected_provider_call(|| match crate::web_search::fetch(&url) {
+                Ok(body) => {
+                    let parsed = crate::web_search::parse_provider(&body, &url, &seen.originals);
+                    // Leave the remaining pages unattempted after an unusable response.
+                    let stop = parsed.is_err();
+                    (parsed, stop)
+                }
+                Err(error) => (Err(error.message), error.stop_batch),
+            });
+        let result = result.map(|mut data| {
+            limit_reached = retain_batch_budget(&mut data, &query, &mut seen);
+            data
+        });
+        if let Some(journal) = &journal {
+            let committed =
+                serde_json::to_vec(&page_receipt(&query, page, index + 1, total, &result))
+                    .map_err(|error| error.to_string())
+                    .and_then(|bytes| {
+                        journal
+                            .append(index, &bytes)
+                            .map_err(|error| error.to_string())
+                    });
+            if let Err(error) = committed {
+                failure = Some(Outcome::Failed {
+                    error: format!("Could not save a fetched search page: {error}"),
+                    fetched_unreported_pages: 1,
+                });
+                break;
+            }
+            saved_pages += 1;
+        }
+        if !send(
             &tx,
-            limit_reached,
+            Message::Query(query, page, result),
             &stop,
-            &worker_timeout,
+            &timed_out,
             Duration::from_secs(30),
-        );
+        ) {
+            unreported.store(journal.is_none(), Ordering::Release);
+            break;
+        }
+        if limit_reached || provider_stop {
+            break;
+        }
+    }
+    let mut outcome = failure.unwrap_or(Outcome::Complete {
+        cancelled: stop.load(Ordering::Acquire),
+        limit_reached,
     });
-    Ok(())
+    let mut saved = false;
+    if let Some(journal) = journal {
+        let result = serde_json::to_vec(&outcome)
+            .map_err(|error| error.to_string())
+            .and_then(|bytes| {
+                journal
+                    .finish(saved_pages, &bytes)
+                    .map_err(|error| error.to_string())
+            });
+        match result {
+            Ok(()) => saved = true,
+            Err(error) => {
+                let (message, fetched_unreported_pages) = match outcome {
+                    Outcome::Failed {
+                        error: first,
+                        fetched_unreported_pages,
+                    } => (
+                        format!("{first}. Could not save the search outcome: {error}"),
+                        fetched_unreported_pages,
+                    ),
+                    Outcome::Complete { .. } => {
+                        (format!("Could not save the search outcome: {error}"), 0)
+                    }
+                };
+                outcome = Outcome::Failed {
+                    error: message,
+                    fetched_unreported_pages,
+                };
+            }
+        }
+    }
+    let _ = send(
+        &tx,
+        Message::Done(outcome, saved),
+        &stop,
+        &timed_out,
+        Duration::from_secs(30),
+    );
 }
-pub fn poll(id: &str, acknowledged: usize) -> Result<Value, String> {
+fn poll_task(id: &str, acknowledged: usize) -> Result<Option<Value>, String> {
     let mut tasks = TASK.lock().map_err(|_| "Web search unavailable")?;
     let Some(task) = tasks.as_mut().filter(|t| t.id == id) else {
-        return COMPLETED
+        return Ok(COMPLETED
             .lock()
             .map_err(|_| "Web search unavailable")?
             .as_ref()
-            .filter(|(task_id, _, _)| task_id == id)
-            .map(|(_, result, _)| result.clone())
-            .ok_or_else(|| "Batch web search not found".into());
+            .filter(|(task_id, _)| task_id == id)
+            .map(|(_, result)| result.clone()));
     };
     if acknowledged > task.processed {
         return Err("Invalid batch acknowledgement".into());
@@ -525,85 +755,95 @@ pub fn poll(id: &str, acknowledged: usize) -> Result<Value, String> {
             .processed
             .saturating_sub(usize::from(task.pending.is_some()))
     {
-        return Ok(
-            json!({"status":"running","processed":task.processed,"total":task.total,"history":task.history}),
-        );
+        return Ok(Some(json!({"status":"running","processed":task.processed,
+            "total":task.total,"history":task.history})));
     }
     if let Some(pending) = &task.pending {
         if acknowledged < task.processed {
-            return Ok(pending.clone());
+            return Ok(Some(pending.clone()));
         }
         task.pending = None;
     }
-    match task.rx.try_recv() {
+    let (mut outcome, mut saved) = match task.rx.try_recv() {
         Ok(Message::Query(query, page, result)) => {
             task.processed += 1;
-            let response = match result {
-                Ok(data) => {
-                    json!({"status":"running","processed":task.processed,"total":task.total,"query":query,"page":page,"data":data})
-                }
-                Err(error) => {
-                    json!({"status":"running","processed":task.processed,"total":task.total,"query":query,"page":page,"error":error})
-                }
-            };
+            let response = page_receipt(&query, page, task.processed, task.total, &result);
             task.pending = Some(response.clone());
             task.history.push(response.clone());
-            Ok(response)
+            return Ok(Some(response));
         }
-        Ok(Message::Done(limit_reached)) => {
-            let (processed, total, cancelled) = (
-                task.processed,
-                task.total,
-                task.cancel.load(Ordering::Acquire),
-            );
-            let response = json!({"status":"complete","processed":processed,"total":total,"cancelled":cancelled,"limit_reached":limit_reached,"coverage":coverage(total, &task.history),"history":task.history,"prior_history":task.prior_history,"plan":task.plan.iter().map(|(query, page)| json!({"query":query,"page":page})).collect::<Vec<_>>(),"provider":task.provider});
-            *COMPLETED.lock().map_err(|_| "Web search unavailable")? =
-                Some((id.to_owned(), response.clone(), false));
-            *tasks = None;
-            Ok(response)
-        }
+        Ok(Message::Done(outcome, saved)) => (outcome, saved),
         Err(TryRecvError::Empty) => {
-            Ok(json!({"status":"running","processed":task.processed,"total":task.total}))
+            return Ok(Some(json!({"status":"running","processed":task.processed,
+                "total":task.total})));
         }
         Err(TryRecvError::Disconnected) => {
-            let (processed, total, cancelled) = (
-                task.processed,
-                task.total,
-                task.cancel.load(Ordering::Acquire),
-            );
-            let unreported = usize::from(task.unreported.load(Ordering::Acquire));
-            let mut report = coverage(total, &task.history);
-            report["fetched_unreported_pages"] = json!(unreported);
-            report["attempted_pages"] = json!(task.history.len().saturating_add(unreported));
-            report["unattempted_pages"] =
-                json!(total.saturating_sub(task.history.len().saturating_add(unreported)));
-            let mut response = if cancelled {
-                json!({"status":"complete","processed":processed,"total":total,"cancelled":true,"coverage":report,"history":task.history})
+            if task.cancel.load(Ordering::Acquire) {
+                (
+                    Outcome::Complete {
+                        cancelled: true,
+                        limit_reached: false,
+                    },
+                    false,
+                )
             } else {
                 let error = if task.timed_out.load(Ordering::Acquire) {
                     "Batch search stopped because results were not collected within 30 seconds"
                 } else {
                     "Batch search stopped before completion"
                 };
-                json!({"status":"failed","processed":processed,"total":total,"error":error,"coverage":report,"history":task.history})
-            };
-            response["plan"] = json!(task
-                .plan
-                .iter()
-                .map(|(query, page)| json!({"query":query,"page":page}))
-                .collect::<Vec<_>>());
-            response["provider"] = json!(task.provider);
-            response["prior_history"] = json!(task.prior_history);
-            *COMPLETED.lock().map_err(|_| "Web search unavailable")? =
-                Some((id.to_owned(), response.clone(), false));
-            *tasks = None;
-            Ok(response)
+                (
+                    Outcome::Failed {
+                        error: error.into(),
+                        fetched_unreported_pages: usize::from(
+                            task.unreported.load(Ordering::Acquire),
+                        ),
+                    },
+                    false,
+                )
+            }
         }
+    };
+    let task = tasks.take().expect("matched search task");
+    if task.worker.is_some_and(|worker| worker.join().is_err()) {
+        outcome = Outcome::Failed {
+            error: "Batch search worker terminated unexpectedly".into(),
+            fetched_unreported_pages: 0,
+        };
+        saved = false;
     }
+    let mut response = terminal_result(&outcome, task.total, &task.history, saved);
+    response["history"] = json!(task.history);
+    response["prior_history"] = json!(task.prior_history);
+    response["plan"] = json!(task
+        .plan
+        .iter()
+        .map(|(query, page)| json!({"query":query,"page":page}))
+        .collect::<Vec<_>>());
+    response["provider"] = json!(task.provider);
+    response["prefer_fresh"] = json!(task.prefer_fresh);
+    *COMPLETED.lock().map_err(|_| "Web search unavailable")? =
+        Some((id.to_owned(), response.clone()));
+    Ok(Some(response))
 }
 
-/// Collect one page into bounded in-memory history even if no page is open.
-/// Client acknowledgements can still recover every collected page from history.
+#[cfg(test)]
+pub fn poll(id: &str, acknowledged: usize) -> Result<Value, String> {
+    poll_task(id, acknowledged)?.ok_or_else(|| "Batch web search not found".into())
+}
+
+pub fn status(ws: &Workspace, id: &str, acknowledged: usize) -> Result<Value, String> {
+    if let Some(result) = poll_task(id, acknowledged)? {
+        return Ok(result);
+    }
+    saved_search(ws)?
+        .filter(|(task_id, _)| task_id == id)
+        .map(|(_, result)| result)
+        .ok_or_else(|| "Batch web search not found".into())
+}
+
+/// Advance client delivery without requiring an open browser tab.
+/// The worker has already committed the page independently.
 pub fn collect_background() -> Result<(), String> {
     let task = TASK
         .lock()
@@ -611,90 +851,34 @@ pub fn collect_background() -> Result<(), String> {
         .as_ref()
         .map(|task| (task.id.clone(), task.processed));
     if let Some((id, processed)) = task {
-        poll(&id, processed)?;
+        poll_task(&id, processed)?;
     }
     Ok(())
 }
 
-/// Retain the latest terminal result only after sealing and storage succeed.
-pub fn persist_completed(ws: &waypoint_workspace::Workspace) -> Result<bool, String> {
-    // Do not overwrite a newer in-progress checkpoint with an older result.
-    let tasks = TASK.lock().map_err(|_| "Web search unavailable")?;
-    if tasks.is_some() {
-        return Ok(false);
-    }
-    let mut completed = COMPLETED.lock().map_err(|_| "Web search unavailable")?;
-    let Some((id, result, saved)) = completed.as_mut() else {
-        return Ok(false);
-    };
-    if *saved {
-        return Ok(true);
-    }
-    let mut persisted = result.clone();
-    persisted["history_saved"] = json!(true);
-    let bytes =
-        serde_json::to_vec(&persisted).map_err(|_| "Could not serialize web search history")?;
-    if let Err(error) = ws.save_latest_web_search(id, &bytes) {
-        result["history_saved"] = json!(false);
-        return Err(error.to_string());
-    }
-    *result = persisted;
-    *saved = true;
-    Ok(true)
-}
-
-/// A restart cannot resume the worker, so store a clearly interrupted snapshot
-/// of collected pages, not a claim that the provider finished its requests.
-pub fn persist_progress(ws: &waypoint_workspace::Workspace) -> Result<bool, String> {
-    let mut tasks = TASK.lock().map_err(|_| "Web search unavailable")?;
-    let Some(task) = tasks.as_mut() else {
-        return Ok(false);
-    };
-    if task.saved_processed == Some(task.processed) {
-        return Ok(false);
-    }
-    let result = json!({
-        "status":"failed", "processed":task.processed, "total":task.total,
-        "history":task.history, "prior_history":task.prior_history, "history_saved":true, "recovered_partial":true,
-        "plan":task.plan.iter().map(|(query, page)| json!({"query":query,"page":page})).collect::<Vec<_>>(),
-        "provider":task.provider,
-        "error":"The app stopped before this search finished; another provider request may have been in progress"
-    });
-    let bytes =
-        serde_json::to_vec(&result).map_err(|_| "Could not serialize web search checkpoint")?;
-    if let Err(error) = ws.save_latest_web_search(&task.id, &bytes) {
-        task.checkpoint_failed = true;
-        return Err(error.to_string());
-    }
-    task.checkpoint_failed = false;
-    task.saved_processed = Some(task.processed);
-    Ok(true)
-}
-
-pub fn checkpoint_failed(id: &str) -> Result<bool, String> {
-    Ok(TASK
-        .lock()
-        .map_err(|_| "Web search unavailable")?
-        .as_ref()
-        .is_some_and(|task| task.id == id && task.checkpoint_failed))
-}
-
-pub fn pending_with_saved(ws: &waypoint_workspace::Workspace) -> Result<Value, String> {
+pub fn pending_with_saved(ws: &Workspace) -> Result<Value, String> {
     let mut current = pending()?;
     if current["active"] == false && current.get("last").is_none() {
-        if let Some((id, bytes)) = ws.latest_web_search().map_err(|error| error.to_string())? {
-            let result: Value = serde_json::from_slice(&bytes)
-                .map_err(|_| "Saved web search history is invalid")?;
-            if !matches!(result["status"].as_str(), Some("complete" | "failed"))
-                || !result["history"].is_array()
-            {
-                return Err("Saved web search history is invalid".into());
-            }
+        if let Some((id, result)) = saved_search(ws)? {
             current["last"] = json!({"task_id":id,"result":result});
         }
     }
     Ok(current)
 }
+
+/// The worker owns the final checkpoint. Drain its connection and lock on exit.
+pub fn shutdown() -> Result<(), String> {
+    let task = TASK.lock().map_err(|_| "Web search unavailable")?.take();
+    if let Some(task) = task {
+        task.cancel.store(true, Ordering::Release);
+        drop(task.rx);
+        if task.worker.is_some_and(|worker| worker.join().is_err()) {
+            return Err("Batch search worker terminated unexpectedly".into());
+        }
+    }
+    Ok(())
+}
+
 pub fn cancel(id: &str) -> Result<(), String> {
     let tasks = TASK.lock().map_err(|_| "Web search unavailable")?;
     let task = tasks
@@ -708,6 +892,16 @@ pub fn cancel(id: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn done(limit_reached: bool) -> Message {
+        Message::Done(
+            Outcome::Complete {
+                cancelled: false,
+                limit_reached,
+            },
+            false,
+        )
+    }
 
     #[test]
     fn provider_panic_stops_batch_and_preserves_failure_accounting() {
@@ -743,15 +937,6 @@ mod tests {
         assert_eq!(data["exact_repeated_omitted"], 1);
         assert!(data["batch_limit_omitted"].is_null());
         assert_eq!(seen.originals.len(), 601);
-        let pages = vec![json!({"data":{"results":[]}}); 50];
-        assert!(start_selected_with_history(
-            "too-many".into(),
-            "https://example.org".into(),
-            vec![("role".into(), 1)],
-            pages
-        )
-        .unwrap_err()
-        .contains("50-page"));
         let prior = vec![json!({"data":{"results":[{"url":"https://example.org/job/0"}]}})];
         let mut seen = seen_from_prior(&prior).unwrap();
         let mut page = crate::web_search::parse_excluding(
@@ -771,145 +956,123 @@ mod tests {
     use std::io::{Read, Write};
     use std::time::Instant;
     #[cfg(windows)]
-    #[test]
-    fn completed_history_is_recovered_after_workspace_reopens() {
-        let _lock = TEST_LOCK.lock().unwrap();
-        fn open(path: &std::path::Path) -> waypoint_workspace::Workspace {
-            #[cfg(feature = "sqlcipher")]
-            {
-                waypoint_workspace::Workspace::open_encrypted(path).unwrap()
-            }
-            #[cfg(not(feature = "sqlcipher"))]
-            {
-                waypoint_workspace::Workspace::open(path).unwrap()
-            }
-        }
-        let parent = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
-        let dir = tempfile::Builder::new()
-            .prefix("waypoint-web-search-")
-            .tempdir_in(parent)
-            .unwrap();
-        let expected = json!({"status":"complete","history":[{"query":"fictional","page":1,"data":{"results":[{"url":"https://example.test/job"}]}}]});
-        {
-            let ws = open(dir.path());
-            *COMPLETED.lock().unwrap() = Some(("fixture-restart".into(), expected, false));
-            assert!(persist_completed(&ws).unwrap());
-        }
-        *COMPLETED.lock().unwrap() = None;
-        let ws = open(dir.path());
-        let recovered = pending_with_saved(&ws).unwrap();
-        assert_eq!(recovered["active"], false);
-        assert_eq!(recovered["last"]["task_id"], "fixture-restart");
-        assert_eq!(recovered["last"]["result"]["history_saved"], true);
-        assert_eq!(
-            recovered["last"]["result"]["history"][0]["data"]["results"][0]["url"],
-            "https://example.test/job"
-        );
+    fn search_test_dir() -> tempfile::TempDir {
+        let target = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        tempfile::tempdir_in(target).unwrap()
     }
+
+    #[cfg(windows)]
+    fn search_workspace(path: &std::path::Path) -> Workspace {
+        #[cfg(feature = "sqlcipher")]
+        {
+            Workspace::open_encrypted(path).unwrap()
+        }
+        #[cfg(not(feature = "sqlcipher"))]
+        {
+            Workspace::open(path).unwrap()
+        }
+    }
+
     #[cfg(windows)]
     #[test]
-    fn interrupted_batch_recovers_saved_pages_without_replacing_them_with_older_results() {
+    fn legacy_history_is_recovered_after_workspace_reopens() {
         let _lock = TEST_LOCK.lock().unwrap();
-        fn open(path: &std::path::Path) -> waypoint_workspace::Workspace {
-            #[cfg(feature = "sqlcipher")]
-            {
-                waypoint_workspace::Workspace::open_encrypted(path).unwrap()
-            }
-            #[cfg(not(feature = "sqlcipher"))]
-            {
-                waypoint_workspace::Workspace::open(path).unwrap()
-            }
-        }
-        let parent = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
-        let dir = tempfile::Builder::new()
-            .prefix("waypoint-web-checkpoint-")
-            .tempdir_in(parent)
-            .unwrap();
-        let (tx, rx) = mpsc::sync_channel(1);
-        *TASK.lock().unwrap() = Some(Task {
-            id: "active-fixture".into(),
-            rx,
-            cancel: Arc::new(AtomicBool::new(false)),
-            total: 3,
-            plan: vec![
-                ("fictional".into(), 2),
-                ("other".into(), 1),
-                ("other".into(), 3),
-            ],
-            provider: Some("http://127.0.0.1:9876/".into()),
-            processed: 0,
-            saved_processed: None,
-            checkpoint_failed: false,
-            pending: None,
-            history: Vec::new(),
-            prior_history: vec![
-                json!({"query":"earlier","page":1,"data":{"results":[{"url":"https://example.test/earlier"}]}}),
-            ],
-            timed_out: Arc::new(AtomicBool::new(false)),
-            unreported: Arc::new(AtomicBool::new(false)),
+        let dir = search_test_dir();
+        let expected = json!({
+            "status":"complete","history":[{"query":"fictional","page":1,
+                "data":{"results":[{"url":"https://example.test/job"}]}}]
         });
-        *COMPLETED.lock().unwrap() = Some((
-            "older".into(),
-            json!({"status":"complete","history":[]}),
-            false,
-        ));
-        assert_eq!(pending().unwrap()["prior_history"][0]["query"], "earlier");
         {
-            let ws = open(dir.path());
-            assert!(persist_progress(&ws).unwrap());
-            let initial: Value =
-                serde_json::from_slice(&ws.latest_web_search().unwrap().unwrap().1).unwrap();
-            assert_eq!(initial["processed"], 0);
-            assert_eq!(initial["provider"], "http://127.0.0.1:9876/");
-            assert_eq!(initial["plan"].as_array().unwrap().len(), 3);
-            tx.send(Message::Query(
-                "fictional".into(),
-                2,
-                Ok(json!({"results":[{"url":"https://example.test/job"}]})),
-            ))
-            .unwrap();
-            collect_background().unwrap();
-            let no_sealer = waypoint_workspace::Workspace::in_memory().unwrap();
-            assert!(persist_progress(&no_sealer).is_err());
-            assert!(checkpoint_failed("active-fixture").unwrap());
-            assert!(persist_progress(&ws).unwrap());
-            assert!(!checkpoint_failed("active-fixture").unwrap());
-            assert!(!persist_progress(&ws).unwrap());
-            assert!(!persist_completed(&ws).unwrap());
-            assert_eq!(ws.latest_web_search().unwrap().unwrap().0, "active-fixture");
+            let ws = search_workspace(dir.path());
+            ws.save_latest_web_search("fixture-restart", &serde_json::to_vec(&expected).unwrap())
+                .unwrap();
         }
-        *TASK.lock().unwrap() = None;
         *COMPLETED.lock().unwrap() = None;
-        let ws = open(dir.path());
+        let ws = search_workspace(dir.path());
+        let recovered = pending_with_saved(&ws).unwrap();
+        assert_eq!(recovered["last"]["task_id"], "fixture-restart");
+        assert_eq!(recovered["last"]["result"], expected);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn interrupted_batch_recovers_committed_pages_and_retries_without_client_polling() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        let dir = search_test_dir();
+        let earlier: Vec<_> = (0..50)
+            .map(|index| {
+                json!({
+                    "query":format!("earlier {index}"),"page":1,
+                    "data":{"results":[{"url":format!("https://example.test/earlier/{index}")}]}
+                })
+            })
+            .collect();
+        {
+            let ws = search_workspace(dir.path());
+            ws.save_latest_web_search("older", br#"{"status":"complete","history":[]}"#)
+                .unwrap();
+            let metadata = json!({
+                "version":CURSOR_VERSION, "provider":"https://freeserp.ai/",
+                "prefer_fresh":true,"retry_source_task":"older",
+                "plan":[{"query":"fictional","page":2},{"query":"other","page":3}]
+            });
+            let writer = ws
+                .begin_web_search_run(
+                    "active-fixture",
+                    2,
+                    &serde_json::to_vec(&metadata).unwrap(),
+                    &earlier
+                        .iter()
+                        .map(|page| serde_json::to_vec(page).unwrap())
+                        .collect::<Vec<_>>(),
+                )
+                .unwrap()
+                .unwrap();
+            let initial = saved_search(&ws).unwrap().unwrap().1;
+            assert_eq!(initial["cursor"]["committed_pages"], 0);
+            assert_eq!(initial["provider"], "https://freeserp.ai/");
+            assert_eq!(initial["history"], json!([]));
+            let page = page_receipt(
+                "fictional",
+                2,
+                1,
+                2,
+                &Ok(json!({
+                    "results":[{"url":"https://example.test/job"}]
+                })),
+            );
+            writer
+                .append(0, &serde_json::to_vec(&page).unwrap())
+                .unwrap();
+        }
+        *COMPLETED.lock().unwrap() = None;
+        let ws = search_workspace(dir.path());
         let recovered = pending_with_saved(&ws).unwrap();
         let result = &recovered["last"]["result"];
         assert_eq!(recovered["last"]["task_id"], "active-fixture");
         assert_eq!(result["status"], "failed");
         assert_eq!(result["recovered_partial"], true);
-        assert_eq!(result["processed"], 1);
-        assert_eq!(result["total"], 3);
-        assert_eq!(
-            result["plan"],
-            json!([
-                {"query":"fictional","page":2}, {"query":"other","page":1}, {"query":"other","page":3}
-            ])
-        );
+        assert_eq!(result["cursor"], json!({"version":1,"committed_pages":1}));
+        assert_eq!(result["coverage"]["unattempted_pages"], 1);
+        assert_eq!(result["prefer_fresh"], true);
+        assert_eq!(result["retry_source_task"], "older");
         assert_eq!(result["history"][0]["page"], 2);
+        assert_eq!(status(&ws, "active-fixture", 0).unwrap(), *result);
         let prior = previous_successful_history(&ws, "active-fixture").unwrap();
-        assert_eq!(prior.len(), 2);
-        assert_eq!(prior[0]["query"], "earlier");
-        assert_eq!(prior[1]["page"], 2);
+        assert_eq!(prior.len(), 51);
+        assert_eq!(prior[..50], earlier);
+        assert_eq!(prior[50]["page"], 2);
         assert!(previous_successful_history(&ws, "older").is_err());
+
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let worker = std::thread::spawn(move || {
+        let provider = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
             let mut request = [0u8; 4096];
             let n = stream.read(&mut request).unwrap();
-            assert!(std::str::from_utf8(&request[..n])
-                .unwrap()
-                .contains("pageno=3"));
-            let body = r#"{"results":[]}"#;
+            let request = std::str::from_utf8(&request[..n]).unwrap();
+            assert!(request.contains("q=other") && request.contains("pageno=3"));
+            let body = r#"{"results":[{"url":"https://example.test/next","title":"Fictional"}]}"#;
             write!(
                 stream,
                 "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -917,50 +1080,35 @@ mod tests {
             )
             .unwrap();
         });
-        start_selected_with_history(
+        assert!(start_selected_with_freshness(
+            Some(&ws),
             "retry-fixture".into(),
             format!("http://127.0.0.1:{port}/"),
             vec![("other".into(), 3)],
             prior,
+            false,
+            Some("active-fixture"),
         )
-        .unwrap();
-        assert!(persist_progress(&ws).unwrap());
-        assert_eq!(
-            pending().unwrap()["prior_history"]
-                .as_array()
-                .unwrap()
-                .len(),
-            2
-        );
-        let deadline = Instant::now() + Duration::from_secs(8);
-        let mut acknowledged = 0;
-        loop {
-            let result = poll("retry-fixture", acknowledged).unwrap();
-            if result["status"] == "complete" {
-                break;
-            }
-            if result.get("query").is_some() {
-                acknowledged += 1;
-            }
-            assert!(Instant::now() < deadline);
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        assert!(persist_completed(&ws).unwrap());
-        worker.join().unwrap();
+        .unwrap());
+        provider.join().unwrap();
+        let worker = TASK.lock().unwrap().take().unwrap();
+        // Keep the receiver alive while waiting. No polling or collection advances the ledger.
+        worker.worker.unwrap().join().unwrap();
         drop(ws);
-        *COMPLETED.lock().unwrap() = None;
-        let reopened = open(dir.path());
+        let reopened = search_workspace(dir.path());
         let saved = pending_with_saved(&reopened).unwrap();
+        let final_result = &saved["last"]["result"];
+        assert_eq!(final_result["status"], "complete");
+        assert_eq!(final_result["history_saved"], true);
+        assert_eq!(final_result["cursor"]["committed_pages"], 1);
+        assert_eq!(final_result["prior_history"].as_array().unwrap().len(), 51);
+        assert_eq!(final_result["history"][0]["page"], 3);
         assert_eq!(
-            saved["last"]["result"]["prior_history"]
-                .as_array()
-                .unwrap()
-                .len(),
-            2
+            final_result["history"][0]["data"]["results"][0]["url"],
+            "https://example.test/next"
         );
-        assert_eq!(saved["last"]["result"]["history"][0]["page"], 3);
         assert_eq!(
-            result["history"][0]["data"]["results"][0]["url"],
+            final_result["prior_history"][50]["data"]["results"][0]["url"],
             "https://example.test/job"
         );
     }
@@ -976,8 +1124,8 @@ mod tests {
             plan: vec![],
             provider: Some("http://127.0.0.1:9876/".into()),
             processed: 0,
-            saved_processed: None,
-            checkpoint_failed: false,
+            prefer_fresh: false,
+            worker: None,
             pending: None,
             history: Vec::new(),
             prior_history: Vec::new(),
@@ -1005,7 +1153,7 @@ mod tests {
             "https://example.test/one"
         );
         assert_eq!(recovered["history"][1]["error"], "fixture failure");
-        tx.send(Message::Done(false)).unwrap();
+        tx.send(done(false)).unwrap();
         collect_background().unwrap();
         let result = poll("background-fixture", 0).unwrap();
         assert_eq!(result["status"], "complete");
@@ -1032,8 +1180,8 @@ mod tests {
             plan: vec![],
             provider: Some("http://127.0.0.1:9876/".into()),
             processed: 0,
-            saved_processed: None,
-            checkpoint_failed: false,
+            prefer_fresh: false,
+            worker: None,
             pending: None,
             history: Vec::new(),
             prior_history: Vec::new(),
@@ -1042,9 +1190,9 @@ mod tests {
         });
         let (finished, result) = mpsc::channel();
         let worker = std::thread::spawn(move || {
-            let sent = send_completion(
+            let sent = send(
                 &tx,
-                false,
+                done(false),
                 &stop,
                 &AtomicBool::new(false),
                 Duration::from_secs(30),
@@ -1083,8 +1231,8 @@ mod tests {
             plan: vec![],
             provider: Some("http://127.0.0.1:9876/".into()),
             processed: 0,
-            saved_processed: None,
-            checkpoint_failed: false,
+            prefer_fresh: false,
+            worker: None,
             pending: None,
             history: Vec::new(),
             prior_history: Vec::new(),
@@ -1161,8 +1309,8 @@ mod tests {
             plan: vec![],
             provider: Some("http://127.0.0.1:9876/".into()),
             processed: 0,
-            saved_processed: None,
-            checkpoint_failed: false,
+            prefer_fresh: false,
+            worker: None,
             pending: None,
             history: Vec::new(),
             prior_history: Vec::new(),
@@ -1181,7 +1329,7 @@ mod tests {
             Err("provider failed".into()),
         ))
         .unwrap();
-        tx.send(Message::Done(true)).unwrap();
+        tx.send(done(true)).unwrap();
         let _ = poll("mixed-coverage", 0).unwrap();
         let _ = poll("mixed-coverage", 1).unwrap();
         let done = poll("mixed-coverage", 2).unwrap();
@@ -1366,8 +1514,8 @@ mod tests {
             plan: vec![],
             provider: Some("http://127.0.0.1:9876/".into()),
             processed: 0,
-            saved_processed: None,
-            checkpoint_failed: false,
+            prefer_fresh: false,
+            worker: None,
             pending: None,
             history: Vec::new(),
             prior_history: Vec::new(),
@@ -1376,7 +1524,7 @@ mod tests {
         });
         tx.send(Message::Query("role".into(), 1, Ok(json!({"results":[]}))))
             .unwrap();
-        tx.send(Message::Done(false)).unwrap();
+        tx.send(done(false)).unwrap();
         let first = poll("replay", 0).unwrap();
         assert_eq!(first["query"], "role");
         assert_eq!(poll("replay", 0).unwrap(), first);
@@ -1403,8 +1551,8 @@ mod tests {
             plan: vec![],
             provider: Some("http://127.0.0.1:9876/".into()),
             processed: 0,
-            saved_processed: None,
-            checkpoint_failed: false,
+            prefer_fresh: false,
+            worker: None,
             pending: None,
             history: Vec::new(),
             prior_history: Vec::new(),
@@ -1435,8 +1583,8 @@ mod tests {
             plan: vec![],
             provider: Some("http://127.0.0.1:9876/".into()),
             processed: 0,
-            saved_processed: None,
-            checkpoint_failed: false,
+            prefer_fresh: false,
+            worker: None,
             pending: None,
             history: Vec::new(),
             prior_history: Vec::new(),
@@ -1447,7 +1595,7 @@ mod tests {
             .unwrap();
         tx.send(Message::Query("role".into(), 2, Ok(json!({"results":[]}))))
             .unwrap();
-        tx.send(Message::Done(false)).unwrap();
+        tx.send(done(false)).unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let mut ws = waypoint_workspace::Workspace::in_memory().unwrap();
@@ -1742,6 +1890,7 @@ mod tests {
     fn live_freeserp_recency_search_multiple_languages() {
         let _lock = TEST_LOCK.lock().unwrap();
         start_with_freshness(
+            None,
             "recency-evaluation".into(),
             "https://freeserp.ai/".into(),
             vec![

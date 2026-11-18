@@ -336,3 +336,6 @@ button.secondary-button { background: var(--surface); color: var(--accent); bord
 .qualification-correction p:empty { display: none; }
 .qualification-correction .form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .qualification-correction .form-actions button { margin: 0; }
+
+#web-search-results .web-candidate > p:empty,
+#web-search-batch-results .web-candidate > p:empty { margin: 0; padding: 0; border: 0; }

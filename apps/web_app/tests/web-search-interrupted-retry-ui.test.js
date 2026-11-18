@@ -1,8 +1,9 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const source=fs.readFileSync('apps/web_app/web/app.js','utf8'),start=source.indexOf('function unfinishedWebSearchQueries('),end=source.indexOf('function webBatchSummary(',start);assert.ok(start>=0&&end>start);
 const items=[],notices=[],form={elements:{queries:{value:'',focus(){}},pages:{value:'1'}}};
-const context={document:{querySelector:selector=>selector==='#web-search-batch'?form:{append:(...values)=>items.push(...values)}},element:(tag,text)=>({tag,text,addEventListener(_event,fn){this.click=fn}}),notify:message=>notices.push(message)};vm.createContext(context);vm.runInContext(source.slice(start,end),context);
-const recovery={recovered_partial:true,provider:'http://127.0.0.1:9876/',plan:[{query:'first',page:1},{query:'first',page:2},{query:'second',page:1}],history:[{query:'first',page:1,data:{results:[]}},{query:'first',page:2,error:'unavailable'}]};
+const provider={elements:{provider:{value:''},prefer_fresh:{checked:false}}};
+const context={document:{querySelector:selector=>selector==='#web-search-batch'?form:selector==='#web-search'?provider:{append:(...values)=>items.push(...values)}},element:(tag,text)=>({tag,text,addEventListener(_event,fn){this.click=fn}}),notify:message=>notices.push(message)};vm.createContext(context);vm.runInContext(source.slice(start,end),context);
+const recovery={recovered_partial:true,provider:'http://127.0.0.1:9876/',prefer_fresh:true,plan:[{query:'first',page:1},{query:'first',page:2},{query:'second',page:1}],history:[{query:'first',page:1,data:{results:[]}},{query:'first',page:2,error:'unavailable'}]};
 assert.deepEqual(Array.from(context.unfinishedWebSearchQueries(recovery)),['first','second']);context.offerInterruptedSearchRetry(recovery);assert.ok(items.some(item=>item.text==='Previous provider: http://127.0.0.1:9876/'));const button=items.find(item=>item.tag==='button');form.elements.queries.value='keep me';button.click();assert.equal(form.elements.queries.value,'keep me');assert.match(notices[0],/Clear or save/);form.elements.queries.value='first\nsecond';button.click();assert.equal(form.elements.queries.value,'first\nsecond');assert.equal(form.elements.pages.value,'2');assert.match(notices[1],/unfinished pages/);assert.equal(JSON.stringify(form._waypointRetry.plan),JSON.stringify([{query:'first',page:2},{query:'second',page:1}]));assert.equal(context.unfinishedWebSearchQueries({recovered_partial:true,plan:[{query:'first',page:9}]}).length,0);assert.equal(context.unfinishedWebSearchQueries({recovered_partial:true}).length,0);console.log('Interrupted web-search retry checks passed.');
 const terminal={...recovery,recovered_partial:false,status:'complete'};
 assert.deepEqual(Array.from(context.unfinishedWebSearchQueries(terminal)),['first','second']);
@@ -13,6 +14,12 @@ assert.deepEqual(Array.from(context.unfinishedWebSearchQueries(sparse)),['second
 items.length=0;form.elements.queries.value='';context.offerInterruptedSearchRetry(sparse);items.find(item=>item.tag==='button').click();
 assert.equal(form.elements.pages.value,'3');
 assert.equal(JSON.stringify(form._waypointRetry.plan),JSON.stringify([{query:'second',page:1},{query:'second',page:3}]));
-const tooMany={...recovery,history:[{query:'first',page:1,data:{results:Array(601).fill({url:'https://example.invalid/'})}}]};
-items.length=0;form.elements.queries.value='';context.offerInterruptedSearchRetry(tooMany);items.find(item=>item.tag==='button').click();
-assert.equal(form.elements.queries.value,'');assert.match(notices.at(-1),/Too many earlier results/);
+const manyResults={...recovery,history:[{query:'first',page:1,data:{results:Array.from({length:601},(_,i)=>({url:`https://example.invalid/${i}`}))}}]};
+const prior=Array.from({length:50},(_,i)=>({query:`earlier ${i}`,page:1,data:{results:[]}}));
+items.length=0;form.elements.queries.value='';context.offerInterruptedSearchRetry(manyResults,prior,'saved-search');items.find(item=>item.tag==='button').click();
+assert.equal(form.elements.queries.value,'first\nsecond');
+assert.equal(form._waypointRetry.sourceTask,'saved-search');
+assert.equal(form._waypointRetry.priorGroups.length,51);
+assert.equal(form._waypointRetry.priorGroups[50].data.results.length,601);
+assert.equal(provider.elements.provider.value,recovery.provider);
+assert.equal(provider.elements.prefer_fresh.checked,true);

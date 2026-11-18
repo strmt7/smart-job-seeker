@@ -51,11 +51,7 @@ fn create_key(
 }
 
 impl Workspace {
-    pub(super) fn encrypted_duplicate_indexer(
-        &self,
-        path: &Path,
-        lock: std::fs::File,
-    ) -> Result<DuplicateIndexer, WorkspaceError> {
+    pub(super) fn encrypted_background_store(&self, path: &Path) -> Result<Store, WorkspaceError> {
         let dir = path
             .parent()
             .ok_or_else(|| error("database has no parent directory"))?;
@@ -63,14 +59,7 @@ impl Workspace {
             .filter(|s| s.kind() == SealerKind::Dpapi)
             .ok_or_else(|| error("Windows DPAPI is required"))?;
         let key = read_key(&dir.join("workspace-key.dpapi"), sealer.as_ref())?;
-        let store = Store::open_encrypted(path, &key).map_err(error)?;
-        store
-            .configure_nonblocking_duplicate_indexer()
-            .map_err(error)?;
-        Ok(DuplicateIndexer {
-            store,
-            _workspace_lock: lock,
-        })
+        Store::open_encrypted(path, &key).map_err(error)
     }
 
     /// Open or create an encrypted database. Existing plaintext is copied to a

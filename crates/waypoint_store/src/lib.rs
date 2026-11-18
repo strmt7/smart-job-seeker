@@ -416,6 +416,20 @@ const MIGRATIONS: &[&str] = &[
     // v49 - model choice is sealed separately from candidate facts and approvals.
     "CREATE TABLE model_preferences(id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL CHECK(revision>0), sealed_content BLOB);
      UPDATE meta SET value='49' WHERE key='schema_version';",
+    // v50 — independent, atomic page receipts for the latest web search.
+    "CREATE TABLE web_search_run(
+       id INTEGER PRIMARY KEY CHECK(id=1), task_id TEXT NOT NULL,
+       planned INTEGER NOT NULL CHECK(planned>0),
+       committed INTEGER NOT NULL DEFAULT 0 CHECK(committed BETWEEN 0 AND planned),
+       payload_bytes INTEGER NOT NULL CHECK(payload_bytes BETWEEN 1 AND 12582912),
+       sealed_plan BLOB NOT NULL, sealed_terminal BLOB
+     );
+     CREATE TABLE web_search_pages(
+       run_id INTEGER NOT NULL REFERENCES web_search_run(id) ON DELETE CASCADE,
+       sequence INTEGER NOT NULL CHECK(sequence<>0), sealed_page BLOB NOT NULL,
+       PRIMARY KEY(run_id,sequence)
+     );
+     UPDATE meta SET value='50' WHERE key='schema_version';",
 ];
 
 pub mod documents;

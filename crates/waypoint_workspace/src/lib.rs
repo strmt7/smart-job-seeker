@@ -350,11 +350,31 @@ impl DuplicateIndexer {
     }
 }
 
+/// A search worker owns this connection and a lease on its workspace.
+pub struct WebSearchWriter {
+    store: Store,
+    task_id: String,
+    _workspace_lock: std::fs::File,
+}
+
+impl WebSearchWriter {
+    pub fn append(&self, previous: usize, content: &[u8]) -> Result<(), WorkspaceError> {
+        Ok(self
+            .store
+            .append_web_search_page(&self.task_id, previous, content)?)
+    }
+
+    pub fn finish(&self, processed: usize, content: &[u8]) -> Result<(), WorkspaceError> {
+        Ok(self
+            .store
+            .finish_web_search_run(&self.task_id, processed, content)?)
+    }
+}
+
 impl Workspace {
-    /// Open an additional connection while the workspace lock is held.
-    pub fn duplicate_indexer(&self) -> Result<DuplicateIndexer, WorkspaceError> {
+    fn background_store(&self) -> Result<(Store, std::fs::File), WorkspaceError> {
         let path = self.db_path.as_ref().ok_or_else(|| {
-            WorkspaceError::Export("Background indexing requires a disk workspace".into())
+            WorkspaceError::Export("A background connection requires a disk workspace".into())
         })?;
         let lock = self
             ._workspace_lock
@@ -363,10 +383,14 @@ impl Workspace {
             .try_clone()?;
         #[cfg(feature = "sqlcipher")]
         if self.database_encrypted {
-            return self.encrypted_duplicate_indexer(path, lock);
+            return Ok((self.encrypted_background_store(path)?, lock));
         }
-        let store = Store::open(path)
-            .map_err(|e| WorkspaceError::Export(format!("Duplicate index connection: {e}")))?;
+        Ok((Store::open(path)?, lock))
+    }
+
+    /// Open an additional connection while the workspace lock is held.
+    pub fn duplicate_indexer(&self) -> Result<DuplicateIndexer, WorkspaceError> {
+        let (store, lock) = self.background_store()?;
         store
             .configure_nonblocking_duplicate_indexer()
             .map_err(|e| WorkspaceError::Export(format!("Duplicate index connection: {e}")))?;
@@ -374,6 +398,31 @@ impl Workspace {
             store,
             _workspace_lock: lock,
         })
+    }
+
+    pub fn begin_web_search_run(
+        &self,
+        task_id: &str,
+        planned: usize,
+        plan: &[u8],
+        prior_pages: &[Vec<u8>],
+    ) -> Result<Option<WebSearchWriter>, WorkspaceError> {
+        if self.db_path.is_none()
+            || self.store.sealing_kind() != Some(waypoint_seal::SealerKind::Dpapi)
+        {
+            return Ok(None);
+        }
+        let sealer = waypoint_seal::platform_sealer()
+            .filter(|s| s.kind() == waypoint_seal::SealerKind::Dpapi)
+            .ok_or_else(|| WorkspaceError::Export("Windows DPAPI is unavailable".into()))?;
+        let (store, lock) = self.background_store()?;
+        let store = store.with_sealer(sealer);
+        store.begin_web_search_run(task_id, planned, plan, prior_pages)?;
+        Ok(Some(WebSearchWriter {
+            store,
+            task_id: task_id.to_owned(),
+            _workspace_lock: lock,
+        }))
     }
 
     /// Open (creating directories + migrating) a workspace on disk.
@@ -546,6 +595,12 @@ impl Workspace {
 
     pub fn latest_web_search(&self) -> Result<Option<(String, Vec<u8>)>, WorkspaceError> {
         Ok(self.store.latest_web_search()?)
+    }
+
+    pub fn latest_web_search_run(
+        &self,
+    ) -> Result<Option<waypoint_store::search_history::SavedWebSearchRun>, WorkspaceError> {
+        Ok(self.store.latest_web_search_run()?)
     }
 
     pub fn save_selected_web_candidates(

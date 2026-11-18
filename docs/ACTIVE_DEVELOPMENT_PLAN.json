@@ -449,7 +449,9 @@
       "title": "Broad discovery and real application-route verification",
       "paths": [
         "apps/web_app/src/search_planner.rs",
+        "apps/web_app/src/web_search.rs",
         "apps/web_app/src/web_search_batch.rs",
+        "crates/waypoint_store/src/search_history.rs",
         "crates/waypoint_research/src/lib.rs",
         "crates/waypoint_connectors/src/lib.rs"
       ],
@@ -459,6 +461,7 @@
         "Labeled retrieval and actual-route reachability evidence"
       ],
       "evidence": [
+        "docs/g1/SEARCH_PAGE_RECOVERY_2026-11-18.md",
         "docs/g1/WORKFLOW_LIMITS_2026-11-18.md",
         "docs/g1/UNSEEN_FAMILIES_AND_QUESTION_CONTEXT_2026-11-13.md",
         "docs/g1/MIXED_APPLICATION_WORKFLOW_2026-11-18.md"
@@ -470,7 +473,7 @@
         "Retain original ads and verify actual application routes; classify freshness, closure, login/challenge and email-only outcomes.",
         "Measure labeled retrieval and route reachability; add sources only for measured coverage benefit."
       ],
-      "next_action": "Persist admitted provider results as sealed pages with versioned continuation cursors and independent provider backoff. Replace the single sealed history snapshot and measure real route reachability and recall through the UI. The current collector has passed the old 600-candidate boundary under a byte budget.",
+      "next_action": "Add provider-specific retry timing and classify refusal separately from overload. Keep each provider's cursor and observations recoverable. Exercise permitted public searches from the rendered app and measure labeled listing recall and actual application-route reachability.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package."
     },
     {
