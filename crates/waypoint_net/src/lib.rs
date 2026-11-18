@@ -77,6 +77,23 @@ impl std::error::Error for NetError {}
 pub struct HttpResponse {
     pub status: u16,
     pub body: Vec<u8>,
+    pub retry_after: Option<RetryAfter>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetryAfter {
+    DelaySeconds(u64),
+    Date(std::time::SystemTime),
+}
+
+impl From<CapturedResponse> for HttpResponse {
+    fn from(response: CapturedResponse) -> Self {
+        Self {
+            status: response.status,
+            body: response.body,
+            retry_after: http::retry_after(&response.headers),
+        }
+    }
 }
 
 impl HttpResponse {
@@ -223,11 +240,7 @@ pub fn get(url: &str, timeout_ms: u64) -> Result<HttpResponse, NetError> {
 }
 
 pub fn get_capped(url: &str, timeout_ms: u64, max_bytes: usize) -> Result<HttpResponse, NetError> {
-    let response = get_response(url, timeout_ms, max_bytes, false, None, None)?;
-    Ok(HttpResponse {
-        status: response.status,
-        body: response.body,
-    })
+    get_response(url, timeout_ms, max_bytes, false, None, None).map(HttpResponse::from)
 }
 
 /// Fetch one public resource with original headers and explicit body framing.
@@ -536,11 +549,7 @@ pub fn request<S: Read + Write>(
         false,
         NativeRequestHeaders::default(),
     )?;
-    let response = http::receive(stream, method, max_bytes)?;
-    Ok(HttpResponse {
-        status: response.status,
-        body: response.body,
-    })
+    http::receive(stream, method, max_bytes).map(HttpResponse::from)
 }
 
 #[derive(Clone, Copy, Default)]

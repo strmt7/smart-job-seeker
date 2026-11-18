@@ -430,6 +430,14 @@ const MIGRATIONS: &[&str] = &[
        PRIMARY KEY(run_id,sequence)
      );
      UPDATE meta SET value='50' WHERE key='schema_version';",
+    // v51 — provider availability is independent of the latest search run.
+    "CREATE TABLE web_provider_pauses(
+       origin_key TEXT PRIMARY KEY CHECK(length(origin_key)=64),
+       retry_at INTEGER NOT NULL CHECK(retry_at>0),
+       http_status INTEGER NOT NULL CHECK(http_status IN (429,503)),
+       from_retry_after INTEGER NOT NULL CHECK(from_retry_after IN (0,1))
+     );
+     UPDATE meta SET value='51' WHERE key='schema_version';",
 ];
 
 pub mod documents;

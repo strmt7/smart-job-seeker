@@ -369,6 +369,15 @@ impl WebSearchWriter {
             .store
             .finish_web_search_run(&self.task_id, processed, content)?)
     }
+
+    pub fn save_provider_pause(
+        &self,
+        key: &str,
+        pause: waypoint_store::search_history::ProviderPause,
+        now: i64,
+    ) -> Result<(), WorkspaceError> {
+        Ok(self.store.save_web_provider_pause(key, pause, now)?)
+    }
 }
 
 impl Workspace {
@@ -400,12 +409,9 @@ impl Workspace {
         })
     }
 
-    pub fn begin_web_search_run(
+    pub fn web_search_writer(
         &self,
         task_id: &str,
-        planned: usize,
-        plan: &[u8],
-        prior_pages: &[Vec<u8>],
     ) -> Result<Option<WebSearchWriter>, WorkspaceError> {
         if self.db_path.is_none()
             || self.store.sealing_kind() != Some(waypoint_seal::SealerKind::Dpapi)
@@ -417,12 +423,35 @@ impl Workspace {
             .ok_or_else(|| WorkspaceError::Export("Windows DPAPI is unavailable".into()))?;
         let (store, lock) = self.background_store()?;
         let store = store.with_sealer(sealer);
-        store.begin_web_search_run(task_id, planned, plan, prior_pages)?;
         Ok(Some(WebSearchWriter {
             store,
             task_id: task_id.to_owned(),
             _workspace_lock: lock,
         }))
+    }
+
+    pub fn begin_web_search_run(
+        &self,
+        task_id: &str,
+        planned: usize,
+        plan: &[u8],
+        prior_pages: &[Vec<u8>],
+    ) -> Result<Option<WebSearchWriter>, WorkspaceError> {
+        let Some(writer) = self.web_search_writer(task_id)? else {
+            return Ok(None);
+        };
+        writer
+            .store
+            .begin_web_search_run(task_id, planned, plan, prior_pages)?;
+        Ok(Some(writer))
+    }
+
+    pub fn web_provider_pause(
+        &self,
+        key: &str,
+        now: i64,
+    ) -> Result<Option<waypoint_store::search_history::ProviderPause>, WorkspaceError> {
+        Ok(self.store.web_provider_pause(key, now)?)
     }
 
     /// Open (creating directories + migrating) a workspace on disk.

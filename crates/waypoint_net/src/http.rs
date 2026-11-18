@@ -1,5 +1,5 @@
 //! HTTP/1 response framing with retained headers for captured page resources.
-use crate::NetError;
+use crate::{NetError, RetryAfter};
 use std::{io::Read, ops::Range};
 
 const MAX_HEADERS: usize = 128;
@@ -10,6 +10,27 @@ const MAX_CHUNKS: usize = 65536;
 pub struct Header {
     pub name: String,
     pub value: Vec<u8>,
+}
+
+pub(crate) fn retry_after(headers: &[Header]) -> Option<RetryAfter> {
+    let mut fields = headers
+        .iter()
+        .filter(|header| header.name.eq_ignore_ascii_case("retry-after"));
+    let value = std::str::from_utf8(&fields.next()?.value)
+        .ok()?
+        .trim_matches([' ', '\t']);
+    if fields.next().is_some() || value.is_empty() {
+        return None;
+    }
+    if value.bytes().all(|b| b.is_ascii_digit()) {
+        let seconds = value.bytes().fold(0u64, |seconds, digit| {
+            seconds
+                .saturating_mul(10)
+                .saturating_add(u64::from(digit - b'0'))
+        });
+        return Some(RetryAfter::DelaySeconds(seconds));
+    }
+    httpdate::parse_http_date(value).ok().map(RetryAfter::Date)
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BodyFraming {
@@ -338,6 +359,29 @@ pub(crate) fn decode_chunks(body: &[u8]) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retry_after_uses_one_final_header_and_accepts_delay_or_http_date() {
+        let read = |raw: &str| {
+            let response = receive(&mut std::io::Cursor::new(raw.as_bytes()), "GET", 128).unwrap();
+            crate::HttpResponse::from(response).retry_after
+        };
+        assert_eq!(
+            read("HTTP/1.1 103 Early Hints\r\nRetry-After: 5\r\n\r\nHTTP/1.1 429 Too Many Requests\r\nrEtRy-AfTeR: 20\r\nContent-Length: 0\r\n\r\n"),
+            Some(RetryAfter::DelaySeconds(20))
+        );
+        assert_eq!(
+            read("HTTP/1.1 503 Service Unavailable\r\nRetry-After: Sun, 06 Nov 1994 08:49:37 GMT\r\nContent-Length: 0\r\n\r\n"),
+            Some(RetryAfter::Date(std::time::UNIX_EPOCH + std::time::Duration::from_secs(784111777)))
+        );
+        for value in ["-10", "1.5", "10, 20", "10\r\nRetry-After: 20"] {
+            assert_eq!(read(&format!("HTTP/1.1 429 Too Many Requests\r\nRetry-After: {value}\r\nContent-Length: 0\r\n\r\n")), None);
+        }
+        assert_eq!(
+            read("HTTP/1.1 429 Too Many Requests\r\nRetry-After: 18446744073709551616\r\nContent-Length: 0\r\n\r\n"),
+            Some(RetryAfter::DelaySeconds(u64::MAX))
+        );
+    }
     use std::io::Write;
     struct Fragmented {
         bytes: std::io::Cursor<Vec<u8>>,

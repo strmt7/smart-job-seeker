@@ -14,6 +14,14 @@ pub struct SavedWebSearchRun {
     pub terminal: Option<Vec<u8>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ProviderPause {
+    pub http_status: u16,
+    /// UTC Unix seconds. The next request can start at or after this time.
+    pub retry_at: i64,
+    pub from_retry_after: bool,
+}
+
 fn failure(error: impl std::error::Error + Send + Sync + 'static) -> StoreError {
     StoreError::ToSqlConversionFailure(Box::new(error))
 }
@@ -33,7 +41,66 @@ fn valid_task_id(id: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
+fn validate_provider_key(key: &str) -> Result<(), StoreError> {
+    if key.len() != 64 || !key.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(invalid("Invalid search provider identity"));
+    }
+    Ok(())
+}
+
 impl Store {
+    pub fn web_provider_pause(
+        &self,
+        key: &str,
+        now: i64,
+    ) -> Result<Option<ProviderPause>, StoreError> {
+        validate_provider_key(key)?;
+        self.conn
+            .query_row(
+                "SELECT http_status,retry_at,from_retry_after
+             FROM web_provider_pauses WHERE origin_key=?1 AND retry_at>?2",
+                params![key, now],
+                |row| {
+                    Ok(ProviderPause {
+                        http_status: row.get(0)?,
+                        retry_at: row.get(1)?,
+                        from_retry_after: row.get(2)?,
+                    })
+                },
+            )
+            .optional()
+    }
+
+    pub fn save_web_provider_pause(
+        &self,
+        key: &str,
+        pause: ProviderPause,
+        now: i64,
+    ) -> Result<(), StoreError> {
+        validate_provider_key(key)?;
+        if !matches!(pause.http_status, 429 | 503) || now < 0 || pause.retry_at < 0 {
+            return Err(invalid("Invalid search provider pause"));
+        }
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM web_provider_pauses WHERE retry_at<=?1", [now])?;
+        if pause.retry_at > now {
+            tx.execute(
+                "INSERT INTO web_provider_pauses(origin_key,retry_at,http_status,from_retry_after)
+                 VALUES(?1,?2,?3,?4)
+                 ON CONFLICT(origin_key) DO UPDATE SET retry_at=excluded.retry_at,
+                    http_status=excluded.http_status,from_retry_after=excluded.from_retry_after
+                 WHERE excluded.retry_at>web_provider_pauses.retry_at",
+                params![
+                    key,
+                    pause.retry_at,
+                    pause.http_status,
+                    pause.from_retry_after
+                ],
+            )?;
+        }
+        tx.commit()
+    }
+
     fn web_search_sealer(&self) -> Result<&dyn Sealer, StoreError> {
         self.sealer
             .as_deref()
@@ -315,6 +382,61 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn provider_pauses_expire_independently_and_cannot_be_shortened_by_stale_writes() {
+        let store = Store::in_memory().unwrap();
+        let first = "a".repeat(64);
+        let second = "b".repeat(64);
+        let rate_limit = ProviderPause {
+            http_status: 429,
+            retry_at: 160,
+            from_retry_after: true,
+        };
+        let overload = ProviderPause {
+            http_status: 503,
+            retry_at: 250,
+            from_retry_after: false,
+        };
+        store
+            .save_web_provider_pause(&first, rate_limit, 100)
+            .unwrap();
+        store
+            .save_web_provider_pause(&second, overload, 100)
+            .unwrap();
+        store
+            .save_web_provider_pause(
+                &first,
+                ProviderPause {
+                    retry_at: 105,
+                    ..rate_limit
+                },
+                101,
+            )
+            .unwrap();
+        assert_eq!(
+            store.web_provider_pause(&first, 159).unwrap(),
+            Some(rate_limit)
+        );
+        assert_eq!(store.web_provider_pause(&first, 160).unwrap(), None);
+        assert_eq!(
+            store.web_provider_pause(&second, 160).unwrap(),
+            Some(overload)
+        );
+        assert!(store
+            .save_web_provider_pause(
+                &first,
+                ProviderPause {
+                    http_status: 403,
+                    ..rate_limit
+                },
+                100
+            )
+            .is_err());
+        assert!(store
+            .web_provider_pause("https://example.org", 100)
+            .is_err());
+    }
 
     #[test]
     fn web_search_page_and_cursor_commit_together_and_reject_stale_writers() {

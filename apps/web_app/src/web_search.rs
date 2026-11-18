@@ -1,19 +1,33 @@
 //! Bounded, user-initiated SearXNG-compatible search. Results are candidates,
 //! not verified jobs, and are never opened or submitted by this module.
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::collections::{hash_map::Entry, HashMap};
 use std::sync::{mpsc, Mutex};
+use std::thread::JoinHandle;
+use std::time::{SystemTime, UNIX_EPOCH};
 use url::Url;
+use waypoint_net::{HttpResponse, RetryAfter};
+use waypoint_store::search_history::ProviderPause;
+use waypoint_workspace::{WebSearchWriter, Workspace};
 
 const SEARCH_PAGE_BYTES: usize = 2 * 1024 * 1024;
+const DEFAULT_RETRY_DELAY_SECONDS: u64 = 60;
 
 struct Task {
     id: String,
-    rx: mpsc::Receiver<Result<Value, String>>,
+    rx: mpsc::Receiver<Value>,
+    worker: JoinHandle<()>,
 }
 static TASK: Mutex<Option<Task>> = Mutex::new(None);
 // Keep one bounded terminal result so a lost response can be read again.
-static COMPLETED: Mutex<Option<(String, Value)>> = Mutex::new(None);
+struct Completed {
+    id: String,
+    result: Value,
+    awaiting_client: bool,
+}
+static COMPLETED: Mutex<Option<Completed>> = Mutex::new(None);
 
 pub(crate) fn request_url(instance: &str, query: &str) -> Result<Url, String> {
     if query.trim().is_empty() || query.len() > 500 || query.chars().any(char::is_control) {
@@ -261,9 +275,100 @@ pub(crate) fn parse_provider(
     Ok(parsed)
 }
 
+#[derive(Debug)]
 pub(crate) struct FetchError {
     pub message: String,
     pub stop_batch: bool,
+    pub provider_stop: Option<ProviderStop>,
+}
+
+impl FetchError {
+    pub(crate) fn unusable_response(message: String) -> Self {
+        Self {
+            message,
+            stop_batch: true,
+            provider_stop: None,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct ProviderStop {
+    pub http_status: u16,
+    pub pause: Option<ProviderPause>,
+}
+
+#[derive(Debug)]
+pub(crate) enum SearchStart {
+    Started { checkpoint_saved: Option<bool> },
+    Deferred(ProviderPause),
+}
+
+impl SearchStart {
+    pub fn response(self, id: String) -> Value {
+        match self {
+            Self::Started { checkpoint_saved } => {
+                let mut response = json!({"status":"started","task_id":id});
+                if let Some(saved) = checkpoint_saved {
+                    response["checkpoint_saved"] = json!(saved);
+                }
+                response
+            }
+            Self::Deferred(pause) => json!({"status":"deferred","provider_pause":pause}),
+        }
+    }
+}
+
+fn unix_seconds(now: SystemTime) -> i64 {
+    let seconds = now.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+    i64::try_from(seconds).unwrap_or(i64::MAX)
+}
+
+fn provider_key(url: &Url) -> String {
+    Sha256::digest(url.origin().ascii_serialization())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+pub(crate) fn provider_pause(
+    ws: Option<&Workspace>,
+    url: &Url,
+) -> Result<Option<ProviderPause>, String> {
+    let Some(ws) = ws else {
+        return Ok(None);
+    };
+    ws.web_provider_pause(&provider_key(url), unix_seconds(SystemTime::now()))
+        .map_err(|error| format!("Could not check the search provider's retry schedule: {error}"))
+}
+
+pub(crate) fn save_provider_pause(
+    writer: Option<&WebSearchWriter>,
+    url: &Url,
+    stop: Option<&ProviderStop>,
+) -> Result<(), String> {
+    if let Some((writer, pause)) = writer.zip(stop.and_then(|stop| stop.pause)) {
+        writer
+            .save_provider_pause(&provider_key(url), pause, unix_seconds(SystemTime::now()))
+            .map_err(|error| format!("Could not save the provider's retry schedule: {error}"))?;
+    }
+    Ok(())
+}
+
+fn retry_deadline(advice: Option<RetryAfter>, now: SystemTime) -> i64 {
+    match advice.unwrap_or(RetryAfter::DelaySeconds(DEFAULT_RETRY_DELAY_SECONDS)) {
+        RetryAfter::Date(date) => unix_seconds(date),
+        RetryAfter::DelaySeconds(0) => unix_seconds(now),
+        RetryAfter::DelaySeconds(seconds) => {
+            let elapsed = now.duration_since(UNIX_EPOCH).unwrap_or_default();
+            // Round up so a delay in whole seconds never permits an early retry.
+            let deadline = elapsed
+                .as_secs()
+                .saturating_add(u64::from(elapsed.subsec_nanos() > 0))
+                .saturating_add(seconds);
+            i64::try_from(deadline).unwrap_or(i64::MAX)
+        }
+    }
 }
 
 impl From<String> for FetchError {
@@ -271,6 +376,7 @@ impl From<String> for FetchError {
         Self {
             message,
             stop_batch: false,
+            provider_stop: None,
         }
     }
 }
@@ -291,16 +397,37 @@ pub(crate) fn fetch(url: &Url) -> Result<String, FetchError> {
         waypoint_net::get_capped(url.as_str(), 15000, SEARCH_PAGE_BYTES)
     }
     .map_err(|e| FetchError::from(e.to_string()))?;
-    if response.status == 429 {
+    classify_response(response, SystemTime::now())
+}
+
+fn classify_response(response: HttpResponse, now: SystemTime) -> Result<String, FetchError> {
+    if matches!(response.status, 429 | 503) {
+        let message = if response.status == 429 {
+            "Search provider rate limited this request (HTTP 429)"
+        } else {
+            "Search provider is temporarily unavailable (HTTP 503)"
+        };
         return Err(FetchError {
-            message: "Search provider rate limited this request (HTTP 429)".into(),
+            message: message.into(),
             stop_batch: true,
+            provider_stop: Some(ProviderStop {
+                http_status: response.status,
+                pause: Some(ProviderPause {
+                    http_status: response.status,
+                    retry_at: retry_deadline(response.retry_after, now),
+                    from_retry_after: response.retry_after.is_some(),
+                }),
+            }),
         });
     }
-    if response.status == 403 {
+    if matches!(response.status, 401 | 403) {
         return Err(FetchError {
-            message: "Provider refused the search (HTTP 403). JSON search may be disabled or access restricted; check the provider configuration or choose another provider.".into(),
+            message: format!("Provider refused the search (HTTP {}). JSON search may be disabled or access restricted. Check the provider configuration or choose another provider.", response.status),
             stop_batch: true,
+            provider_stop: Some(ProviderStop {
+                http_status: response.status,
+                pause: None,
+            }),
         });
     }
     if !(200..300).contains(&response.status) {
@@ -646,15 +773,16 @@ fn parse_result_set(
 
 #[cfg(test)]
 pub fn start(id: String, instance: String, query: String) -> Result<(), String> {
-    start_with_freshness(id, instance, query, false)
+    start_with_freshness(None, id, instance, query, false).map(|_| ())
 }
 
 pub fn start_with_freshness(
+    ws: Option<&Workspace>,
     id: String,
     instance: String,
     query: String,
     prefer_fresh: bool,
-) -> Result<(), String> {
+) -> Result<SearchStart, String> {
     if crate::web_search_batch::busy() {
         return Err("A batch web search is active".into());
     }
@@ -663,19 +791,45 @@ pub fn start_with_freshness(
     if tasks.is_some() {
         return Err("A web search is running or awaiting its result".into());
     }
+    if let Some(pause) = provider_pause(ws, &url)? {
+        return Ok(SearchStart::Deferred(pause));
+    }
+    let writer = ws
+        .map(|ws| ws.web_search_writer(&id))
+        .transpose()
+        .map_err(|error| format!("Could not open the search workspace: {error}"))?
+        .flatten();
     let (tx, rx) = mpsc::channel();
-    *tasks = Some(Task { id, rx });
-    drop(tasks);
-    std::thread::spawn(move || {
-        let result = std::panic::catch_unwind(|| {
-            fetch(&url)
-                .map_err(|error| error.message)
-                .and_then(|body| parse_provider(&body, &url, &std::collections::HashSet::new()))
+    let worker = std::thread::Builder::new()
+        .name("quick-web-search".into())
+        .spawn(move || {
+            let result = std::panic::catch_unwind(|| {
+                fetch(&url).and_then(|body| {
+                    parse_provider(&body, &url, &std::collections::HashSet::new())
+                        .map_err(FetchError::unusable_response)
+                })
+            })
+            .unwrap_or_else(|_| {
+                Err(FetchError::unusable_response("Web search stopped unexpectedly".into()))
+            });
+            let terminal = match result {
+                Ok(data) => json!({"status":"complete","data":data}),
+                Err(error) => {
+                    let mut terminal =
+                        json!({"status":"failed","error":error.message,"provider_stop":error.provider_stop});
+                    if let Err(storage_error) = save_provider_pause(writer.as_ref(), &url, error.provider_stop.as_ref()) {
+                        terminal["provider_pause_storage_error"] = json!(storage_error);
+                    }
+                    terminal
+                }
+            };
+            let _ = tx.send(terminal);
         })
-        .unwrap_or_else(|_| Err("Web search stopped unexpectedly".into()));
-        let _ = tx.send(result);
-    });
-    Ok(())
+        .map_err(|error| format!("Could not start web search worker: {error}"))?;
+    *tasks = Some(Task { id, rx, worker });
+    Ok(SearchStart::Started {
+        checkpoint_saved: None,
+    })
 }
 
 pub fn busy() -> bool {
@@ -684,49 +838,141 @@ pub fn busy() -> bool {
 
 /// Find a running or unread search after a client loses the start response.
 pub fn pending() -> Result<Option<String>, String> {
-    Ok(TASK
+    let tasks = TASK.lock().map_err(|_| "Web search unavailable")?;
+    if let Some(task) = tasks.as_ref() {
+        return Ok(Some(task.id.clone()));
+    }
+    Ok(COMPLETED
         .lock()
         .map_err(|_| "Web search unavailable")?
         .as_ref()
-        .map(|task| task.id.clone()))
+        .filter(|completed| completed.awaiting_client)
+        .map(|completed| completed.id.clone()))
 }
 
 pub fn poll(id: &str) -> Result<Value, String> {
+    poll_task(id, true)
+}
+
+fn poll_task(id: &str, client: bool) -> Result<Value, String> {
     let mut tasks = TASK.lock().map_err(|_| "Web search unavailable")?;
     let Some(task) = tasks.as_ref().filter(|task| task.id == id) else {
-        return COMPLETED
-            .lock()
-            .map_err(|_| "Web search unavailable")?
-            .as_ref()
-            .filter(|(task_id, _)| task_id == id)
-            .map(|(_, result)| result.clone())
-            .ok_or("Web search not found".into());
+        let mut completed = COMPLETED.lock().map_err(|_| "Web search unavailable")?;
+        let entry = completed
+            .as_mut()
+            .filter(|entry| entry.id == id)
+            .ok_or("Web search not found")?;
+        entry.awaiting_client &= !client;
+        return Ok(entry.result.clone());
     };
-    match task.rx.try_recv() {
-        Ok(result) => {
-            let terminal = match result {
-                Ok(data) => json!({"status":"complete","data":data}),
-                Err(error) => json!({"status":"failed","error":error}),
-            };
-            *COMPLETED.lock().map_err(|_| "Web search unavailable")? =
-                Some((id.to_owned(), terminal.clone()));
-            *tasks = None;
-            Ok(terminal)
-        }
-        Err(mpsc::TryRecvError::Empty) => Ok(json!({"status":"running"})),
+    let mut result = match task.rx.try_recv() {
+        Ok(result) => result,
+        Err(mpsc::TryRecvError::Empty) => return Ok(json!({"status":"running"})),
         Err(mpsc::TryRecvError::Disconnected) => {
-            let terminal = json!({"status":"failed","error":"Web search stopped unexpectedly"});
-            *COMPLETED.lock().map_err(|_| "Web search unavailable")? =
-                Some((id.to_owned(), terminal.clone()));
-            *tasks = None;
-            Ok(terminal)
+            json!({"status":"failed","error":"Web search stopped unexpectedly"})
         }
+    };
+    let task = tasks.take().expect("matched quick search task");
+    if task.worker.join().is_err() {
+        result = json!({"status":"failed","error":"Web search stopped unexpectedly"});
     }
+    *COMPLETED.lock().map_err(|_| "Web search unavailable")? = Some(Completed {
+        id: task.id,
+        result: result.clone(),
+        awaiting_client: !client,
+    });
+    Ok(result)
+}
+
+pub fn collect_background() -> Result<(), String> {
+    let id = TASK
+        .lock()
+        .map_err(|_| "Web search unavailable")?
+        .as_ref()
+        .filter(|task| task.worker.is_finished())
+        .map(|task| task.id.clone());
+    if let Some(id) = id {
+        poll_task(&id, false)?;
+    }
+    Ok(())
+}
+
+pub fn shutdown() -> Result<(), String> {
+    let task = TASK.lock().map_err(|_| "Web search unavailable")?.take();
+    if let Some(task) = task {
+        drop(task.rx);
+        task.worker
+            .join()
+            .map_err(|_| "Web search stopped unexpectedly")?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scheduling_distinguishes_overload_rate_limits_and_access_refusal() {
+        let now = UNIX_EPOCH + std::time::Duration::from_millis(100_500);
+        let stop = |status, hint| {
+            classify_response(
+                HttpResponse {
+                    status,
+                    body: Vec::new(),
+                    retry_after: hint,
+                },
+                now,
+            )
+            .unwrap_err()
+            .provider_stop
+            .unwrap()
+        };
+        assert_eq!(
+            stop(429, Some(RetryAfter::DelaySeconds(20))).pause.unwrap(),
+            ProviderPause {
+                http_status: 429,
+                retry_at: 121,
+                from_retry_after: true
+            }
+        );
+        assert_eq!(
+            stop(
+                503,
+                Some(RetryAfter::Date(
+                    UNIX_EPOCH + std::time::Duration::from_secs(240)
+                ))
+            )
+            .pause
+            .unwrap()
+            .retry_at,
+            240
+        );
+        let fallback = stop(503, None).pause.unwrap();
+        assert!(!fallback.from_retry_after);
+        assert_eq!(fallback.retry_at, 101 + DEFAULT_RETRY_DELAY_SECONDS as i64);
+        assert!(stop(403, Some(RetryAfter::DelaySeconds(20)))
+            .pause
+            .is_none());
+        assert_eq!(
+            retry_deadline(Some(RetryAfter::DelaySeconds(u64::MAX)), now),
+            i64::MAX
+        );
+        assert_eq!(retry_deadline(Some(RetryAfter::DelaySeconds(0)), now), 100);
+    }
+
+    #[test]
+    fn provider_identity_ignores_search_paths_and_queries_and_preserves_independent_ports() {
+        let key = |url| provider_key(&Url::parse(url).unwrap());
+        assert_eq!(
+            key("https://Example.org/search?q=one"),
+            key("https://example.org:443/other?q=two")
+        );
+        assert_ne!(
+            key("http://127.0.0.1:12345/"),
+            key("http://127.0.0.1:12346/")
+        );
+    }
     #[test]
     fn explicitly_labelled_ads_are_counted_without_hiding_organic_results() {
         let data = json!({"results":[
@@ -1365,6 +1611,7 @@ mod tests {
         *TASK.lock().unwrap() = Some(Task {
             id: "stopped-fixture".into(),
             rx,
+            worker: std::thread::spawn(|| {}),
         });
         let failed = poll("stopped-fixture").unwrap();
         assert_eq!(failed["status"], "failed");

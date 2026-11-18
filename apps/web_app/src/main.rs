@@ -3648,7 +3648,7 @@ fn serve_request(
             if !(1..=5).contains(&pages) {
                 return Err("Choose 1 to 5 pages per search phrase".into());
             }
-            let checkpoint_saved = if let Some(plan) = body.get("page_plan") {
+            let admission = if let Some(plan) = body.get("page_plan") {
                 let pairs = selected_search_pages(plan, &queries, pages)?;
                 let retry_source_task = body
                     .get("retry_source_task")
@@ -3678,11 +3678,7 @@ fn serve_request(
                     prefer_fresh,
                 )?
             };
-            json_reply(
-                stream,
-                "200 OK",
-                json!({"task_id":id,"checkpoint_saved":checkpoint_saved}),
-            );
+            json_reply(stream, "200 OK", admission.response(id));
         }
         "/api/web-search/batch-status" => {
             let id = body["task_id"].as_str().ok_or("missing task id")?;
@@ -3723,13 +3719,14 @@ fn serve_request(
             };
             let query = body["query"].as_str().ok_or("missing query")?;
             let id = random_id()?;
-            web_search::start_with_freshness(
+            let admission = web_search::start_with_freshness(
+                Some(ws),
                 id.clone(),
                 provider.to_owned(),
                 query.to_owned(),
                 prefer_fresh,
             )?;
-            json_reply(stream, "200 OK", json!({"task_id":id}));
+            json_reply(stream, "200 OK", admission.response(id));
         }
         "/api/web-search/pending" => {
             json_reply(stream, "200 OK", json!({"task_id":web_search::pending()?}));
@@ -9868,6 +9865,9 @@ fn serve_loop_with_runtime(
             if let Err(error) = web_search_batch::collect_background() {
                 eprintln!("Background web search collection failed: {error}");
             }
+            if let Err(error) = web_search::collect_background() {
+                eprintln!("Background quick search collection failed: {error}");
+            }
             match form_capture_task::pending() {
                 Ok(pending) if pending["active"] == true => {
                     if let Some(id) = pending["task_id"].as_str() {
@@ -10016,6 +10016,9 @@ fn serve_loop_with_runtime(
     }
     if let Err(error) = web_search_batch::shutdown() {
         eprintln!("Web search shutdown needs review: {error}");
+    }
+    if let Err(error) = web_search::shutdown() {
+        eprintln!("Quick search shutdown needs review: {error}");
     }
     if let Some(worker) = index_worker {
         if worker.join().is_err() {

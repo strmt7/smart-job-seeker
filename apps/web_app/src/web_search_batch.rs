@@ -1,4 +1,5 @@
 //! Sequential, user-approved web-search phrases. Results are unverified candidates.
+use crate::web_search::{FetchError, ProviderStop, SearchStart};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
@@ -36,6 +37,8 @@ enum Outcome {
     Complete {
         cancelled: bool,
         limit_reached: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provider_stop: Option<ProviderStop>,
     },
     Failed {
         error: String,
@@ -228,10 +231,13 @@ fn send(
 }
 
 fn protected_provider_call(
-    operation: impl FnOnce() -> (Result<Value, String>, bool) + std::panic::UnwindSafe,
-) -> (Result<Value, String>, bool) {
-    std::panic::catch_unwind(operation)
-        .unwrap_or_else(|_| (Err("Search stopped unexpectedly".into()), true))
+    operation: impl FnOnce() -> Result<Value, FetchError> + std::panic::UnwindSafe,
+) -> Result<Value, FetchError> {
+    std::panic::catch_unwind(operation).unwrap_or_else(|_| {
+        Err(FetchError::unusable_response(
+            "Search stopped unexpectedly".into(),
+        ))
+    })
 }
 
 /// Count requested provider pages, not jobs or distinct websites. Provider
@@ -441,7 +447,7 @@ pub fn start_with_freshness(
     queries: Vec<String>,
     pages: u8,
     prefer_fresh: bool,
-) -> Result<bool, String> {
+) -> Result<SearchStart, String> {
     if crate::web_search::busy() {
         return Err("A web search is active".into());
     }
@@ -498,7 +504,7 @@ pub fn start_selected_with_freshness(
     prior_history: Vec<Value>,
     prefer_fresh: bool,
     retry_source_task: Option<&str>,
-) -> Result<bool, String> {
+) -> Result<SearchStart, String> {
     if crate::web_search::busy() {
         return Err("A web search is active".into());
     }
@@ -539,14 +545,18 @@ fn start_requests(
     prior_history: Vec<Value>,
     prefer_fresh: bool,
     retry_source_task: Option<&str>,
-) -> Result<bool, String> {
-    let initial_seen = seen_from_prior(&prior_history)?;
-    if initial_seen.saved_bytes >= SAVED_PAGE_BUDGET {
-        return Err("Earlier results fill the search history size limit; save or review them before starting a new search".into());
-    }
+) -> Result<SearchStart, String> {
     let mut task = TASK.lock().map_err(|_| "Web search unavailable")?;
     if task.is_some() {
         return Err("A batch search is running or awaiting its result".into());
+    }
+    let (_, _, first_url) = requests.first().ok_or("Choose a search page")?;
+    if let Some(pause) = crate::web_search::provider_pause(ws, first_url)? {
+        return Ok(SearchStart::Deferred(pause));
+    }
+    let initial_seen = seen_from_prior(&prior_history)?;
+    if initial_seen.saved_bytes >= SAVED_PAGE_BUDGET {
+        return Err("Earlier results fill the search history size limit; save or review them before starting a new search".into());
     }
     // Every planned page can enqueue at most one result. Leave one slot for
     // completion so collecting pages is independent of the HTTP/UI loop.
@@ -620,7 +630,9 @@ fn start_requests(
         unreported,
         worker: Some(worker),
     });
-    Ok(durable)
+    Ok(SearchStart::Started {
+        checkpoint_saved: Some(durable),
+    })
 }
 
 fn run_worker(
@@ -636,6 +648,7 @@ fn run_worker(
     let mut saved_pages = 0;
     let mut limit_reached = false;
     let mut failure = None;
+    let mut provider_stop = None;
     for (index, (query, page, url)) in requests.into_iter().enumerate() {
         if index > 0 {
             for _ in 0..10 {
@@ -648,20 +661,35 @@ fn run_worker(
         if stop.load(Ordering::Acquire) {
             break;
         }
-        let (result, provider_stop) =
-            protected_provider_call(|| match crate::web_search::fetch(&url) {
-                Ok(body) => {
-                    let parsed = crate::web_search::parse_provider(&body, &url, &seen.originals);
-                    // Leave the remaining pages unattempted after an unusable response.
-                    let stop = parsed.is_err();
-                    (parsed, stop)
-                }
-                Err(error) => (Err(error.message), error.stop_batch),
-            });
-        let result = result.map(|mut data| {
-            limit_reached = retain_batch_budget(&mut data, &query, &mut seen);
-            data
+        let result = protected_provider_call(|| {
+            crate::web_search::fetch(&url).and_then(|body| {
+                crate::web_search::parse_provider(&body, &url, &seen.originals)
+                    .map_err(FetchError::unusable_response)
+            })
         });
+        let mut stop_batch = false;
+        let result = match result {
+            Ok(mut data) => {
+                limit_reached = retain_batch_budget(&mut data, &query, &mut seen);
+                Ok(data)
+            }
+            Err(error) => {
+                stop_batch = error.stop_batch;
+                provider_stop = error.provider_stop;
+                if let Err(storage_error) = crate::web_search::save_provider_pause(
+                    journal.as_ref(),
+                    &url,
+                    provider_stop.as_ref(),
+                ) {
+                    failure = Some(Outcome::Failed {
+                        error: format!("{}. {storage_error}", error.message),
+                        fetched_unreported_pages: 1,
+                    });
+                    break;
+                }
+                Err(error.message)
+            }
+        };
         if let Some(journal) = &journal {
             let committed =
                 serde_json::to_vec(&page_receipt(&query, page, index + 1, total, &result))
@@ -690,13 +718,14 @@ fn run_worker(
             unreported.store(journal.is_none(), Ordering::Release);
             break;
         }
-        if limit_reached || provider_stop {
+        if limit_reached || stop_batch {
             break;
         }
     }
     let mut outcome = failure.unwrap_or(Outcome::Complete {
         cancelled: stop.load(Ordering::Acquire),
         limit_reached,
+        provider_stop,
     });
     let mut saved = false;
     if let Some(journal) = journal {
@@ -783,6 +812,7 @@ fn poll_task(id: &str, acknowledged: usize) -> Result<Option<Value>, String> {
                     Outcome::Complete {
                         cancelled: true,
                         limit_reached: false,
+                        provider_stop: None,
                     },
                     false,
                 )
@@ -898,6 +928,7 @@ mod tests {
             Outcome::Complete {
                 cancelled: false,
                 limit_reached,
+                provider_stop: None,
             },
             false,
         )
@@ -905,16 +936,14 @@ mod tests {
 
     #[test]
     fn provider_panic_stops_batch_and_preserves_failure_accounting() {
-        let (result, stop) = protected_provider_call(|| panic!("fictional provider failure"));
-        assert!(stop);
-        let error = result.unwrap_err();
-        assert_eq!(error, "Search stopped unexpectedly");
-        let report = coverage(4, &[json!({"error":error})]);
+        let error = protected_provider_call(|| panic!("fictional provider failure")).unwrap_err();
+        assert!(error.stop_batch);
+        assert_eq!(error.message, "Search stopped unexpectedly");
+        let report = coverage(4, &[json!({"error":error.message})]);
         assert_eq!(report["failed_pages"], 1);
         assert_eq!(report["unattempted_pages"], 3);
-        let (result, stop) = protected_provider_call(|| (Err("temporary".into()), false));
-        assert!(!stop);
-        assert!(result.is_err());
+        let error = protected_provider_call(|| Err("temporary".to_owned().into())).unwrap_err();
+        assert!(!error.stop_batch);
     }
 
     #[test]
@@ -1080,16 +1109,21 @@ mod tests {
             )
             .unwrap();
         });
-        assert!(start_selected_with_freshness(
-            Some(&ws),
-            "retry-fixture".into(),
-            format!("http://127.0.0.1:{port}/"),
-            vec![("other".into(), 3)],
-            prior,
-            false,
-            Some("active-fixture"),
-        )
-        .unwrap());
+        assert!(matches!(
+            start_selected_with_freshness(
+                Some(&ws),
+                "retry-fixture".into(),
+                format!("http://127.0.0.1:{port}/"),
+                vec![("other".into(), 3)],
+                prior,
+                false,
+                Some("active-fixture"),
+            )
+            .unwrap(),
+            SearchStart::Started {
+                checkpoint_saved: Some(true)
+            }
+        ));
         provider.join().unwrap();
         let worker = TASK.lock().unwrap().take().unwrap();
         // Keep the receiver alive while waiting. No polling or collection advances the ledger.

@@ -461,6 +461,7 @@
         "Labeled retrieval and actual-route reachability evidence"
       ],
       "evidence": [
+        "docs/g1/SEARCH_PROVIDER_RECOVERY_2026-11-18.md",
         "docs/g1/SEARCH_PAGE_RECOVERY_2026-11-18.md",
         "docs/g1/WORKFLOW_LIMITS_2026-11-18.md",
         "docs/g1/UNSEEN_FAMILIES_AND_QUESTION_CONTEXT_2026-11-13.md",
@@ -473,7 +474,7 @@
         "Retain original ads and verify actual application routes; classify freshness, closure, login/challenge and email-only outcomes.",
         "Measure labeled retrieval and route reachability; add sources only for measured coverage benefit."
       ],
-      "next_action": "Add provider-specific retry timing and classify refusal separately from overload. Keep each provider's cursor and observations recoverable. Exercise permitted public searches from the rendered app and measure labeled listing recall and actual application-route reachability.",
+      "next_action": "Preserve resumable plans and observations across separate provider runs. Improve the selection of current vacancies using listing identity, employer-page signals and stale-route feedback. Measure retrieval and actual application-route reachability against labeled current postings. The three-query FreeSerp run returned 30 links, with both inspected vacancy candidates reaching manual review.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package."
     },
     {
