@@ -2293,10 +2293,25 @@ impl CdpDriver {
         let node = self
             .node_id(selector)?
             .ok_or_else(|| DriverError("Field is unavailable for detail capture".into()))?;
-        if let Some(bounds) = self.field_label_context_bounds(node, tight_file_labels)? {
+        let locator = self.control_dom_locator(node)?;
+        if let Some(bounds) = self.field_label_context_bounds(&locator, tight_file_labels)? {
+            #[cfg(windows)]
+            let inline = if self.captured_scope.is_some() {
+                self.recorded_inline_control_scope(selector)?
+            } else {
+                None
+            };
+            #[cfg(windows)]
+            let image = match inline {
+                Some(inline) => {
+                    self.screenshot_inline_viewport_bounds(&inline, bounds.bounds, bounds.viewport)?
+                }
+                None => self.screenshot_viewport_bounds(bounds.bounds, bounds.viewport, false)?,
+            };
+            #[cfg(not(windows))]
             let image = self.screenshot_viewport_bounds(bounds.bounds, bounds.viewport, false)?;
             if self
-                .field_label_context_bounds(node, tight_file_labels)?
+                .field_label_context_bounds(&locator, tight_file_labels)?
                 .as_ref()
                 != Some(&bounds)
             {
@@ -2311,10 +2326,7 @@ impl CdpDriver {
                 "No unambiguous embedded label crop is available".into(),
             ));
         }
-        let model = self
-            .cdp
-            .call("DOM.getBoxModel", json!({"nodeId":node}))
-            .map_err(derr)?;
+        let model = self.cdp.call("DOM.getBoxModel", locator).map_err(derr)?;
         let quad = model
             .pointer("/model/border")
             .and_then(Value::as_array)
@@ -2326,12 +2338,12 @@ impl CdpDriver {
 
     fn field_label_context_bounds(
         &mut self,
-        node: u64,
+        locator: &Value,
         tight_file_labels: bool,
     ) -> Result<Option<FieldLabelContextBounds>, DriverError> {
         let resolved = self
             .cdp
-            .call("DOM.resolveNode", json!({"nodeId":node}))
+            .call("DOM.resolveNode", locator.clone())
             .map_err(derr)?;
         let object = resolved
             .pointer("/object/objectId")
@@ -6515,9 +6527,10 @@ impl CdpDriver {
         selector: &str,
         guard: ClickGuard<'_>,
     ) -> Result<(), DriverError> {
+        let locator = self.control_dom_locator(node)?;
         let model = self
             .cdp
-            .call("DOM.getBoxModel", json!({ "nodeId": node }))
+            .call("DOM.getBoxModel", locator.clone())
             .map_err(derr)?;
         let quad = model
             .pointer("/model/border")
@@ -6558,7 +6571,7 @@ impl CdpDriver {
                 "Click target is outside the viewport; review it manually".into(),
             ));
         }
-        let captured_point = self.captured_pointer_point(node, x, y)?;
+        let captured_point = self.captured_pointer_point(selector, &locator, x, y)?;
         let (pointer_session, offset_x, offset_y) = captured_point
             .as_ref()
             .map(|point| (point.session.clone(), point.x - x, point.y - y))
@@ -6597,7 +6610,7 @@ impl CdpDriver {
         // moving the pointer so a changed page cannot redirect the click.
         let resolved = self
             .cdp
-            .call("DOM.resolveNode", json!({"nodeId":node}))
+            .call("DOM.resolveNode", locator.clone())
             .map_err(derr)?;
         let object = resolved
             .pointer("/object/objectId")
@@ -6744,7 +6757,7 @@ impl CdpDriver {
         }
         let current = self
             .cdp
-            .call("DOM.getBoxModel", json!({"nodeId":node}))
+            .call("DOM.getBoxModel", locator.clone())
             .map_err(derr)?;
         let quad = current
             .pointer("/model/border")
@@ -6761,7 +6774,7 @@ impl CdpDriver {
         {
             return Err(DriverError("Click target moved; review it manually".into()));
         }
-        let after = self.captured_pointer_point(node, x, y)?;
+        let after = self.captured_pointer_point(selector, &locator, x, y)?;
         if after != captured_point {
             return Err(DriverError(
                 "The embedded click position changed; inspect it again".into(),

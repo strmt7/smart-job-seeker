@@ -72,6 +72,12 @@ Consult the entries relevant to the code or workflow under review. The linked ch
   proof of a changed document or complete inspection; preserve existing review
   barriers and the separately leased target path. Never discharge a frame
   barrier from identity evidence alone. See `docs/g1/NATIVE_FRAME_IDENTITY_2026-11-13.md`.
+- A leased renderer's root reports its external `parentId`. Verify the edge
+  against the active lease. A late attachment can miss a response event. Use
+  browser navigation timing only in the bound document with an exact URL and
+  a stable native tree. Project capture and hit-test coordinates through both
+  owner chains. Refreshing the DOM can replace frontend handles during these
+  checks, so keep the original backend node bound to the action.
 - Build helpers reject undeclared arguments before dependency setup. Use the
   declared `-Workspace -Test -TestFilter` options for filtered workspace tests;
   verify actual native test counts, not just exit zero. PowerShell previously

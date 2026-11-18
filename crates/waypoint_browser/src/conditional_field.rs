@@ -6,6 +6,10 @@ impl CdpDriver {
         let node = self
             .node_id(selector)?
             .ok_or_else(|| DriverError("The inspected field disappeared".into()))?;
+        self.backend_node_id(node)
+    }
+
+    pub(super) fn backend_node_id(&mut self, node: u64) -> Result<u64, DriverError> {
         let described = self
             .cdp
             .call("DOM.describeNode", json!({"nodeId":node}))
@@ -14,7 +18,7 @@ impl CdpDriver {
             .pointer("/node/backendNodeId")
             .and_then(Value::as_u64)
             .filter(|id| *id > 0)
-            .ok_or_else(|| DriverError("The field's native identity is unavailable".into()))
+            .ok_or_else(|| DriverError("The control's native identity is unavailable".into()))
     }
 }
 

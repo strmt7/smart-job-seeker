@@ -304,7 +304,8 @@ fn recorded_child_scope_preserves_origin_controls_and_parent() {
         let quad=model["model"]["border"].as_array().unwrap();
         let x=[0,2,4,6].iter().map(|i|quad[*i].as_f64().unwrap()).sum::<f64>()/4.0;
         let y=[1,3,5,7].iter().map(|i|quad[*i].as_f64().unwrap()).sum::<f64>()/4.0;
-        let point=driver.captured_pointer_point(node,x,y)?.unwrap();
+        let locator=driver.control_dom_locator(node)?;
+        let point=driver.captured_pointer_point(&next[0].selector,&locator,x,y)?.unwrap();
         let overlay=driver.cdp.call_session(&point.session,"Runtime.evaluate",json!({"expression":format!(r#"(()=>{{const frame=document.querySelector('iframe[src="https://steps.example.invalid/interactive"]'),r=frame.getBoundingClientRect(),overlay=document.createElement('div');overlay.id='qualification-overlay';Object.assign(overlay.style,{{position:'fixed',left:'{}px',top:'{}px',width:'6px',height:'6px',zIndex:'2147483647',background:'red'}});document.body.append(overlay);return Math.abs((r.left+r.right)/2-{})>4 || Math.abs((r.top+r.bottom)/2-{})>4;}})()"#,point.x-3.0,point.y-3.0,point.x,point.y),"returnByValue":true})).map_err(super::derr)?;
         assert_eq!(overlay.pointer("/result/value").and_then(serde_json::Value::as_bool),Some(true),"Overlay must cover the actual click point while leaving the iframe center clear");
         covered_refused=driver.execute(&BrowserCommand::Click{selector:next[0].selector.clone()}).is_err() && !driver.inspect_current()?.schema.fields.iter().any(|field|field.label.ends_with("Followup"));

@@ -111,6 +111,14 @@ pub(crate) struct FrameInspectionIdentity {
     root_document: u64,
     frames: BTreeMap<String, FrameIdentity>,
     owners: BTreeMap<String, OwnerIdentity>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lease: Option<FrameCensusLease>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(super) struct FrameCensusLease {
+    pub(super) parent_frame: String,
+    pub(super) key: String,
 }
 
 /// Control selectors carry a sequence of owner/document pairs. Keep the
@@ -196,7 +204,10 @@ fn positive_id(value: &Value, key: &str) -> Result<u64, DriverError> {
         .ok_or_else(|| DriverError(FRAME_IDENTITY_REVIEW.into()))
 }
 
-fn frame_tree(tree: &Value) -> Result<BTreeMap<String, FrameIdentity>, DriverError> {
+fn frame_tree(
+    tree: &Value,
+    root_parent: Option<&str>,
+) -> Result<BTreeMap<String, FrameIdentity>, DriverError> {
     let mut frames = BTreeMap::new();
     let mut pending = vec![(&tree["frameTree"], None, 0usize)];
     while let Some((node, parent, depth)) = pending.pop() {
@@ -205,7 +216,12 @@ fn frame_tree(tree: &Value) -> Result<BTreeMap<String, FrameIdentity>, DriverErr
         }
         let frame = &node["frame"];
         let id = identity_text(frame, "id", 256)?;
-        if frame.get("parentId").and_then(Value::as_str) != parent.as_deref() {
+        let expected_parent = if depth == 0 {
+            root_parent
+        } else {
+            parent.as_deref()
+        };
+        if frame.get("parentId").and_then(Value::as_str) != expected_parent {
             return Err(DriverError(FRAME_IDENTITY_REVIEW.into()));
         }
         let url = identity_text(frame, "url", 8192)?;
@@ -429,8 +445,15 @@ impl FrameInspectionIdentity {
         }
     }
 
-    fn parse(root: &Value, tree: &Value) -> Result<Self, DriverError> {
-        let frames = frame_tree(tree)?;
+    fn parse(
+        root: &Value,
+        tree: &Value,
+        lease: Option<FrameCensusLease>,
+    ) -> Result<Self, DriverError> {
+        let frames = frame_tree(
+            tree,
+            lease.as_ref().map(|binding| binding.parent_frame.as_str()),
+        )?;
         let owners = dom_owners(root)?;
         if owners.len() + 1 != frames.len()
             || frames
@@ -445,6 +468,7 @@ impl FrameInspectionIdentity {
             root_document: positive_id(root, "backendNodeId")?,
             frames,
             owners,
+            lease,
         })
     }
 
@@ -510,7 +534,9 @@ impl CdpDriver {
             .cdp
             .call("Page.getFrameTree", json!({}))
             .map_err(derr)?;
-        let mut identity = FrameInspectionIdentity::parse(root, &tree)?;
+        let lease = self.captured_census_lease(&tree)?;
+        let mut identity = FrameInspectionIdentity::parse(root, &tree, lease)?;
+        let mut late_status_observed = false;
         for (id, frame) in &mut identity.frames {
             frame.document_status = self
                 .cdp
@@ -533,6 +559,15 @@ impl CdpDriver {
                         })
                         .map(|(_, _, status)| *status)
                 });
+            if frame.document_status.is_none()
+                && identity.lease.is_some()
+                && (frame.url.starts_with("https://") || frame.url.starts_with("http://"))
+            {
+                // An attached renderer can have loaded before Network.enable.
+                // Read its own navigation timing only within the bound lease.
+                frame.document_status = self.leased_navigation_status(id, &frame.url);
+                late_status_observed |= frame.document_status.is_some();
+            }
         }
         let started = Instant::now();
         for (frame, owner) in &mut identity.owners {
@@ -549,16 +584,65 @@ impl CdpDriver {
                 return Err(DriverError(FRAME_IDENTITY_REVIEW.into()));
             }
             let node = positive_id(&observed, "nodeId")?;
-            let (rendering, origin) = self.frame_owner_rendering(node)?;
+            let depth_inside_lease = if identity.lease.is_some() {
+                let mut ancestor = identity.frames[frame].parent.as_deref();
+                let mut depth = 0;
+                while let Some(id) = ancestor {
+                    ancestor = identity.frames[id].parent.as_deref();
+                    if ancestor.is_some() {
+                        depth += 1;
+                    }
+                }
+                Some(depth)
+            } else {
+                None
+            };
+            let (rendering, origin) = self.frame_owner_rendering(node, depth_inside_lease)?;
             owner.rendering = Some(rendering);
             owner.accessible_origin = origin;
         }
+        if late_status_observed {
+            let current = self
+                .cdp
+                .call("Page.getFrameTree", json!({}))
+                .map_err(derr)?;
+            if current != tree || self.captured_census_lease(&current)? != identity.lease {
+                return Err(DriverError(FRAME_IDENTITY_REVIEW.into()));
+            }
+        }
         Ok(identity)
+    }
+
+    fn leased_navigation_status(&mut self, frame: &str, url: &str) -> Option<u64> {
+        let world = self
+            .cdp
+            .call(
+                "Page.createIsolatedWorld",
+                json!({
+                    "frameId":frame,"worldName":"Smart Jobseeker frame inspection"
+                }),
+            )
+            .ok()?;
+        let context_id = positive_id(&world, "executionContextId").ok()?;
+        let response = self.cdp.call("Runtime.evaluate", json!({
+            "contextId":context_id,"returnByValue":true,
+            "expression":r#"(() => { const entries = performance.getEntriesByType('navigation'); return entries.length === 1 ? { documentUrl: document.URL, navigationUrl: entries[0].name, status: entries[0].responseStatus } : null; })()"#
+        })).ok()?;
+        let value = response.pointer("/result/value")?;
+        if value["documentUrl"].as_str() != Some(url)
+            || value["navigationUrl"].as_str() != Some(url)
+        {
+            return None;
+        }
+        value["status"]
+            .as_u64()
+            .filter(|status| (100..=599).contains(status))
     }
 
     fn frame_owner_rendering(
         &mut self,
         node: u64,
+        depth_inside_lease: Option<usize>,
     ) -> Result<(OwnerRendering, Option<String>), DriverError> {
         let resolved = self
             .cdp
@@ -570,7 +654,7 @@ impl CdpDriver {
             .ok_or_else(|| DriverError(FRAME_IDENTITY_REVIEW.into()))?
             .to_owned();
         let checked = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,
-            "functionDeclaration":r#"function() {
+            "functionDeclaration":r#"function(leaseDepth) {
                 if (!this.isConnected) return null;
                 const box = this.getBoundingClientRect(), style = getComputedStyle(this);
                 let needs_review = false, accessible_origin=null, left=box.left, right=box.right, top=box.top, bottom=box.bottom;
@@ -597,10 +681,11 @@ impl CdpDriver {
                 // own complete capture, hit test and fresh native readback.
                 let visibleLeft=Math.max(left,0), visibleRight=Math.min(right,innerWidth);
                 let visibleTop=Math.max(top,0), visibleBottom=Math.min(bottom,innerHeight);
+                const boundary=(view, traversed) => leaseDepth===null ? view===view.top : traversed===leaseDepth;
                 let projection=window, offsetX=0, offsetY=0, reachedTop=false;
                 for(let depth=0;depth<12;depth++) {
                     if(visibleRight-visibleLeft<1 || visibleBottom-visibleTop<1) return {access,needs_review:true,accessible_origin};
-                    if(projection===projection.top) {reachedTop=true;break;}
+                    if(boundary(projection,depth)) {reachedTop=true;break;}
                     const owner=projection.frameElement;
                     if(!owner || projection.parent.getComputedStyle(owner).transform!=='none') return {access,needs_review:true,accessible_origin};
                     const bounds=owner.getBoundingClientRect();
@@ -616,22 +701,22 @@ impl CdpDriver {
                 if(!reachedTop) return {access,needs_review:true,accessible_origin};
                 const px=Math.min((visibleLeft+visibleRight)/2,projection.innerWidth-1), py=Math.min((visibleTop+visibleBottom)/2,projection.innerHeight-1);
                 if(px<visibleLeft || px>=visibleRight || py<visibleTop || py>=visibleBottom) return {access,needs_review:true,accessible_origin};
-                let current=this, view=window, x=px-offsetX, y=py-offsetY;
+                let current=this, view=window, x=px-offsetX, y=py-offsetY, frames=0;
                 for (let depth = 0; depth < 12; depth++) {
                     if (x<0 || y<0 || x>=view.innerWidth || y>=view.innerHeight) return {access,needs_review:true,accessible_origin};
                     const root = current.getRootNode();
                     const hit = typeof root.elementFromPoint === 'function' ? root.elementFromPoint(x,y) : null;
                     if (!hit || (hit!==current && !current.contains(hit))) return {access,needs_review:true,accessible_origin};
                     if (root.nodeType===11 && root.host) {current=root.host;continue;}
-                    if (view===view.top) return {access,needs_review,accessible_origin};
+                    if (boundary(view,frames)) return {access,needs_review,accessible_origin, lease_point:leaseDepth===null ? null : [x,y,view.innerWidth,view.innerHeight]};
                     const owner=view.frameElement;
                     if (!owner || view.parent.getComputedStyle(owner).transform!=='none') return {access,needs_review:true,accessible_origin};
                     const bounds=owner.getBoundingClientRect();
                     x+=bounds.left+owner.clientLeft;y+=bounds.top+owner.clientTop;
-                    current=owner;view=view.parent;
+                    current=owner;view=view.parent;frames++;
                 }
                 return {access,needs_review:true,accessible_origin};
-            }"#, "returnByValue":true}));
+            }"#, "arguments":[{"value":depth_inside_lease}], "returnByValue":true}));
         let released = self
             .cdp
             .call("Runtime.releaseObject", json!({"objectId":object}));
@@ -649,8 +734,15 @@ impl CdpDriver {
             .and_then(Value::as_str)
             .filter(|origin| origin.len() <= 8192)
             .map(str::to_owned);
-        let rendering = serde_json::from_value(value.clone())
+        let mut rendering: OwnerRendering = serde_json::from_value(value.clone())
             .map_err(|_| DriverError(FRAME_IDENTITY_REVIEW.into()))?;
+        if depth_inside_lease.is_some() && rendering.access.is_some() && !rendering.needs_review {
+            let coordinates: Result<[f64; 4], _> =
+                serde_json::from_value(value["lease_point"].clone());
+            rendering.needs_review = !coordinates.is_ok_and(|[x, y, width, height]| {
+                self.verify_captured_viewport_point([width, height], [x, y])
+            });
+        }
         Ok((rendering, origin))
     }
 }
@@ -658,6 +750,23 @@ impl CdpDriver {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_external_frame_tree_parent_requires_the_current_lease() {
+        let (dom, mut tree) = fixture();
+        tree["frameTree"]["frame"]["parentId"] = json!("outer");
+        assert!(FrameInspectionIdentity::parse(&dom, &tree, None).is_err());
+        let lease = |parent: &str, key: &str| {
+            Some(FrameCensusLease {
+                parent_frame: parent.into(),
+                key: key.into(),
+            })
+        };
+        assert!(FrameInspectionIdentity::parse(&dom, &tree, lease("different", "live")).is_err());
+        let bound = FrameInspectionIdentity::parse(&dom, &tree, lease("outer", "live")).unwrap();
+        let stale = FrameInspectionIdentity::parse(&dom, &tree, lease("outer", "prior")).unwrap();
+        assert_ne!(bound.digest().unwrap(), stale.digest().unwrap());
+    }
 
     fn fixture() -> (Value, Value) {
         (
@@ -670,7 +779,7 @@ mod tests {
 
     fn observed_fixture() -> FrameInspectionIdentity {
         let (dom, tree) = fixture();
-        let mut observed = FrameInspectionIdentity::parse(&dom, &tree).unwrap();
+        let mut observed = FrameInspectionIdentity::parse(&dom, &tree, None).unwrap();
         observed.frames.get_mut("child").unwrap().document_status = Some(200);
         observed.frames.get_mut("main").unwrap().document_status = Some(200);
         observed.owners.get_mut("child").unwrap().rendering = Some(OwnerRendering {
@@ -686,7 +795,7 @@ mod tests {
         dom["children"][0]["attributes"] = json!(["src", "about:blank"]);
         tree["frameTree"]["childFrames"][0]["frame"]["url"] = json!("about:blank");
         tree["frameTree"]["childFrames"][0]["frame"]["loaderId"] = json!("");
-        let mut observed = FrameInspectionIdentity::parse(&dom, &tree).unwrap();
+        let mut observed = FrameInspectionIdentity::parse(&dom, &tree, None).unwrap();
         observed.frames.get_mut("main").unwrap().document_status = Some(200);
         let owner = observed.owners.get_mut("child").unwrap();
         owner.rendering = Some(OwnerRendering {
@@ -700,7 +809,7 @@ mod tests {
         observed.owners.get_mut("child").unwrap().document = None;
         assert!(ledger.certify(&observed, &observed).is_none());
         tree["frameTree"]["childFrames"][0]["frame"]["loaderId"] = Value::Null;
-        assert!(FrameInspectionIdentity::parse(&dom, &tree).is_err());
+        assert!(FrameInspectionIdentity::parse(&dom, &tree, None).is_err());
     }
     #[test]
     fn inline_inherited_documents_require_verified_parent_source_and_native_origin() {
@@ -835,12 +944,12 @@ mod tests {
     #[test]
     fn frame_identity_binds_loader_owner_document_and_hidden_attributes() {
         let (dom, tree) = fixture();
-        let original = FrameInspectionIdentity::parse(&dom, &tree).unwrap();
+        let original = FrameInspectionIdentity::parse(&dom, &tree, None).unwrap();
         let mut frontend_handle = dom.clone();
         frontend_handle["children"][0]["nodeId"] = json!(99);
         assert_eq!(
             original,
-            FrameInspectionIdentity::parse(&frontend_handle, &tree).unwrap()
+            FrameInspectionIdentity::parse(&frontend_handle, &tree, None).unwrap()
         );
         for pointer in [
             "/children/0/backendNodeId",
@@ -850,14 +959,14 @@ mod tests {
             *changed.pointer_mut(pointer).unwrap() = json!(99);
             assert_ne!(
                 original,
-                FrameInspectionIdentity::parse(&changed, &tree).unwrap()
+                FrameInspectionIdentity::parse(&changed, &tree, None).unwrap()
             );
         }
         let mut hidden = dom.clone();
         hidden["children"][0]["attributes"] = json!(["hidden", ""]);
         assert_ne!(
             original.digest().unwrap(),
-            FrameInspectionIdentity::parse(&hidden, &tree)
+            FrameInspectionIdentity::parse(&hidden, &tree, None)
                 .unwrap()
                 .digest()
                 .unwrap()
@@ -866,14 +975,14 @@ mod tests {
         navigated["frameTree"]["childFrames"][0]["frame"]["loaderId"] = json!("next-loader");
         assert_ne!(
             original,
-            FrameInspectionIdentity::parse(&dom, &navigated).unwrap()
+            FrameInspectionIdentity::parse(&dom, &navigated, None).unwrap()
         );
         let mut moved = dom.clone();
         moved["children"] =
             json!([{"nodeName":"DIV","backendNodeId":90,"children":[dom["children"][0].clone()]}]);
         assert_ne!(
             original,
-            FrameInspectionIdentity::parse(&moved, &tree).unwrap()
+            FrameInspectionIdentity::parse(&moved, &tree, None).unwrap()
         );
     }
 
@@ -887,21 +996,21 @@ mod tests {
         ] {
             let mut changed = tree.clone();
             *changed.pointer_mut(pointer).unwrap() = Value::Null;
-            assert!(FrameInspectionIdentity::parse(&dom, &changed).is_err());
+            assert!(FrameInspectionIdentity::parse(&dom, &changed, None).is_err());
         }
         let mut duplicate = dom.clone();
         duplicate["children"]
             .as_array_mut()
             .unwrap()
             .push(dom["children"][0].clone());
-        assert!(FrameInspectionIdentity::parse(&duplicate, &tree).is_err());
+        assert!(FrameInspectionIdentity::parse(&duplicate, &tree, None).is_err());
         let mut absent = dom.clone();
         absent["children"] = json!([]);
-        assert!(FrameInspectionIdentity::parse(&absent, &tree).is_err());
+        assert!(FrameInspectionIdentity::parse(&absent, &tree, None).is_err());
         let mut opaque = tree.clone();
         let nested = json!({"frame":{"id":"opaque-descendant","parentId":"child","loaderId":"load-c","url":"https://other.invalid/","securityOrigin":"https://other.invalid"}});
         opaque["frameTree"]["childFrames"][0]["childFrames"] = json!([nested]);
-        assert!(FrameInspectionIdentity::parse(&dom, &opaque).is_err());
+        assert!(FrameInspectionIdentity::parse(&dom, &opaque, None).is_err());
     }
 
     #[test]
@@ -913,9 +1022,9 @@ mod tests {
         assert!(dom_owners(&dom).is_err());
         let (_, mut too_many) = fixture();
         too_many["frameTree"]["childFrames"] = json!((0..MAX_FRAMES).map(|i| json!({"frame":{"id":format!("child-{i}"),"parentId":"main","loaderId":"load","url":"https://example.invalid/","securityOrigin":"https://example.invalid"}})).collect::<Vec<_>>());
-        assert!(frame_tree(&too_many).is_err());
+        assert!(frame_tree(&too_many, None).is_err());
         let mut duplicate = tree.clone();
         duplicate["frameTree"]["childFrames"][0]["frame"]["id"] = json!("main");
-        assert!(frame_tree(&duplicate).is_err());
+        assert!(frame_tree(&duplicate, None).is_err());
     }
 }

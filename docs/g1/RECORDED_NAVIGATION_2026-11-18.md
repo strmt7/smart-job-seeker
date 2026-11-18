@@ -101,6 +101,51 @@ needs unfamiliar repeated and embedded layouts, including close neighboring
 controls, and should measure whether focused vision stays accurate on them.
 Server-managed workflows also remain open.
 
+## An inline form inside an isolated provider frame
+
+The browser now recognises a session tree whose root names the active lease's
+external parent. The lease and current loader bind that parent. Rendered hit
+tests and screenshot coordinates pass through both the inline owners and the
+leased outer owner. The original backend node survives refreshes of the DOM
+census during these checks.
+
+In the frozen fixture the outer document's response event recorded HTTP 200.
+The inner document had loaded before that event could be observed in the
+attached session. Both documents reported HTTP 200 in navigation timing. For
+a missing event in an active lease, the browser checks timing in the bound
+document, requires an exact navigation URL and rechecks the frame tree.
+[W3C Resource Timing, response status](https://www.w3.org/TR/resource-timing/#dom-performanceresourcetiming-responsestatus)
+
+The initial native run found the field but kept the uninspected-frame barrier.
+The successful run followed both typed actions and verified both final review
+rows. The same-caption controls in the outer host and provider documents stayed
+untouched. The submit control was ineligible and replay performed no delivery.
+The reviewed screenshot shows only the innermost application. The frozen
+manifest SHA-256 is `f02b9b62ba55442279db2ecd8be8e075a8e58e4d396590ab93b497af4d48c3e3`.
+The initial failure, native responses, source capture and outcome are under
+`target/nested-leased-navigation-6f07af12/`.
+
+Qwen 3.8 27B used the same archived pages with the bundled fictional profile.
+It verified both entries, chose `advance` and `review`, and matched **2/2**
+final answers with a fresh native verification. Both navigation requests used
+`xhigh` and 16,384 context tokens. Both responses contained thinking and ended
+naturally. Replay recorded zero blocked requests,
+zero cached non-read responses and no delivery. The owned run took 323.272
+seconds. It peaked at 14,449,004,544 bytes of job commit and sampled at least
+10,362,580,992 bytes of available host RAM. The model session closed. The
+actual model observations and reviewed screenshot are under
+`target/private-rehearsal-qualification-bp67i9g9/`.
+
+The Windows build and warnings-denied Clippy passed. The workspace ran 1,490
+passing tests with 625 opt-in cases outside that count. The final native nested
+check verified the separately bound review crop. The existing direct-frame
+control qualification also passed. Its receipt is under
+`target/replay-qualification-d6rl_ygg/`.
+
+These runs exercise a single inner document whose contents change between
+steps. Flows that replace the entire document still need separate source and
+completed-answer verification.
+
 ## Workspace validation for the original navigation change
 
 The Windows workspace suite passed 1,488 tests, with 624 opt-in checks ignored

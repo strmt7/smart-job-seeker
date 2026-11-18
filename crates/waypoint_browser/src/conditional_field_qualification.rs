@@ -61,7 +61,7 @@ fn native_label_detail_captures_complete_context_or_refuses() {
                     .node_id("#country")?
                     .ok_or_else(|| DriverError("Field disappeared".into()))?;
                 let bounds = driver
-                    .field_label_context_bounds(node, false)?
+                    .field_label_context_bounds(&json!({"nodeId":node}), false)?
                     .ok_or_else(|| DriverError("Native context disappeared".into()))?
                     .bounds;
                 let (width, height) = (bounds[2] - bounds[0], bounds[5] - bounds[1]);

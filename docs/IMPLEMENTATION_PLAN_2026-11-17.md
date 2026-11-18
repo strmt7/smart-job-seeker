@@ -353,11 +353,17 @@ are the next completion gates. [Rehearsal evidence](g1/REHEARSAL_PROGRESS_2026-1
 5. Detect cycles, unchanged pages, stale references and unexpected external
    targets. Stop with a useful pending-review reason and preserved archive when
    the next safe operation cannot be established.
-6. Bind same-origin inline form fields, navigation controls and final review
-   to the same current child document. The frozen inline-frame rehearsal now
-   verifies both first-section fields and stops when the parent-document
-   census misses the child's Continue button. Preserve separate frame leases,
-   reject mixed or stale targets, and verify the unchanged inline fixture.
+6. Bind inline form fields, navigation and final review to the same current
+   child document. The direct same-origin fixture passed all five final review
+   rows. A native fixture and Qwen both reached review in an inline document
+   inside a separately leased renderer, with both answers verified. Keep each
+   external parent and inline owner bound to the current native scope, and
+   extend qualification to more
+   embedded layouts. [Direct inline fixture](g1/WORKFLOW_LIMITS_2026-11-18.md)
+7. Qualify flows that move between archived documents. Require an observed
+   transition to new source-bound content, preserve the prior answers as
+   historical evidence, and independently verify their values in final review.
+   A changed document remains a stop until these checks are implemented.
 
 The saved-copy workflow now classifies native button intent from the current
 control inventory. It rechecks the selected native identity, visual target and

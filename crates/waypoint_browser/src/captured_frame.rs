@@ -14,6 +14,7 @@ pub use summary::{
 };
 
 use super::*;
+use crate::frame_identity::FrameCensusLease;
 #[cfg(windows)]
 use crate::frame_identity::{InlineRecordedAddress, InlineRecordedScope};
 use std::{
@@ -563,6 +564,9 @@ pub(super) struct CapturedPointerPoint {
     pub(super) y: f64,
     pub(super) width: f64,
     pub(super) height: f64,
+    #[cfg(windows)]
+    inline: Option<InlineRecordedScope>,
+    child_origin: [f64; 2],
     child_width: f64,
     child_height: f64,
 }
@@ -920,19 +924,24 @@ impl CdpDriver {
         };
         let mut summary = matches!(reason, NoEditableFields)
             .then(|| self.recorded_summary_before_image(&document, inline));
-        let image = if self.captured_scope.is_some() {
-            self.screenshot_captured_frame()?
-        } else if let Some(Ok(capture)) = &summary {
+        let overview = |driver: &mut Self| {
+            if driver.captured_scope.is_some() {
+                driver.screenshot_captured_frame()
+            } else {
+                driver.screenshot_base64()
+            }
+        };
+        let image = if let Some(Ok(capture)) = &summary {
             match self.recorded_summary_inline_overview(capture) {
                 Ok(Some(image)) => image,
-                Ok(None) => self.screenshot_base64()?,
+                Ok(None) => overview(self)?,
                 Err(error) => {
                     summary = Some(Err(error));
-                    self.screenshot_base64()?
+                    overview(self)?
                 }
             }
         } else {
-            self.screenshot_base64()?
+            overview(self)?
         };
         let summary = summary.map(|result| {
             let capture = result?;
@@ -971,10 +980,9 @@ impl CdpDriver {
                 None => &field.selector,
             };
             let current = InlineRecordedAddress::from_selector(raw)?;
-            if (self.captured_scope.is_some() && current.is_some())
-                || address
-                    .as_ref()
-                    .is_some_and(|previous| *previous != current)
+            if address
+                .as_ref()
+                .is_some_and(|previous| *previous != current)
             {
                 return Err(DriverError(
                     "The saved workflow spans multiple control documents and needs review".into(),
@@ -1089,9 +1097,6 @@ impl CdpDriver {
         let Some(address) = InlineRecordedAddress::from_selector(&raw)? else {
             return Ok(None);
         };
-        if self.captured_scope.is_some() {
-            return Err(review());
-        }
         let document = self.recorded_document()?;
         self.bind_recorded_inline_scope(&document.frame, address)
             .map(Some)
@@ -1785,7 +1790,7 @@ impl CdpDriver {
                 .map_err(derr)?;
         }
         if self.captured_scope.is_some() {
-            self.screenshot_captured_node(node, true, true, false)
+            self.screenshot_captured_node(selector, node, true, true, false)
         } else {
             self.screenshot_radio_node(node)
         }
@@ -1909,11 +1914,18 @@ impl CdpDriver {
             .cdp
             .call_session(session, "Page.getFrameTree", json!({}))
             .map_err(derr)?;
+        Self::bound_captured_frame_tree(&tree, expected)
+    }
+
+    fn bound_captured_frame_tree(
+        tree: &Value,
+        expected: &CapturedFrame,
+    ) -> Result<(String, String), DriverError> {
         let frame = tree.pointer("/frameTree/frame").ok_or_else(review)?;
         if frame["id"] != expected.target || frame["parentId"] != expected.parent_frame {
             return Err(review());
         }
-        let url = embedded_frame_url(&tree)?;
+        let url = embedded_frame_url(tree)?;
         let origin = url::Url::parse(&url)
             .map_err(|_| review())?
             .origin()
@@ -1927,6 +1939,31 @@ impl CdpDriver {
             .ok_or_else(review)?
             .to_owned();
         Ok((loader, url))
+    }
+
+    /// A leased protocol session can report a subtree whose root still names
+    /// its external parent. Validate that edge before inspecting descendants.
+    pub(super) fn captured_census_lease(
+        &mut self,
+        tree: &Value,
+    ) -> Result<Option<FrameCensusLease>, DriverError> {
+        let Some(scope) = self.captured_scope.as_ref() else {
+            return Ok(None);
+        };
+        if self.cdp.session != scope.session {
+            return Err(review());
+        }
+        let (loader, url) = Self::bound_captured_frame_tree(tree, &scope.frame)?;
+        if loader != scope.frame.loader || url != scope.frame.url {
+            return Err(review());
+        }
+        let frame = scope.frame.clone();
+        let lease = FrameCensusLease {
+            parent_frame: frame.parent_frame.clone(),
+            key: scope.key.clone(),
+        };
+        self.parent_frame_owner(&frame)?;
+        Ok(Some(lease))
     }
     /// Only direct recorded targets are offered. Uninspectable frames stay explicit.
     pub fn captured_frames(&mut self) -> Result<CapturedFrames, DriverError> {
@@ -2169,6 +2206,15 @@ impl CdpDriver {
             None => raw.to_owned(),
         }
     }
+
+    pub(super) fn control_dom_locator(&mut self, node: u64) -> Result<Value, DriverError> {
+        // Binding an inline document refreshes its DOM tree and frontend IDs.
+        // Keep the original native node across that observation.
+        if self.captured_scope.is_some() {
+            return Ok(json!({"backendNodeId":self.backend_node_id(node)?}));
+        }
+        Ok(json!({"nodeId":node}))
+    }
     pub(super) fn decode_captured_selector<'a>(
         &mut self,
         selector: &'a str,
@@ -2196,17 +2242,24 @@ impl CdpDriver {
     /// is restricted to the recorded scope; transformed/covered frames refuse.
     pub(super) fn captured_pointer_point(
         &mut self,
-        node: u64,
+        selector: &str,
+        locator: &Value,
         x: f64,
         y: f64,
     ) -> Result<Option<CapturedPointerPoint>, DriverError> {
         if self.captured_scope.is_none() {
             return Ok(None);
         }
-        self.validate_captured_frame(false)?;
+        #[cfg(windows)]
+        let inline = self.recorded_inline_control_scope(selector)?;
+        #[cfg(not(windows))]
+        {
+            let _ = selector;
+            self.validate_captured_frame(false)?;
+        }
         let resolved = self
             .cdp
-            .call("DOM.resolveNode", json!({"nodeId":node}))
+            .call("DOM.resolveNode", locator.clone())
             .map_err(derr)?;
         let object = resolved
             .pointer("/object/objectId")
@@ -2226,25 +2279,42 @@ impl CdpDriver {
             .iter()
             .filter_map(|key| local[key].as_f64().filter(|v| v.is_finite()))
             .collect();
-        if numbers.len() != 4
-            || (numbers[0] - x).abs() > 0.5
-            || (numbers[1] - y).abs() > 0.5
-            || x < 0.0
-            || y < 0.0
-            || x >= numbers[2]
-            || y >= numbers[3]
+        let [local_x, local_y, child_width, child_height] = numbers.as_slice() else {
+            return Err(review());
+        };
+        let local_viewport = [*child_width, *child_height];
+        let local_point = [*local_x, *local_y];
+        if *local_x < 0.0 || *local_y < 0.0 || local_x >= child_width || local_y >= child_height {
+            return Err(review());
+        }
+        #[cfg(windows)]
+        let (child_origin, viewport) = match inline.as_ref() {
+            Some(scope) => {
+                let projected =
+                    self.inline_frame_projection(scope, local_viewport, &[local_point])?;
+                (projected.offset, projected.viewport)
+            }
+            None => ([0.0, 0.0], local_viewport),
+        };
+        #[cfg(not(windows))]
+        let (child_origin, viewport) = ([0.0, 0.0], local_viewport);
+        if (local_point[0] + child_origin[0] - x).abs() > 0.5
+            || (local_point[1] + child_origin[1] - y).abs() > 0.5
         {
             return Err(review());
         }
-        let projection = self.captured_frame_projection([numbers[2], numbers[3]], &[[x, y]])?;
+        let projection = self.captured_frame_projection(viewport, &[[x, y]])?;
         Ok(Some(CapturedPointerPoint {
             session: projection.session,
             x: projection.offset[0] + x,
             y: projection.offset[1] + y,
             width: projection.viewport[0],
             height: projection.viewport[1],
-            child_width: numbers[2],
-            child_height: numbers[3],
+            #[cfg(windows)]
+            inline,
+            child_origin,
+            child_width: *child_width,
+            child_height: *child_height,
         }))
     }
 
@@ -2264,6 +2334,14 @@ impl CdpDriver {
         self.with_protocol_session(&frame.parent_session, |driver| {
             driver.frame_owner_projection(owner, viewport, points)
         })
+    }
+
+    pub(super) fn verify_captured_viewport_point(
+        &mut self,
+        viewport: [f64; 2],
+        point: [f64; 2],
+    ) -> bool {
+        self.captured_frame_projection(viewport, &[point]).is_ok()
     }
 
     fn frame_owner_projection(
@@ -2378,14 +2456,25 @@ impl CdpDriver {
     }
 
     #[cfg(windows)]
-    fn screenshot_inline_viewport_bounds(
+    pub(super) fn screenshot_inline_viewport_bounds(
         &mut self,
         inline: &InlineRecordedScope,
         quad: [f64; 8],
         viewport: [f64; 2],
     ) -> Result<String, DriverError> {
         self.screenshot_projected_viewport(quad, viewport, true, |driver, viewport, points| {
-            driver.inline_frame_projection(inline, viewport, points)
+            let inside = driver.inline_frame_projection(inline, viewport, points)?;
+            if driver.captured_scope.is_none() {
+                return Ok(inside);
+            }
+            let inside_points: Vec<_> = points
+                .iter()
+                .map(|[x, y]| [x + inside.offset[0], y + inside.offset[1]])
+                .collect();
+            let mut outside = driver.captured_frame_projection(inside.viewport, &inside_points)?;
+            outside.offset[0] += inside.offset[0];
+            outside.offset[1] += inside.offset[1];
+            Ok(outside)
         })
     }
 
@@ -2456,20 +2545,23 @@ impl CdpDriver {
     ) -> Result<String, DriverError> {
         self.scroll_field_into_view(selector)?;
         let node = self.node_id(selector)?.ok_or_else(review)?;
-        self.screenshot_captured_node(node, context, false, feedback)
+        self.screenshot_captured_node(selector, node, context, false, feedback)
     }
 
     fn screenshot_captured_node(
         &mut self,
+        selector: &str,
         node: u64,
         context: bool,
         radio: bool,
         feedback: bool,
     ) -> Result<String, DriverError> {
+        let file_context = context && feedback && !radio && self.is_native_file_node(node)?;
+        let locator = self.control_dom_locator(node)?;
         let box_model = |driver: &mut Self| -> Result<[f64; 8], DriverError> {
             let response = driver
                 .cdp
-                .call("DOM.getBoxModel", json!({"nodeId":node}))
+                .call("DOM.getBoxModel", locator.clone())
                 .map_err(derr)?;
             let quad = response
                 .pointer("/model/border")
@@ -2488,15 +2580,33 @@ impl CdpDriver {
         let x = (quad[0] + quad[2] + quad[4] + quad[6]) / 4.0;
         let y = (quad[1] + quad[3] + quad[5] + quad[7]) / 4.0;
         let point = self
-            .captured_pointer_point(node, x, y)?
+            .captured_pointer_point(selector, &locator, x, y)?
             .ok_or_else(review)?;
-        let file_context = context && feedback && !radio && self.is_native_file_node(node)?;
         let bounds = recorded_field_crop(quad, &point, x, y, context, radio, file_context)?;
-        let image = self.with_captured_parent_capture(|driver| {
-            driver.screenshot_bounds(&bounds, false, false, false)
-        })?;
+        let capture = |driver: &mut Self| driver.screenshot_bounds(&bounds, false, false, false);
+        #[cfg(windows)]
+        let image = match &point.inline {
+            Some(inline) => {
+                let mut local = bounds;
+                for [coordinate_x, coordinate_y] in local.as_chunks_mut::<2>().0 {
+                    *coordinate_x -= point.x - x + point.child_origin[0];
+                    *coordinate_y -= point.y - y + point.child_origin[1];
+                }
+                self.screenshot_inline_viewport_bounds(
+                    inline,
+                    local,
+                    [point.child_width, point.child_height],
+                )?
+            }
+            None => self.with_captured_parent_capture(capture)?,
+        };
+        #[cfg(not(windows))]
+        let image = self.with_captured_parent_capture(capture)?;
         if box_model(self)? != quad
-            || self.captured_pointer_point(node, x, y)?.as_ref() != Some(&point)
+            || self
+                .captured_pointer_point(selector, &locator, x, y)?
+                .as_ref()
+                != Some(&point)
         {
             return Err(DriverError(
                 "The embedded field moved during capture; inspect it again".into(),
@@ -2544,7 +2654,7 @@ impl CdpDriver {
 }
 
 fn recorded_field_crop(
-    quad: [f64; 8],
+    mut quad: [f64; 8],
     point: &CapturedPointerPoint,
     x: f64,
     y: f64,
@@ -2552,6 +2662,10 @@ fn recorded_field_crop(
     radio: bool,
     file_context: bool,
 ) -> Result<[f64; 8], DriverError> {
+    for [coordinate_x, coordinate_y] in quad.as_chunks_mut::<2>().0 {
+        *coordinate_x -= point.child_origin[0];
+        *coordinate_y -= point.child_origin[1];
+    }
     let left = quad
         .iter()
         .step_by(2)
@@ -2608,7 +2722,10 @@ fn recorded_field_crop(
     } else {
         (left, top, right, bottom)
     };
-    let (dx, dy) = (point.x - x, point.y - y);
+    let (dx, dy) = (
+        point.x - x + point.child_origin[0],
+        point.y - y + point.child_origin[1],
+    );
     let (left, top, right, bottom) = (left + dx, top + dy, right + dx, bottom + dy);
     Ok([left, top, right, top, right, bottom, left, bottom])
 }
@@ -2659,7 +2776,7 @@ mod tests {
                     let image=detail.image.ok_or_else(||DriverError(format!("File detail missing: {:?}",detail.error)))?;
                     let focus=detail.focus.ok_or_else(||DriverError("File label association was not bound".into()))?;
                     let node=driver.node_id("#upload")?.ok_or_else(||DriverError("File input disappeared".into()))?;
-                    let bounds=driver.field_label_context_bounds(node,true)?.ok_or_else(||DriverError("File label context disappeared".into()))?.bounds;
+                    let bounds=driver.field_label_context_bounds(&json!({"nodeId":node}),true)?.ok_or_else(||DriverError("File label context disappeared".into()))?.bounds;
                     let (width,height)=(bounds[2]-bounds[0],bounds[5]-bounds[1]);
                     if !(340.0..=720.0).contains(&width) || !(40.0..=400.0).contains(&height) {return Err(DriverError("File-only bounds exceed their complete context budget".into()));}
                     crate::rehearsal_capture::write_new(&folder,&format!("file-{name}.base64.private.txt"),image.as_bytes()).map_err(DriverError)?;
@@ -2796,6 +2913,9 @@ mod tests {
             y: 420.0,
             width: 1200.0,
             height: 800.0,
+            #[cfg(windows)]
+            inline: None,
+            child_origin: [0.0, 0.0],
             child_width: 300.0,
             child_height: 100.0,
         }

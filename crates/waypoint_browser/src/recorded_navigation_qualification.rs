@@ -38,6 +38,269 @@ impl RecordedSectionReviewer for Reviewer {
     }
 }
 
+#[test]
+#[ignore = "explicit pipe-only contained engine; nested frame progression and review"]
+fn recorded_navigation_reaches_review_inside_a_nested_leased_document() {
+    let (mut config, folder, python) =
+        crate::capture_session::qualification::qualification_config();
+    let portal = "https://portal.invalid/position";
+    let shell = "https://provider.invalid/embedded";
+    let form_url = "https://provider.invalid/form";
+    let mut builder = crate::rehearsal_capture::SnapshotBuilder::start(
+        &folder.join("nested-leased-navigation"),
+        portal,
+    )
+    .unwrap();
+    for (url, html) in [
+        (
+            portal,
+            r#"<!doctype html><link rel=icon href=data:,><button id=decoy type=button onclick="this.dataset.used='yes'" data-used=no>Read your answers</button><div style="margin:24px"><iframe title="Application provider" width=920 height=585 src="https://provider.invalid/embedded"></iframe></div>"#,
+        ),
+        (
+            shell,
+            r#"<!doctype html><link rel=icon href=data:,><button id=decoy type=button onclick="this.dataset.used='yes'" data-used=no>Read your answers</button><div style="margin:28px 37px"><iframe title="Application questions" width=620 height=350 src="/form"></iframe></div>"#,
+        ),
+        (
+            form_url,
+            r#"<!doctype html><meta charset=utf-8><link rel=icon href=data:,><style>body{font:18px Arial;margin:18px}label,button{display:block;margin-top:10px}input,button{font:inherit}</style><main id=flow><label for=first>Given name</label><input id=first required><button id=step type=button>Show the next questions</button></main><script>
+const flow=document.querySelector('#flow');
+document.querySelector('#step').onclick=()=>{
+  const first=document.querySelector('#first').value;
+  flow.innerHTML='<label for=last>Family name</label><input id=last required><button id=preview type=button>Read your answers</button><button id=send type=submit>Submit application</button>';
+  document.querySelector('#send').onclick=()=>{window.submitTouched=true;};
+  document.querySelector('#preview').onclick=()=>{
+    const last=document.querySelector('#last').value;
+    flow.innerHTML='<h1>Review your application</h1><dl><dt>Given name</dt><dd></dd><dt>Family name</dt><dd></dd></dl>';
+    const answers=flow.querySelectorAll('dd'); answers[0].textContent=first; answers[1].textContent=last;
+  };
+};</script>"#,
+        ),
+    ] {
+        let wire = format!("HTTP/1.1 200 Fictional\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\n\r\n{html}", html.len());
+        let response =
+            waypoint_net::read_asset_response(&mut std::io::Cursor::new(wire), "GET", 1024 * 1024)
+                .unwrap();
+        builder.add(url, response).unwrap();
+    }
+    let snapshot = builder.finish().unwrap();
+    config.schema = 2;
+    config.content_root = snapshot.root;
+    config.content_files = snapshot.files;
+    config.entry = snapshot.entry;
+    config.replay_manifest = Some(snapshot.manifest);
+    config.seconds = config.seconds.max(150);
+    let (mut driver, ready) = CdpDriver::launch_rehearsal(&python, config).unwrap();
+    let mut observed = json!({});
+    let outcome = (|| -> Result<(), DriverError> {
+        assert!(ready.appcontainer && ready.capabilities == 0);
+        driver.open(portal)?;
+        let frames = driver.captured_frames()?;
+        let frame = frames
+            .frames
+            .iter()
+            .find(|frame| frame.origin() == "https://provider.invalid")
+            .ok_or_else(|| DriverError("Provider lease was unavailable".into()))?;
+        let first = driver.enter_captured_frame(frame)?;
+        observed["initial_field_count"] = json!(first.schema.fields.len());
+        observed["initial_walls"] = json!(first.walls);
+        let tree = driver
+            .cdp
+            .call("Page.getFrameTree", json!({}))
+            .map_err(derr)?;
+        let root = &tree["frameTree"];
+        observed["separate_root_reports_parent"] = json!(root["frame"]["parentId"].is_string());
+        let mut timings = Vec::new();
+        let mut events = Vec::new();
+        if let Some(inner) = root["childFrames"]
+            .as_array()
+            .and_then(|frames| frames.first())
+        {
+            for frame in [&root["frame"], &inner["frame"]] {
+                events.push(driver.cdp.events.iter().rev().find_map(|(kind, event)| {
+                    (kind == "Network.responseReceived"
+                        && event["params"]["frameId"] == frame["id"]
+                        && event["params"]["loaderId"] == frame["loaderId"])
+                        .then(|| event["params"]["status"].as_u64())
+                        .flatten()
+                }));
+                let world = driver
+                    .cdp
+                    .call(
+                        "Page.createIsolatedWorld",
+                        json!({"frameId":frame["id"],"worldName":"Smart Jobseeker fixture timing"}),
+                    )
+                    .map_err(derr)?;
+                let native = driver.cdp.call("Runtime.evaluate", json!({"contextId":world["executionContextId"],"expression":"performance.getEntriesByType('navigation').map(entry=>entry.responseStatus)","returnByValue":true})).map_err(derr)?;
+                timings.push(native["result"]["value"].clone());
+            }
+        }
+        observed["navigation_response_statuses"] = json!(timings);
+        observed["network_response_events"] = json!(events);
+        if !first.walls.is_empty() {
+            let root = driver.document_with_frames(true)?;
+            observed["census_error"] = json!(driver
+                .frame_inspection_identity(&root)
+                .err()
+                .map(|error| error.to_string()));
+        }
+        if first.schema.fields.len() != 1 || first.schema.fields[0].label != "Given name" {
+            return Err(DriverError(
+                "The nested form was not independently inspected".into(),
+            ));
+        }
+        let given = driver.rehearse_recorded_field_reviewed(
+            &first,
+            &first.schema.fields[0].selector,
+            "Avery",
+            &[],
+            |target| {
+                observed["given_native_detail"] = json!(target.detail_focus().is_some());
+                target
+                    .detail_focus()
+                    .is_some()
+                    .then_some(())
+                    .ok_or_else(|| {
+                        DriverError("Given name detail lost its nested frame binding".into())
+                    })
+            },
+        )?;
+        observed["first_entered"] = json!(true);
+        let mut next = Reviewer {
+            label: "Show the next questions",
+            intent: RecordedSectionIntent::Advance,
+            inventory: Vec::new(),
+            visual_checks: 0,
+        };
+        let second = match driver.advance_recorded_section_planned(
+            &first,
+            &[],
+            &[&given],
+            true,
+            &mut next,
+        )? {
+            RecordedSectionOutcome::Advanced { form, .. } => form,
+            RecordedSectionOutcome::Stopped(reason)
+            | RecordedSectionOutcome::ReviewRequired { reason, .. } => {
+                observed["advance_stop"] = json!(reason);
+                return Err(DriverError("Nested application did not advance".into()));
+            }
+        };
+        observed["first_inventory"] = json!(next.inventory);
+        let name = second
+            .schema
+            .fields
+            .first()
+            .filter(|field| field.label == "Family name")
+            .ok_or_else(|| DriverError("Wrong second application section".into()))?;
+        let family = driver.rehearse_recorded_field_reviewed(
+            &second,
+            &name.selector,
+            "Rivera",
+            &[],
+            |target| {
+                observed["family_native_detail"] = json!(target.detail_focus().is_some());
+                target
+                    .detail_focus()
+                    .is_some()
+                    .then_some(())
+                    .ok_or_else(|| {
+                        DriverError("Family name detail lost its nested frame binding".into())
+                    })
+            },
+        )?;
+        let mut preview = Reviewer {
+            label: "Read your answers",
+            intent: RecordedSectionIntent::Review,
+            inventory: Vec::new(),
+            visual_checks: 0,
+        };
+        let review = driver.advance_recorded_section_planned(
+            &second,
+            &[first],
+            &[&family],
+            true,
+            &mut preview,
+        )?;
+        observed["preview_inventory"] = json!(preview.inventory);
+        assert!(preview
+            .inventory
+            .iter()
+            .any(|(label, admitted)| label == "Submit application" && !admitted));
+        let RecordedSectionOutcome::ReviewRequired {
+            reason: RecordedSectionStop::NoEditableFields,
+            summary: Some(summary),
+            image,
+            form,
+        } = review
+        else {
+            return Err(DriverError(
+                "Nested read-only review was not observed".into(),
+            ));
+        };
+        let summary = summary?;
+        driver.verify_recorded_summary(&form, &summary)?;
+        let answers: Vec<_> = summary
+            .answers()
+            .map(|(answer, _)| (answer.key.label.as_str(), answer.value.as_str()))
+            .collect();
+        if answers != [("Given name", "Avery"), ("Family name", "Rivera")] {
+            return Err(DriverError(
+                "Nested summary did not retain both inputs".into(),
+            ));
+        }
+        observed["summary_rows"] = json!(answers.len());
+        let regions = driver
+            .capture_recorded_summary_row(&summary, 0)?
+            .filter(|regions| {
+                !regions.is_empty()
+                    && regions
+                        .iter()
+                        .all(|region| region.mode == "embedded_viewport")
+            })
+            .ok_or_else(|| {
+                DriverError("Nested summary needed an independently bound review crop".into())
+            })?;
+        observed["summary_crop_count"] = json!(regions.len());
+        driver.verify_recorded_summary(&form, &summary)?;
+        crate::rehearsal_capture::write_new(
+            &folder,
+            "nested-review.base64.private.txt",
+            image.as_bytes(),
+        )
+        .map_err(DriverError)?;
+        if driver
+            .read_attribute(&driver.captured_selector("#decoy"), "data-used")?
+            .as_deref()
+            != Some("no")
+        {
+            return Err(DriverError(
+                "A control in the provider shell received the action".into(),
+            ));
+        }
+        driver.leave_captured_frame()?;
+        if driver.read_attribute("#decoy", "data-used")?.as_deref() != Some("no") {
+            return Err(DriverError(
+                "A control on the host page received the action".into(),
+            ));
+        }
+        let replay = driver.rehearsal_replay_report()?;
+        assert_eq!(replay["blocked"], 0);
+        assert_eq!(replay["external_delivery"], "not_performed_by_replay");
+        observed["replay"] = replay;
+        Ok(())
+    })();
+    let closed = driver.execute(&BrowserCommand::Close).is_ok();
+    let receipt = json!({"observed":observed,"result":outcome.as_ref().map_err(|e|e.to_string()),"closed":closed});
+    crate::rehearsal_capture::write_new(
+        &folder,
+        "nested-navigation.private.json",
+        &serde_json::to_vec_pretty(&receipt).unwrap(),
+    )
+    .unwrap();
+    assert!(closed);
+    outcome.unwrap();
+}
+
 enum Case {
     Review,
     UnexpectedEditableStep,
