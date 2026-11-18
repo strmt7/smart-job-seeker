@@ -1483,6 +1483,30 @@ pub(crate) fn propose_recorded_dialog(
 }
 
 #[cfg(windows)]
+pub(crate) fn propose_recorded_section(
+    model: &mut VisionIdentityGuard,
+    addr: std::net::SocketAddr,
+    form: &waypoint_applications::driver::LiveForm,
+    options: &[waypoint_browser::RecordedSectionOption],
+) -> Result<crate::section_planning::Plan, String> {
+    let receipt = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let observed = receipt.clone();
+    let mut plan = with_recorded_inference(model, addr, |inference| {
+        inference.set_generation_observer(move |_, native, request| {
+            if let Ok(mut receipt) = observed.lock() {
+                *receipt = Some(json!({"thinking_requested":request["think"],
+                    "thinking_observed":native["thinking"].as_str().is_some_and(|s| !s.trim().is_empty()),
+                    "context_tokens":request["options"]["num_ctx"],"output_budget":request["options"]["num_predict"],
+                    "done":native["done"],"done_reason":native["done_reason"],"output_tokens":native["eval_count"]}));
+            }
+        });
+        crate::section_planning::propose(inference, form, options)
+    })?;
+    plan.native_completion = receipt.lock().ok().and_then(|mut data| data.take());
+    Ok(plan)
+}
+
+#[cfg(windows)]
 pub(crate) fn inspect_recorded_dialog_image(
     model: &mut VisionIdentityGuard,
     addr: std::net::SocketAddr,

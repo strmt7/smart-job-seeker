@@ -105,6 +105,8 @@ mod resident_inference;
 mod runtime_setup;
 mod runtime_start;
 mod search_planner;
+#[cfg(windows)]
+mod section_planning;
 mod smtp_handoff;
 mod source_answer;
 #[cfg(all(test, windows))]
@@ -10014,11 +10016,17 @@ fn serve_loop_with_runtime(
     if let Err(error) = fit_task::shutdown() {
         eprintln!("Assessment shutdown needs review: {error}");
     }
-    if let Err(error) = web_search_batch::shutdown() {
-        eprintln!("Web search shutdown needs review: {error}");
-    }
-    if let Err(error) = web_search::shutdown() {
-        eprintln!("Quick search shutdown needs review: {error}");
+    {
+        // In-process server fixtures share the search slots with parallel
+        // search fixtures. Let the current owner finish before draining them.
+        #[cfg(test)]
+        let _search_fixture = web_search_batch::TEST_LOCK.lock().unwrap();
+        if let Err(error) = web_search_batch::shutdown() {
+            eprintln!("Web search shutdown needs review: {error}");
+        }
+        if let Err(error) = web_search::shutdown() {
+            eprintln!("Quick search shutdown needs review: {error}");
+        }
     }
     if let Some(worker) = index_worker {
         if worker.join().is_err() {

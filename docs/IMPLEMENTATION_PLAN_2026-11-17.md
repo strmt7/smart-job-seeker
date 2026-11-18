@@ -359,6 +359,14 @@ are the next completion gates. [Rehearsal evidence](g1/REHEARSAL_PROGRESS_2026-1
    census misses the child's Continue button. Preserve separate frame leases,
    reject mixed or stale targets, and verify the unchanged inline fixture.
 
+The saved-copy workflow now classifies native button intent from the current
+control inventory. It rechecks the selected native identity, visual target and
+resulting document. The mounted two-step Spanish fixture reached and verified
+final review. The frozen history fixture still stops on an inconsistent visual
+read of a neighboring control. Use native geometry to focus its detail image
+and retain the original conflict evidence.
+[Navigation qualification](g1/RECORDED_NAVIGATION_2026-11-18.md)
+
 ### R04.3 — Repeated, conditional and complex controls
 
 1. Plan whole records for employment, education, qualifications and addresses;

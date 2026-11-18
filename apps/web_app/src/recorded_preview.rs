@@ -474,11 +474,18 @@ fn record_scope(
             .iter()
             .map(|(_, capture, _)| capture)
             .collect();
-        let vision = &mut rehearsal.vision;
-        let advance =
-            driver.advance_recorded_section_reviewed(&form, &prior, &verified, true, |target| {
-                vision.review_target(evidence, view, "before_section", target)
-            });
+        let advance = driver.advance_recorded_section_planned(
+            &form,
+            &prior,
+            &verified,
+            true,
+            &mut RehearsalSectionReview {
+                vision: &mut rehearsal.vision,
+                evidence,
+                plans: &mut rehearsal.navigation_plans,
+                view,
+            },
+        );
         match advance {
             Ok(RecordedSectionOutcome::Advanced {
                 label: control,
@@ -550,6 +557,8 @@ fn record_scope(
                         | RecordedSectionStop::DocumentChanged
                         | RecordedSectionStop::PageNeedsReview
                         | RecordedSectionStop::NoNewSection
+                        | RecordedSectionStop::NavigationNeedsReview
+                        | RecordedSectionStop::UnsupportedControl
                 ) {
                     rehearsal.halted = true;
                 }
@@ -622,6 +631,65 @@ struct RehearsalVision {
     identity: Value,
     targets: Vec<Value>,
     deadline: std::time::Instant,
+}
+
+#[cfg(windows)]
+struct RehearsalSectionReview<'a, 'b> {
+    vision: &'a mut RehearsalVision,
+    evidence: &'a mut ScreenshotArchive<'b>,
+    plans: &'a mut Vec<Value>,
+    view: usize,
+}
+
+#[cfg(windows)]
+impl waypoint_browser::RecordedSectionReviewer for RehearsalSectionReview<'_, '_> {
+    fn choose(
+        &mut self,
+        form: &waypoint_applications::driver::LiveForm,
+        options: &[waypoint_browser::RecordedSectionOption],
+    ) -> Result<
+        Option<waypoint_browser::RecordedSectionChoice>,
+        waypoint_applications::driver::DriverError,
+    > {
+        let mut receipt = json!({"view":self.view,"status":"needs_review","controls":options,
+            "schema_sha256":waypoint_domain::sha256_hex(form.schema.schema_hash_input().as_bytes())});
+        let plan = self.vision.memory.check().and_then(|_| {
+            if std::time::Instant::now() >= self.vision.deadline {
+                return Err("Navigation time budget reached".into());
+            }
+            let model = self
+                .vision
+                .model
+                .as_mut()
+                .ok_or("The local model needs review")?;
+            crate::visual_review::propose_recorded_section(model, self.vision.addr, form, options)
+        });
+        let choice = match plan {
+            Ok(plan) => {
+                receipt["observation"] = plan.observation;
+                receipt["native_completion"] = json!(plan.native_completion);
+                if let Some(choice) = plan.choice {
+                    receipt["status"] = json!("proposed");
+                    receipt["choice"] = json!(choice);
+                }
+                plan.choice
+            }
+            Err(reason) => {
+                receipt["reason"] = json!(bounded_text(&reason));
+                None
+            }
+        };
+        self.plans.push(receipt);
+        Ok(choice)
+    }
+
+    fn verify(
+        &mut self,
+        target: &waypoint_browser::RecordedTargetCapture,
+    ) -> Result<(), waypoint_applications::driver::DriverError> {
+        self.vision
+            .review_target(self.evidence, self.view, "before_section", target)
+    }
 }
 
 #[cfg(windows)]
@@ -1089,6 +1157,7 @@ struct Rehearsal {
     captures: Vec<(usize, waypoint_browser::RecordedFieldCapture, bool)>,
     halted: bool,
     sections: Vec<Value>,
+    navigation_plans: Vec<Value>,
     dialogs: Vec<Value>,
     conditionals: usize,
     session_duration: std::time::Duration,
@@ -1161,6 +1230,7 @@ impl Rehearsal {
             captures: Vec::new(),
             halted,
             sections: Vec::new(),
+            navigation_plans: Vec::new(),
             dialogs: Vec::new(),
             conditionals: 0,
             session_duration,
@@ -1871,7 +1941,7 @@ impl Rehearsal {
     }
 
     fn finish(self, screenshot_bytes: usize) -> Value {
-        json!({"scope":if self.candidate_selected{self.candidate_metadata["scope"].as_str().unwrap_or("saved_candidate_materials")}else{"fictional_saved_form"},"candidate_source":self.candidate_metadata,"profile_sha256":self.candidate_metadata["profile_sha256"],"profile_error":self.profile.as_ref().err(),"time_limit_seconds":self.session_duration.as_secs(),"progress_checkpoints":self.progress_checkpoints,"halted":self.halted,"fields":self.fields,"fact_plans":self.fact_plans,"history_plans":self.history_plans,"qualification_plans":self.qualification_plans,"history_error":self.history.as_ref().err(),"attachment_plans":self.attachment_plans,"sections":self.sections,"dialogs":self.dialogs,"vision_model":self.vision.identity,
+        json!({"scope":if self.candidate_selected{self.candidate_metadata["scope"].as_str().unwrap_or("saved_candidate_materials")}else{"fictional_saved_form"},"candidate_source":self.candidate_metadata,"profile_sha256":self.candidate_metadata["profile_sha256"],"profile_error":self.profile.as_ref().err(),"time_limit_seconds":self.session_duration.as_secs(),"progress_checkpoints":self.progress_checkpoints,"halted":self.halted,"fields":self.fields,"fact_plans":self.fact_plans,"history_plans":self.history_plans,"qualification_plans":self.qualification_plans,"history_error":self.history.as_ref().err(),"attachment_plans":self.attachment_plans,"sections":self.sections,"navigation_plans":self.navigation_plans,"dialogs":self.dialogs,"vision_model":self.vision.identity,
             "conditional_replans":self.conditionals,"screenshot_bytes":screenshot_bytes,"screenshot_budget_bytes":SCREENSHOT_BUDGET_BYTES,
             "public_research_enabled":self.public_research,"public_research":self.research_notes,
             "visual_gate":{"required":true,"available":self.vision.model.is_some(),"targets":self.vision.targets}})

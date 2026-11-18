@@ -313,7 +313,8 @@
         "docs/g1/MODEL_CAPABILITIES_2026-11-15.md",
         "docs/g1/QWEN_DEFAULT_2026-11-17.md",
         "docs/g1/QWEN_256K_CONTEXT_2026-11-17.md",
-        "docs/g1/HISTORY_PERIODS_2026-11-18.md"
+        "docs/g1/HISTORY_PERIODS_2026-11-18.md",
+        "docs/g1/RECORDED_NAVIGATION_2026-11-18.md"
       ],
       "execution_batch": "C",
       "steps": [
@@ -328,7 +329,7 @@
         "Measure the local model on the frozen corpus; provide actionable review records rather than invented answers.",
         "Qualify native-supported inference profiles per role, including projector/renderer/parser and advertised effort. Retain actual thinking/final/tool observations and sufficient admitted budgets; do not force maximum effort onto every primitive or promote from component probes. Incorporate current primary-source research and the adapted catalog guidance without treating instructions as runtime implementation."
       ],
-      "next_action": "Replace the navigation wording filter with document-bound typed intent and independently verified transitions. Rerun the frozen employment-period fixture that verified all four fields and stopped at Review application. Freeze additional application families and exercise unfamiliar repeated and conditional layouts. Compare scope-bound, abstaining field assignment with the current mapper using FormFilla as the reference. Compare literal and deliberative reads on the unchanged file-label images, preserving conflicts and exact scope. Integrate independent candidate isolation work from R05 before qualifying server-managed behavior.",
+      "next_action": "Bind the detail read to native target geometry and rerun the unchanged employment-period fixture while preserving earlier conflicts. Extend typed navigation qualification to unfamiliar repeated, conditional and embedded layouts, including custom controls. Compare scope-bound, abstaining field assignment with the current mapper using FormFilla as the reference. Compare literal and deliberative reads on the unchanged file-label images, preserving conflicts and exact scope. Integrate independent candidate isolation work from R05 before qualifying server-managed behavior.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "start_requirements": [
         "The frozen schema2 known-source initial-control case and native mutation fixture admit investigation of the observed actuator failure. This does not admit broad planner promotion; that still requires the varied held-out tranche and full workflow truth.",

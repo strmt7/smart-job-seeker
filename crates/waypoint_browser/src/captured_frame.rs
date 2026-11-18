@@ -104,6 +104,48 @@ pub enum RecordedSectionStop {
     ReplayGap,
     NoNewSection,
     NoEditableFields,
+    UnexpectedTransition,
+    NavigationNeedsReview,
+}
+
+#[cfg(windows)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecordedSectionIntent {
+    Advance,
+    Review,
+}
+
+#[cfg(windows)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct RecordedSectionChoice {
+    pub control: usize,
+    pub intent: RecordedSectionIntent,
+}
+
+#[cfg(windows)]
+#[derive(serde::Serialize)]
+pub struct RecordedSectionOption {
+    pub id: usize,
+    pub label: String,
+    pub eligible: bool,
+}
+
+/// An advisory planner and an independent visual check of the selected button.
+#[cfg(windows)]
+pub trait RecordedSectionReviewer {
+    fn choose(
+        &mut self,
+        form: &LiveForm,
+        options: &[RecordedSectionOption],
+    ) -> Result<Option<RecordedSectionChoice>, DriverError>;
+    fn verify(&mut self, target: &RecordedTargetCapture) -> Result<(), DriverError>;
+}
+
+#[cfg(windows)]
+enum SectionReview<'a> {
+    KnownLabels(&'a mut dyn FnMut(&RecordedTargetCapture) -> Result<(), DriverError>),
+    Planned(&'a mut dyn RecordedSectionReviewer),
 }
 
 #[cfg(any(windows, test))]
@@ -129,6 +171,40 @@ fn recorded_forward_label(label: &str) -> bool {
             | "siguiente"
             | "paso siguiente"
     )
+}
+
+#[cfg(windows)]
+fn restricted_section_label(label: &str) -> bool {
+    label
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .any(|word| {
+            matches!(
+                word,
+                "submit"
+                    | "send"
+                    | "apply"
+                    | "save"
+                    | "delete"
+                    | "withdraw"
+                    | "accept"
+                    | "sign"
+                    | "finish"
+                    | "absenden"
+                    | "senden"
+                    | "speichern"
+                    | "löschen"
+                    | "soumettre"
+                    | "envoyer"
+                    | "enregistrer"
+                    | "enviar"
+                    | "guardar"
+                    | "eliminar"
+                    | "invia"
+                    | "inviare"
+                    | "salva"
+            )
+        })
 }
 
 #[cfg(windows)]
@@ -566,6 +642,42 @@ impl CdpDriver {
         budget_available: bool,
         mut review_target: impl FnMut(&RecordedTargetCapture) -> Result<(), DriverError>,
     ) -> Result<RecordedSectionOutcome, DriverError> {
+        self.advance_recorded_section_inner(
+            before,
+            visited,
+            verified_fields,
+            budget_available,
+            SectionReview::KnownLabels(&mut review_target),
+        )
+    }
+
+    #[cfg(windows)]
+    pub fn advance_recorded_section_planned(
+        &mut self,
+        before: &LiveForm,
+        visited: &[LiveForm],
+        verified_fields: &[&RecordedFieldCapture],
+        budget_available: bool,
+        reviewer: &mut dyn RecordedSectionReviewer,
+    ) -> Result<RecordedSectionOutcome, DriverError> {
+        self.advance_recorded_section_inner(
+            before,
+            visited,
+            verified_fields,
+            budget_available,
+            SectionReview::Planned(reviewer),
+        )
+    }
+
+    #[cfg(windows)]
+    fn advance_recorded_section_inner(
+        &mut self,
+        before: &LiveForm,
+        visited: &[LiveForm],
+        verified_fields: &[&RecordedFieldCapture],
+        budget_available: bool,
+        mut strategy: SectionReview<'_>,
+    ) -> Result<RecordedSectionOutcome, DriverError> {
         use RecordedSectionOutcome::{Advanced, ReviewRequired, Stopped};
         use RecordedSectionStop::*;
         self.require_recorded_frames()?;
@@ -581,22 +693,10 @@ impl CdpDriver {
         if controls.incomplete {
             return Ok(Stopped(IncompleteControls));
         }
-        let candidates: Vec<_> = controls
-            .controls
-            .iter()
-            .filter(|control| {
-                possible_next_label(&control.label) || recorded_forward_label(&control.label)
-            })
-            .collect();
-        let target = match candidates.as_slice() {
-            [] => return Ok(Stopped(NoForwardControl)),
-            [target] => *target,
-            _ => return Ok(Stopped(AmbiguousControl)),
-        };
-        if target.disabled || !recorded_forward_label(&target.label) {
-            return Ok(Stopped(UnsupportedControl));
+        if controls.controls.is_empty() {
+            return Ok(Stopped(NoForwardControl));
         }
-        if before
+        let required_unverified = before
             .schema
             .fields
             .iter()
@@ -613,13 +713,7 @@ impl CdpDriver {
                         }
                         _ => false,
                     })
-            })
-        {
-            return Ok(Stopped(RequiredFieldsUnverified));
-        }
-        if !budget_available {
-            return Ok(Stopped(LimitReached));
-        }
+            });
         let network_before = self.observed_non_read_requests()?;
         let replay_before = self.rehearsal_replay_report()?;
         let replay_intact = |driver: &mut Self| -> Result<bool, DriverError> {
@@ -635,9 +729,82 @@ impl CdpDriver {
                 .iter()
                 .all(|key| replay[*key] == replay_before[*key]))
         };
+        let (target, intent, backend) = match &mut strategy {
+            SectionReview::KnownLabels(_) => {
+                let mut candidates = controls.controls.iter().filter(|control| {
+                    possible_next_label(&control.label) || recorded_forward_label(&control.label)
+                });
+                let Some(target) = candidates.next() else {
+                    return Ok(Stopped(NoForwardControl));
+                };
+                if candidates.next().is_some() {
+                    return Ok(Stopped(AmbiguousControl));
+                }
+                if target.disabled || !recorded_forward_label(&target.label) {
+                    return Ok(Stopped(UnsupportedControl));
+                }
+                (target, RecordedSectionIntent::Advance, None)
+            }
+            SectionReview::Planned(reviewer) => {
+                if required_unverified {
+                    return Ok(Stopped(RequiredFieldsUnverified));
+                }
+                if !budget_available {
+                    return Ok(Stopped(LimitReached));
+                }
+                if self.inspect_current()? != *before || self.recorded_document()? != document {
+                    return Ok(Stopped(DocumentChanged));
+                }
+                let Some(backends) = self.recorded_section_option_backends(&controls)? else {
+                    return Ok(Stopped(IncompleteControls));
+                };
+                if backends.iter().all(Option::is_none) {
+                    return Ok(Stopped(UnsupportedControl));
+                }
+                let options = controls
+                    .controls
+                    .iter()
+                    .zip(&backends)
+                    .enumerate()
+                    .map(|(index, (control, backend))| RecordedSectionOption {
+                        id: index + 1,
+                        label: control.label.clone(),
+                        eligible: backend.is_some(),
+                    })
+                    .collect::<Vec<_>>();
+                let Some(choice) = reviewer.choose(before, &options)? else {
+                    return Ok(Stopped(NavigationNeedsReview));
+                };
+                let Some((target, Some(backend))) = choice
+                    .control
+                    .checked_sub(1)
+                    .and_then(|index| controls.controls.get(index).zip(backends.get(index)))
+                else {
+                    return Ok(Stopped(UnsupportedControl));
+                };
+                if self.inspect_current()? != *before || self.recorded_document()? != document {
+                    return Ok(Stopped(DocumentChanged));
+                }
+                if self.recorded_section_controls(inline.as_ref())? != controls
+                    || self.recorded_section_option_backend(target)? != Some(*backend)
+                {
+                    return Ok(Stopped(ControlChanged));
+                }
+                if !replay_intact(self)? {
+                    return Ok(Stopped(ReplayGap));
+                }
+                (target, choice.intent, Some(*backend))
+            }
+        };
+        if required_unverified {
+            return Ok(Stopped(RequiredFieldsUnverified));
+        }
+        if !budget_available {
+            return Ok(Stopped(LimitReached));
+        }
         self.scroll_field_into_view(&target.selector)?;
         let image = self.screenshot_field_context(&target.selector)?;
-        review_target(&RecordedTargetCapture {
+        let screenshot = RecordedTargetCapture {
             witness: None,
             detail_image: None,
             detail_error: None,
@@ -647,7 +814,11 @@ impl CdpDriver {
             required_marker: false,
             file_group_label: None,
             kind: "button",
-        })?;
+        };
+        match &mut strategy {
+            SectionReview::KnownLabels(review_target) => review_target(&screenshot)?,
+            SectionReview::Planned(reviewer) => reviewer.verify(&screenshot)?,
+        }
         if self.recorded_document()? != document || self.inspect_current()? != *before {
             return Ok(Stopped(DocumentChanged));
         }
@@ -657,7 +828,9 @@ impl CdpDriver {
         {
             return Ok(Stopped(FieldChanged));
         }
-        if self.recorded_section_controls(inline.as_ref())? != controls {
+        if self.recorded_section_controls(inline.as_ref())? != controls
+            || (backend.is_some() && self.recorded_section_option_backend(target)? != backend)
+        {
             return Ok(Stopped(ControlChanged));
         }
         if !replay_intact(self)? {
@@ -717,6 +890,10 @@ impl CdpDriver {
             }
             let fields = section_fields(&after);
             if !fields.is_subset(&before_fields) && !seen.contains(&fields) {
+                if intent == RecordedSectionIntent::Review {
+                    observation = Some((after, UnexpectedTransition));
+                    break;
+                }
                 if !replay_intact(self)? {
                     return Ok(Stopped(ReplayGap));
                 }
@@ -814,6 +991,87 @@ impl CdpDriver {
             }
             None => self.page_controls(),
         }
+    }
+
+    #[cfg(windows)]
+    fn recorded_section_option_backends(
+        &mut self,
+        controls: &PageControls,
+    ) -> Result<Option<Vec<Option<u64>>>, DriverError> {
+        let labels = controls
+            .controls
+            .iter()
+            .map(|control| {
+                control
+                    .label
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .to_lowercase()
+            })
+            .collect::<Vec<_>>();
+        let started = Instant::now();
+        let mut backends = Vec::with_capacity(labels.len());
+        for (control, label) in controls.controls.iter().zip(&labels) {
+            if started.elapsed() >= Duration::from_secs(4) {
+                return Ok(None);
+            }
+            let backend = if labels.iter().filter(|other| *other == label).count() == 1 {
+                self.with_review_timeout(|driver| driver.recorded_section_option_backend(control))?
+            } else {
+                None
+            };
+            backends.push(backend);
+        }
+        Ok(Some(backends))
+    }
+
+    #[cfg(windows)]
+    fn recorded_section_option_backend(
+        &mut self,
+        control: &PageControl,
+    ) -> Result<Option<u64>, DriverError> {
+        if control.disabled || restricted_section_label(&control.label) {
+            return Ok(None);
+        }
+        let node = self.node_id(&control.selector)?.ok_or_else(review)?;
+        let resolved = self
+            .cdp
+            .call("DOM.resolveNode", json!({"nodeId":node}))
+            .map_err(derr)?;
+        let object = resolved
+            .pointer("/object/objectId")
+            .and_then(Value::as_str)
+            .ok_or_else(review)?;
+        let checked = self.cdp.call("Runtime.callFunctionOn", json!({
+            "objectId":object,"functionDeclaration":format!("function(label) {{ {RECORDED_SECTION_BUTTON} return recordedSectionButton(this, label); }}"),
+            "arguments":[{"value":control.label}],"returnByValue":true}));
+        let released = self
+            .cdp
+            .call("Runtime.releaseObject", json!({"objectId":object}));
+        let checked = checked.map_err(derr)?;
+        released.map_err(derr)?;
+        if checked.get("exceptionDetails").is_some()
+            || checked
+                .pointer("/result/value")
+                .and_then(Value::as_bool)
+                .is_none()
+        {
+            return Err(review());
+        }
+        if checked.pointer("/result/value").and_then(Value::as_bool) == Some(false) {
+            return Ok(None);
+        }
+        let described = self
+            .cdp
+            .call("DOM.describeNode", json!({"nodeId":node}))
+            .map_err(derr)?;
+        described
+            .pointer("/node/backendNodeId")
+            .and_then(Value::as_u64)
+            .filter(|id| *id > 0)
+            .map(Some)
+            .ok_or_else(review)
     }
 
     #[cfg(windows)]

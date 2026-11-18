@@ -32,6 +32,8 @@ mod inline_frame_qualification;
 #[cfg(all(test, windows))]
 mod logical_control_qualification;
 #[cfg(all(test, windows))]
+mod recorded_navigation_qualification;
+#[cfg(all(test, windows))]
 mod recorded_number_qualification;
 pub use captured_frame::{
     CapturedFrame, CapturedFrames, RecordedControlIdentity, RecordedFieldCapture,
@@ -43,6 +45,10 @@ pub use captured_frame::{DialogChoice, DialogDescription, RecordedDialog, Record
 pub use captured_frame::{
     RecordedAttachmentVerification, RecordedAttachmentWitness, RecordedSectionOutcome,
     RecordedSectionStop, RecordedSummaryCapture, RecordedSummaryRegion, SummaryAnswer, SummaryKey,
+};
+#[cfg(windows)]
+pub use captured_frame::{
+    RecordedSectionChoice, RecordedSectionIntent, RecordedSectionOption, RecordedSectionReviewer,
 };
 pub mod capture_discovery;
 pub mod capture_privacy;
@@ -456,6 +462,8 @@ enum ClickGuard<'a> {
         owner_selector: &'a str,
     },
 }
+
+const RECORDED_SECTION_BUTTON: &str = include_str!("recorded_section_control.js");
 
 /// Turn a protocol failure into a driver failure, keeping the text.
 fn derr(e: CdpError) -> DriverError {
@@ -6665,10 +6673,8 @@ impl CdpDriver {
             };
             if (guard.kind !== 'ordinary' && unsafeTarget(this)) return 'unsafe';
             if (guard.kind === 'recorded-section') {
-                if (!this.matches('button[type="button" i], input[type="button" i]') || this.closest('[aria-hidden="true" i], [aria-readonly="true" i]') || this.hasAttribute('formaction') || this.hasAttribute('formmethod') || this.hasAttribute('formtarget')) return 'unsafe';
-                const visible = this.tagName === 'INPUT' ? this.value : this.innerText;
-                const norm = text => text.trim().replace(/\s+/g, ' ').toLowerCase();
-                if (norm(visible || '') !== norm(guard.label)) return 'unsafe';
+                /*RECORDED_SECTION_BUTTON*/
+                if (!recordedSectionButton(this, guard.label)) return 'unsafe';
             }
             if (guard.kind === 'combobox' && ((this.getAttribute('role') || '').toLowerCase() !== 'combobox' || (this.getAttribute('aria-expanded') || '').toLowerCase() !== 'false')) return false;
             if (guard.kind === 'radio') {
@@ -6722,7 +6728,7 @@ impl CdpDriver {
                 view = view.parent;
             }
             return false;
-        }"#.replace("/*CHOICE_LIST_RESOLVER*/", CHOICE_LIST_RESOLVER), "arguments":[{"value":guard_value}], "returnByValue":true}));
+        }"#.replace("/*CHOICE_LIST_RESOLVER*/", CHOICE_LIST_RESOLVER).replace("/*RECORDED_SECTION_BUTTON*/", RECORDED_SECTION_BUTTON), "arguments":[{"value":guard_value}], "returnByValue":true}));
         let released = self
             .cdp
             .call("Runtime.releaseObject", json!({"objectId":object}));
