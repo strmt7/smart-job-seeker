@@ -48,7 +48,8 @@ pub use captured_frame::{
 };
 #[cfg(windows)]
 pub use captured_frame::{
-    RecordedSectionChoice, RecordedSectionIntent, RecordedSectionOption, RecordedSectionReviewer,
+    RecordedDocumentTransition, RecordedSectionChoice, RecordedSectionIntent,
+    RecordedSectionOption, RecordedSectionReviewer,
 };
 pub mod capture_discovery;
 pub mod capture_privacy;

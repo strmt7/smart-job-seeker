@@ -360,10 +360,11 @@ are the next completion gates. [Rehearsal evidence](g1/REHEARSAL_PROGRESS_2026-1
    external parent and inline owner bound to the current native scope, and
    extend qualification to more
    embedded layouts. [Direct inline fixture](g1/WORKFLOW_LIMITS_2026-11-18.md)
-7. Qualify flows that move between archived documents. Require an observed
-   transition to new source-bound content, preserve the prior answers as
-   historical evidence, and independently verify their values in final review.
-   A changed document remains a stop until these checks are implemented.
+7. Follow direct same-origin GET transitions between archived documents when
+   the browser binds each archive response to the new loader. Retain entries
+   from earlier documents for independent final review. Qualify redirect
+   chains, frame document replacements and uploads whose original input leaves
+   the page as separate cases.
 
 The saved-copy workflow now classifies native button intent from the current
 control inventory. It rechecks the selected native identity, visual target and

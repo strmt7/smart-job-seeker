@@ -873,7 +873,14 @@ fn retain_event(events: &mut Vec<(String, Value)>, value: Value, raw_len: usize)
         {
             return false;
         }
-        json!({"params":{"frameId":value.pointer("/params/frameId"),"loaderId":value.pointer("/params/loaderId"),"status":value.pointer("/params/response/status")}})
+        let identifier = |path: &str| {
+            value
+                .pointer(path)
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty() && id.len() <= 512 && !id.chars().any(char::is_control))
+        };
+        json!({"params":{"frameId":identifier("/params/frameId"),"loaderId":identifier("/params/loaderId"),
+            "requestId":identifier("/params/requestId"),"status":value.pointer("/params/response/status")}})
     } else if name == "Fetch.requestPaused" {
         // A paused request can contain credentials, URLs and form data. Keep
         // only bounded protocol identifiers and classification, never payload.

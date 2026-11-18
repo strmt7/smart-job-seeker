@@ -442,6 +442,34 @@ class BrokerTests(unittest.TestCase):
             self.ack('Request was canceled')
         self.assertEqual(self.broker.report()['served'],0)
 
+    def test_document_receipt_requires_the_acknowledged_archive_response(self):
+        self.bind()
+        url = 'https://fixture.invalid/form'
+        params = {'requestId':'fetch', 'frameId':'frame', 'resourceType':'Document',
+                  'networkId':'network', 'request':{'url':url, 'method':'GET'}}
+        event = {'method':'Fetch.requestPaused', 'sessionId':'page', 'params':params}
+        self.broker.browser(event)
+        self.assertEqual(self.broker.report()['document_responses'], [])
+        self.assertNotIn('archive_body_sha256', self.sent[-1]['params'])
+        self.ack()
+        report = self.broker.report()
+        self.assertEqual(report['document_responses'], [{
+            'frame':'frame', 'network_request':'network', 'status':200,
+            'body_sha256':self.fixture.resources[0]['body_sha256'],
+            'url_sha256':hashlib.sha256(url.encode()).hexdigest(),
+            'bodyless_get':True, 'redirected':False,
+        }])
+        self.assertNotIn(url, json.dumps(report))
+        del params['networkId']
+        self.broker.browser(event)
+        self.assertEqual(self.broker.report()['omitted_document_responses'], 0)
+        self.ack()
+        self.assertIsNone(self.broker.report()['document_responses'][-1]['network_request'])
+        del params['frameId']
+        self.broker.browser(event)
+        self.ack()
+        self.assertEqual(self.broker.report()['omitted_document_responses'], 1)
+
     def test_refusal_context_is_bounded_redacted_and_not_acknowledged_delivery(self):
         self.bind()
         url='https://fixture.invalid/absent?email=fictional@example.invalid'

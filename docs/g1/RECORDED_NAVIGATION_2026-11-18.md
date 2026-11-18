@@ -142,9 +142,47 @@ check verified the separately bound review crop. The existing direct-frame
 control qualification also passed. Its receipt is under
 `target/replay-qualification-d6rl_ygg/`.
 
-These runs exercise a single inner document whose contents change between
-steps. Flows that replace the entire document still need separate source and
-completed-answer verification.
+These nested runs exercise a single inner document whose contents change
+between steps.
+
+## Steps that load a new saved document
+
+The replay broker records a document response after the browser acknowledges
+the archived bytes. The receipt retains the archive body digest and a hash of
+the request URL. The section driver checks a new response against the same
+frame, new loader and native network request before accepting the transition.
+[CDP Fetch request interception](https://chromedevtools.github.io/devtools-protocol/tot/Fetch/#event-requestPaused), [CDP Network response receipt](https://chromedevtools.github.io/devtools-protocol/tot/Network/#event-responseReceived)
+
+The supported route is a direct bodyless GET in the same top-level origin.
+Repeating a previously served route, changing origins, missing a source receipt
+or following a redirect requires review. Each new document gets its own active
+field inspection. The attempt retains earlier verified answers for comparison
+against the final native and visual summary.
+
+The frozen native fixture reached the second document before stopping with
+`document_changed` on the previous driver. The revised driver entered the
+second field, bound both new documents to their archive responses and verified
+both final review rows. Both editable documents use the same field selector.
+The submit sentinel stayed untouched and replay recorded no delivery. The
+archive manifest SHA-256 is `f78f9a72a8bf6a65b43b992cf082ad554bb96654ad79980fb5fec1c60b144300`.
+The comparison and protocol source captures are under
+`target/archived-document-transition-f5558d98/`.
+
+The owned Qwen 3.8 27B run selected `advance` and `review` across those same
+documents. Both `xhigh` navigation requests returned thinking and ended
+naturally. The attempt independently verified both entries and matched **2/2**
+answers on the final review with a fresh native check. Replay recorded zero
+blocked requests, zero cached non-read responses and no delivery. The run took
+195.603 seconds, peaked at 14,417,170,432 bytes of job commit and sampled at
+least 8,930,066,432 bytes of available host RAM. The model session closed.
+The reviewed screenshot and private results are under
+`target/private-rehearsal-qualification-ntis2uqa/`.
+
+Windows workspace tests passed 1,491 cases, with 626 opt-in cases outside that
+count. Warnings-denied Clippy, both selected native navigation tests and the
+canonical debug build passed. The archived route still leaves redirects,
+frame replacement, server-dependent workflows and previous attachment checks
+outside this qualification.
 
 ## Workspace validation for the original navigation change
 

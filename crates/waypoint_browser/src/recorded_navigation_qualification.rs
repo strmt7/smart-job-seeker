@@ -39,6 +39,165 @@ impl RecordedSectionReviewer for Reviewer {
 }
 
 #[test]
+#[ignore = "explicit pipe-only contained engine; document-replacing saved steps"]
+fn planned_navigation_crosses_verified_archived_documents() {
+    let (mut config, folder, python) =
+        crate::capture_session::qualification::qualification_config();
+    let first_url = "https://documents.invalid/apply";
+    let second_url = "https://documents.invalid/questions";
+    let final_url = "https://documents.invalid/preview";
+    let mut builder = crate::rehearsal_capture::SnapshotBuilder::start(
+        &folder.join("document-journey"),
+        first_url,
+    )
+    .unwrap();
+    for (url, html) in [
+        (
+            first_url,
+            r#"<h1>Applicant details</h1><label for=answer>Given name</label><input id=answer required><button id=next type=button>See the remaining questions</button><script>document.querySelector('#next').onclick=()=>{sessionStorage.setItem('given',document.querySelector('#answer').value);location.assign('/questions');};</script>"#,
+        ),
+        (
+            second_url,
+            r#"<h1>Additional details</h1><label for=answer>Family name</label><input id=answer required><button id=preview type=button>Read the application preview</button><button id=send type=submit onclick="sessionStorage.setItem('send-touched','yes')">Submit application</button><script>document.querySelector('#preview').onclick=()=>{sessionStorage.setItem('family',document.querySelector('#answer').value);location.assign('/preview');};</script>"#,
+        ),
+        (
+            final_url,
+            r#"<h1>Review your application</h1><dl><dt>Given name</dt><dd id=given></dd><dt>Family name</dt><dd id=family></dd></dl><script>for(const key of ['given','family'])document.getElementById(key).textContent=sessionStorage.getItem(key);document.body.dataset.sendTouched=sessionStorage.getItem('send-touched')||'no';</script>"#,
+        ),
+    ] {
+        let html = format!("<!doctype html><meta charset=utf-8><link rel=icon href=data:,><style>body{{font:18px Arial;margin:24px}}label,button{{display:block;margin-top:12px}}input,button{{font:inherit;padding:5px}}</style>{html}");
+        let wire = format!("HTTP/1.1 200 Fictional\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\n\r\n{html}",html.len());
+        let response =
+            waypoint_net::read_asset_response(&mut std::io::Cursor::new(wire), "GET", 1024 * 1024)
+                .unwrap();
+        builder.add(url, response).unwrap();
+    }
+    let snapshot = builder.finish().unwrap();
+    config.schema = 2;
+    config.content_root = snapshot.root;
+    config.content_files = snapshot.files;
+    config.entry = snapshot.entry;
+    config.replay_manifest = Some(snapshot.manifest);
+    config.seconds = config.seconds.max(120);
+    let (mut driver, ready) = CdpDriver::launch_rehearsal(&python, config).unwrap();
+    assert!(ready.appcontainer && ready.capabilities == 0);
+    let mut observed = json!({});
+    let outcome = (|| -> Result<(), DriverError> {
+        let first = driver.open(first_url)?;
+        let given = driver.rehearse_recorded_field(&first, "#answer", "Avery")?;
+        let mut reviewer = Reviewer {
+            label: "See the remaining questions",
+            intent: RecordedSectionIntent::Advance,
+            inventory: Vec::new(),
+            visual_checks: 0,
+        };
+        let action =
+            driver.advance_recorded_section_planned(&first, &[], &[&given], true, &mut reviewer)?;
+        observed["reached_second_url"] = json!(driver.current_url()? == second_url);
+        let second = match action {
+            RecordedSectionOutcome::Advanced {
+                form,
+                document_transition: Some(proof),
+                ..
+            } => {
+                observed["advance_document"] = json!(proof);
+                form
+            }
+            RecordedSectionOutcome::Advanced {
+                document_transition: None,
+                ..
+            } => {
+                return Err(DriverError(
+                    "The advance did not bind the new document".into(),
+                ));
+            }
+            RecordedSectionOutcome::Stopped(reason)
+            | RecordedSectionOutcome::ReviewRequired { reason, .. } => {
+                observed["advance_stop"] = json!(reason);
+                observed["native_document_responses"] = json!(driver
+                    .cdp
+                    .events
+                    .iter()
+                    .filter(|(kind, _)| kind == "Network.responseReceived")
+                    .map(|(_, event)| &event["params"])
+                    .collect::<Vec<_>>());
+                return Err(DriverError(
+                    "The saved next document did not advance the workflow".into(),
+                ));
+            }
+        };
+        assert_eq!(second.schema.fields[0].label, "Family name");
+        assert!(driver.verify_recorded_field(&given).is_err());
+        let family = driver.rehearse_recorded_field(&second, "#answer", "Example")?;
+        reviewer.label = "Read the application preview";
+        reviewer.intent = RecordedSectionIntent::Review;
+        let result = driver.advance_recorded_section_planned(
+            &second,
+            &[first],
+            &[&family],
+            true,
+            &mut reviewer,
+        )?;
+        let RecordedSectionOutcome::ReviewRequired {
+            reason: RecordedSectionStop::NoEditableFields,
+            summary: Some(summary),
+            image,
+            form,
+            document_transition: Some(proof),
+        } = result
+        else {
+            return Err(DriverError(
+                "The saved review document was not observed".into(),
+            ));
+        };
+        observed["review_document"] = json!(proof);
+        let summary = summary?;
+        driver.verify_recorded_summary(&form, &summary)?;
+        let answers: Vec<_> = summary
+            .answers()
+            .map(|(answer, _)| (answer.key.label.as_str(), answer.value.as_str()))
+            .collect();
+        assert_eq!(
+            answers,
+            [("Given name", "Avery"), ("Family name", "Example")]
+        );
+        assert_eq!(
+            driver
+                .read_attribute("body", "data-send-touched")?
+                .as_deref(),
+            Some("no")
+        );
+        assert!(reviewer
+            .inventory
+            .iter()
+            .any(|(label, eligible)| label == "Submit application" && !eligible));
+        observed["summary_rows"] = json!(answers.len());
+        crate::rehearsal_capture::write_new(
+            &folder,
+            "document-review.base64.private.txt",
+            image.as_bytes(),
+        )
+        .map_err(DriverError)?;
+        Ok(())
+    })();
+    let replay = driver.rehearsal_replay_report();
+    let closed = driver.execute(&BrowserCommand::Close).is_ok();
+    let report = json!({"observed":observed,"result":outcome.as_ref().map_err(|error|error.to_string()),"replay":replay.as_ref().ok(),"closed":closed});
+    crate::rehearsal_capture::write_new(
+        &folder,
+        "document-journey.private.json",
+        &serde_json::to_vec_pretty(&report).unwrap(),
+    )
+    .unwrap();
+    assert!(closed);
+    assert_eq!(
+        replay.unwrap()["external_delivery"],
+        "not_performed_by_replay"
+    );
+    outcome.unwrap();
+}
+
+#[test]
 #[ignore = "explicit pipe-only contained engine; nested frame progression and review"]
 fn recorded_navigation_reaches_review_inside_a_nested_leased_document() {
     let (mut config, folder, python) =
@@ -231,6 +390,7 @@ document.querySelector('#step').onclick=()=>{
             summary: Some(summary),
             image,
             form,
+            ..
         } = review
         else {
             return Err(DriverError(

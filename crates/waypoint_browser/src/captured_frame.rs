@@ -12,6 +12,11 @@ pub use summary::{
     RecordedAttachmentVerification, RecordedAttachmentWitness, RecordedSummaryCapture,
     RecordedSummaryRegion, SummaryAnswer, SummaryKey,
 };
+#[cfg(windows)]
+#[path = "recorded_document_transition.rs"]
+mod section_document;
+#[cfg(windows)]
+pub use section_document::RecordedDocumentTransition;
 
 use super::*;
 use crate::frame_identity::FrameCensusLease;
@@ -77,6 +82,7 @@ pub enum RecordedSectionOutcome {
     Advanced {
         label: String,
         form: LiveForm,
+        document_transition: Option<RecordedDocumentTransition>,
     },
     /// Read-only evidence after a guarded click that did not establish progress.
     ReviewRequired {
@@ -84,6 +90,7 @@ pub enum RecordedSectionOutcome {
         form: LiveForm,
         image: String,
         summary: Option<Result<Box<RecordedSummaryCapture>, DriverError>>,
+        document_transition: Option<RecordedDocumentTransition>,
     },
     Stopped(RecordedSectionStop),
 }
@@ -868,6 +875,11 @@ impl CdpDriver {
         }
         let before_fields = section_fields(before);
         let seen: Vec<_> = visited.iter().map(section_fields).collect();
+        let allow_document_change =
+            backend.is_some() && inline.is_none() && document.lease.is_none();
+        let mut active_document = document.clone();
+        let mut document_transition = None;
+        let mut waiting_for_document = false;
         let mut observation = None;
         for _ in 0..3 {
             self.cdp
@@ -876,11 +888,24 @@ impl CdpDriver {
             if !replay_intact(self)? {
                 return Ok(Stopped(ReplayGap));
             }
-            if self.recorded_document()? != document {
-                return Ok(Stopped(DocumentChanged));
+            let current_document = self.recorded_document()?;
+            if current_document != active_document {
+                if !allow_document_change || document_transition.is_some() {
+                    return Ok(Stopped(DocumentChanged));
+                }
+                let Some(proof) =
+                    self.recorded_archive_transition(&document, &current_document, &replay_before)?
+                else {
+                    waiting_for_document = true;
+                    observation = None;
+                    continue;
+                };
+                document_transition = Some(proof);
+                active_document = current_document;
             }
+            waiting_for_document = false;
             let after = self.inspect_current()?;
-            if after.origin != before.origin || self.recorded_document()? != document {
+            if after.origin != before.origin || self.recorded_document()? != active_document {
                 return Ok(Stopped(DocumentChanged));
             }
             if let Some(scope) = &inline {
@@ -899,7 +924,10 @@ impl CdpDriver {
                 break;
             }
             let fields = section_fields(&after);
-            if !fields.is_subset(&before_fields) && !seen.contains(&fields) {
+            let new_section = !fields.is_empty()
+                && (document_transition.is_some()
+                    || (!fields.is_subset(&before_fields) && !seen.contains(&fields)));
+            if new_section {
                 if intent == RecordedSectionIntent::Review {
                     observation = Some((after, UnexpectedTransition));
                     break;
@@ -907,9 +935,19 @@ impl CdpDriver {
                 if !replay_intact(self)? {
                     return Ok(Stopped(ReplayGap));
                 }
+                if document_transition.is_some()
+                    && self.recorded_archive_transition(
+                        &document,
+                        &active_document,
+                        &replay_before,
+                    )? != document_transition
+                {
+                    return Ok(Stopped(DocumentChanged));
+                }
                 return Ok(Advanced {
                     label: target.label.clone(),
                     form: after,
+                    document_transition,
                 });
             }
             let reason = if after.schema.fields.is_empty() {
@@ -920,10 +958,14 @@ impl CdpDriver {
             observation = Some((after, reason));
         }
         let Some((form, reason)) = observation else {
-            return Ok(Stopped(NoNewSection));
+            return Ok(Stopped(if waiting_for_document {
+                DocumentChanged
+            } else {
+                NoNewSection
+            }));
         };
         let mut summary = matches!(reason, NoEditableFields)
-            .then(|| self.recorded_summary_before_image(&document, inline));
+            .then(|| self.recorded_summary_before_image(&active_document, inline));
         let overview = |driver: &mut Self| {
             if driver.captured_scope.is_some() {
                 driver.screenshot_captured_frame()
@@ -948,17 +990,24 @@ impl CdpDriver {
             self.verify_recorded_summary_native(&capture)?;
             Ok(Box::new(capture))
         });
-        if self.inspect_current()? != form || self.recorded_document()? != document {
+        if self.inspect_current()? != form || self.recorded_document()? != active_document {
             return Ok(Stopped(DocumentChanged));
         }
         if !replay_intact(self)? {
             return Ok(Stopped(ReplayGap));
+        }
+        if document_transition.is_some()
+            && self.recorded_archive_transition(&document, &active_document, &replay_before)?
+                != document_transition
+        {
+            return Ok(Stopped(DocumentChanged));
         }
         Ok(ReviewRequired {
             reason,
             form,
             image,
             summary,
+            document_transition,
         })
     }
 

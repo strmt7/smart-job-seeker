@@ -113,6 +113,7 @@ def main():
         'crates/waypoint_browser/src/frame_identity.rs', 'crates/waypoint_browser/src/file_readback.rs',
         'crates/waypoint_browser/src/conditional_field.rs',
         'crates/waypoint_browser/src/recorded_dialog.rs',
+        'crates/waypoint_browser/src/recorded_document_transition.rs', 'crates/waypoint_browser/src/cdp.rs',
         'crates/waypoint_browser/src/field_label_context.js', 'crates/waypoint_browser/src/recorded_section_control.js',
         'crates/waypoint_browser/src/rehearsal.rs', 'crates/waypoint_browser/src/recorded_summary.rs',
         'crates/waypoint_browser/src/recorded_summary.js', 'crates/waypoint_browser/src/recorded_summary_viewport.js',

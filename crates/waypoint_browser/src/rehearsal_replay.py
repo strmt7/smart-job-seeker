@@ -15,6 +15,7 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 
 MAX_BODY = 8 * 1024**2
 MAX_REQUEST_BODY = 4 * 1024**2
+MAX_DOCUMENT_RESPONSES = 64
 MAX_TOTAL = 64 * 1024**2
 INTERNAL_ID = 1_000_000_000
 MAX_RETIRED_SESSIONS = 4096
@@ -143,6 +144,21 @@ def request_url(value):
 
 def sha(value):
     return isinstance(value, str) and re.fullmatch('[a-f0-9]{64}', value) is not None
+
+
+def document_response_receipt(params, request, status, body_sha256):
+    frame, network = params.get('frameId'), params.get('networkId')
+    def protocol_id(value):
+        return (isinstance(value, str) and 0 < len(value) <= 512
+                and all(ord(c) >= 32 and ord(c) != 127 for c in value))
+    if not protocol_id(frame):
+        return None
+    return {'frame': frame, 'network_request': network if protocol_id(network) else None,
+            'status': status, 'body_sha256': body_sha256,
+            'url_sha256': hashlib.sha256(request_url(request['url']).encode('utf-8')).hexdigest(),
+            'bodyless_get': request.get('method') == 'GET' and not request.get('hasPostData')
+                            and 'postData' not in request and 'postDataEntries' not in request,
+            'redirected': 'redirectedRequestId' in params}
 
 
 def public_origin(value):
@@ -526,6 +542,7 @@ class Archive:
             return None, ('ambiguous_replay_resource' if matched else reasons[0] if len(candidates)==1 else 'request_variant_not_recorded')
         item=matched[0]
         return {'responseCode':item['status'],'responseHeaders':item['headers'],
+                'archive_body_sha256':item['body_sha256'],
                 'body':base64.b64encode(self.body(item['body_file'],item['body_sha256'])).decode('ascii')},'recorded_response'
 
     @staticmethod
@@ -591,6 +608,7 @@ class Broker:
         self.counts.update(discarded_replies=0, discarded_events=0, closed_aliases=0)
         self.reasons, self.gaps = {}, {}
         self.refusal_samples, self.omitted_refusal_samples = {}, 0
+        self.document_responses, self.omitted_document_responses = [], 0
         self.outline_requested, self.outline = False, None
 
     def elapsed_ms(self):
@@ -606,6 +624,8 @@ class Broker:
                 'blocked_reasons': dict(self.reasons), 'unsupported_targets': dict(self.gaps),
                 'refused_request_samples': list(self.refusal_samples.values()),
                 'omitted_refusal_samples': self.omitted_refusal_samples,
+                'document_responses': self.document_responses.copy(),
+                'omitted_document_responses': self.omitted_document_responses,
                 'network_isolation': self.network_isolation,
                 'server_validation': 'not_performed', 'external_delivery': 'not_performed_by_replay'}
 
@@ -944,7 +964,7 @@ class Broker:
             action = self.pending.pop(request_id, None)
             if action is None:
                 raise ReplayError('unexpected_replay_reply')
-            name, session, kind, original, paused = action
+            name, session, kind, original, extra = action
             if name == 'detach':
                 error = message.get('error')
                 if error is not None and not (isinstance(error,dict)
@@ -970,11 +990,16 @@ class Broker:
                     self.reasons[original] = self.reasons.get(original, 0) + 1
                 elif original:
                     self.counts['cached_non_read_replies'] += 1
+                if kind == 'served' and extra is not False:
+                    if extra is None or len(self.document_responses) >= MAX_DOCUMENT_RESPONSES:
+                        self.omitted_document_responses += 1
+                    else:
+                        self.document_responses.append(extra)
             elif name == 'fetch':
-                self.after_fetch(session, kind, original, paused)
+                self.after_fetch(session, kind, original, extra)
             elif name == 'auto':
-                if paused:
-                    self.call('Runtime.runIfWaitingForDebugger', {}, session, ('resume', session, kind, original, paused))
+                if extra:
+                    self.call('Runtime.runIfWaitingForDebugger', {}, session, ('resume', session, kind, original, extra))
                 else:
                     self.finish(session,original)
             elif name == 'resume':
@@ -1063,6 +1088,10 @@ class Broker:
                     self.propose(request, reason, child_document, asset_kind, params.get('resourceType'))
                 self.call('Fetch.failRequest', {'requestId': paused_id, 'errorReason': 'BlockedByClient'}, session, ('reply', session, 'blocked', reason, False))
             else:
-                self.call('Fetch.fulfillRequest', {'requestId': paused_id, **result}, session, ('reply', session, 'served', request.get('method') not in ('GET', 'HEAD'), False))
+                body_sha256 = result.pop('archive_body_sha256')
+                receipt = (document_response_receipt(params, request, result['responseCode'], body_sha256)
+                           if not self.discovery and params.get('resourceType') == 'Document' else False)
+                self.call('Fetch.fulfillRequest', {'requestId': paused_id, **result}, session,
+                          ('reply', session, 'served', request.get('method') not in ('GET', 'HEAD'), receipt))
             return False
         return True

@@ -78,6 +78,10 @@ Consult the entries relevant to the code or workflow under review. The linked ch
   a stable native tree. Project capture and hit-test coordinates through both
   owner chains. Refreshing the DOM can replace frontend handles during these
   checks, so keep the original backend node bound to the action.
+- A document switch needs both an acknowledged archive response and a native
+  observation of that request in the current frame and loader. Reset the active
+  form history on a verified switch. Retain previous answers for independent
+  summary checks and keep previous control handles out of the new document.
 - Build helpers reject undeclared arguments before dependency setup. Use the
   declared `-Workspace -Test -TestFilter` options for filtered workspace tests;
   verify actual native test counts, not just exit zero. PowerShell previously

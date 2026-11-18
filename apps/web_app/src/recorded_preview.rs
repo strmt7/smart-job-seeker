@@ -364,12 +364,14 @@ fn record_scope(
     embedded: bool,
     mut rehearsal: Option<&mut Rehearsal>,
 ) -> Result<(), String> {
-    use waypoint_browser::{RecordedSectionOutcome, RecordedSectionStop};
+    use waypoint_browser::{
+        RecordedDocumentTransition, RecordedSectionOutcome, RecordedSectionStop,
+    };
     let first_view = views.len() + 1;
     let first_entry = rehearsal.as_ref().map_or(0, |run| run.fields.len());
     let mut summary_attachments = std::collections::BTreeMap::new();
     let mut prior = Vec::new();
-    let mut pending: Option<(usize, String)> = None;
+    let mut pending: Option<(usize, String, Option<RecordedDocumentTransition>)> = None;
     let mut pending_dialog: Option<usize> = None;
     let mut section = 1;
     let mut section_dialogs = crate::dialog_planning::SectionDialogs::default();
@@ -410,8 +412,12 @@ fn record_scope(
             }
             capture["scope_view"] = json!(first_view);
             capture["section"] = json!(section);
-            if let Some((from, control)) = pending.take() {
-                rehearsal.sections.push(json!({"view":from,"status":"advanced","to":view,"control":bounded_text(&control)}));
+            if let Some((from, control, document_transition)) = pending.take() {
+                let mut record = json!({"view":from,"status":"advanced","to":view,"control":bounded_text(&control)});
+                if let Some(proof) = document_transition {
+                    record["document_transition"] = json!(proof);
+                }
+                rehearsal.sections.push(record);
             }
         }
         views.push(capture);
@@ -490,10 +496,15 @@ fn record_scope(
             Ok(RecordedSectionOutcome::Advanced {
                 label: control,
                 form: next,
+                document_transition,
             }) => {
                 section += 1;
-                pending = Some((view, control));
-                prior.push(form);
+                if document_transition.is_some() {
+                    prior.clear();
+                } else {
+                    prior.push(form);
+                }
+                pending = Some((view, control, document_transition));
                 form = next;
                 rehearsal.captures.clear();
                 section_dialogs = crate::dialog_planning::SectionDialogs::default();
@@ -503,8 +514,12 @@ fn record_scope(
                 form,
                 image,
                 summary,
+                document_transition,
             }) => {
                 let mut transition = json!({"view":view,"status":"stopped","reason":reason});
+                if let Some(proof) = document_transition {
+                    transition["document_transition"] = json!(proof);
+                }
                 match save_review_observation(
                     evidence,
                     label,
@@ -3026,6 +3041,7 @@ mod tests {
                     form,
                     image,
                     summary,
+                    ..
                 } = outcome
                 else {
                     return Err("The terminal observation was unavailable".into());
