@@ -633,7 +633,7 @@ class Container:
             raise WorkerError('invalid_snapshot_entry')
         return binary, content, sid_text
 
-    def launch(self, binary, sid_text):
+    def launch(self, binary, sid_text, *, hide_scrollbars=False):
         api = self.api
         descriptor = P()
         api.check(api.ConvertStringSecurityDescriptorToSecurityDescriptorW(
@@ -705,6 +705,9 @@ class Container:
                     '--user-data-dir=' + str(self.folder / 'browser'), '--remote-debugging-pipe',
                     '--log-file=' + str(self.folder / 'browser-diagnostics.log'),
                     f'--remote-debugging-io-pipes={handles[0]},{handles[1]}', 'about:blank']
+            if hide_scrollbars:
+                # Match the scrollbar layout used when Chromium captures beyond the viewport.
+                args.insert(-1, '--hide-scrollbars')
             command = ct.create_unicode_buffer(subprocess.list2cmdline(args))
             temp = self.folder / 'Temp'
             temp.mkdir(exist_ok=True)
@@ -877,7 +880,7 @@ def run():
             module=importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
             archive=module.Archive(content,config['replay_manifest'],config['content_files'],config['entry'])
-        owner.launch(binary, sid_text)
+        owner.launch(binary, sid_text, hide_scrollbars=config['schema'] == 2)
         owner.audit_children()
         if api.WaitForSingleObject(owner.process.process, 0) == 0:
             raise WorkerError('browser_exited_before_ready')

@@ -402,6 +402,11 @@ used by development tools and tests. Do not add WSL or Docker as product require
   keep the path separate. Compare current native and blind visual observations
   with the prepared value. A matched filename does not establish file bytes.
   See [summary verification](docs/g1/FINAL_SUMMARY_VERIFICATION_2026-11-18.md).
+- Chromium's lower-page capture can hide the scrollbar and move centered
+  content. Use consistent scrollbar rendering in the owned offline replay.
+  Keep native geometry and scroll-state rechecks. If a heading requires a
+  separate image, transcribe it independently and join it through the native
+  section path. See [summary detail images](docs/g1/SUMMARY_DETAIL_IMAGES_2026-11-18.md).
 - An iframe's full-box center can be offscreen while its fields are visible.
   Owner availability uses a common ancestor-viewport intersection and native
   hit tests; each actual field still requires complete visual/native checks.

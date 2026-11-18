@@ -19,14 +19,35 @@
     const range = document.createRange();
     range.selectNodeContents(node);
     const rect = range.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0 || rect.left < 0 || rect.top < 0
-        || rect.right > innerWidth || rect.bottom > innerHeight) return null;
-    for (const part of range.getClientRects()) {
-      if (part.width <= 0 || part.height <= 0) continue;
-      const top = document.elementFromPoint(part.x + part.width / 2, part.y + part.height / 2);
-      if (top !== node && !node.contains(top)) return null;
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    const inViewport = rect.left >= 0 && rect.top >= 0
+      && rect.right <= innerWidth && rect.bottom <= innerHeight;
+    const visible = inViewport && Array.from(range.getClientRects()).every(part => {
+      if (part.width <= 0 || part.height <= 0) return true;
+      const target = document.elementFromPoint(part.x + part.width / 2, part.y + part.height / 2);
+      return target === node || node.contains(target);
+    });
+    // Page clips cannot reveal a section hidden inside a different scrollport
+    // or reliably place a viewport-anchored element at document coordinates.
+    let pageClip = !inViewport || visible;
+    for (let owner = node; pageClip && owner; owner = owner.parentElement) {
+      const style = getComputedStyle(owner);
+      if (['fixed', 'sticky'].includes(style.position) || style.clipPath !== 'none'
+          || style.maskImage !== 'none' || style.contain.split(' ').some(value =>
+            ['paint', 'strict', 'content'].includes(value))) {
+        pageClip = false;
+      } else if (owner !== document.body && owner !== document.documentElement
+          && (style.overflowX !== 'visible' || style.overflowY !== 'visible')) {
+        const box = owner.getBoundingClientRect();
+        const left = box.left + owner.clientLeft;
+        const top = box.top + owner.clientTop;
+        pageClip = style.transform === 'none'
+          && (style.overflowX === 'visible' || (rect.left >= left && rect.right <= left + owner.clientWidth))
+          && (style.overflowY === 'visible' || (rect.top >= top && rect.bottom <= top + owner.clientHeight));
+      }
     }
-    return [rect.x, rect.y, rect.width, rect.height];
+    return { document: [rect.x + scrollX, rect.y + scrollY, rect.width, rect.height],
+      in_image: visible, page_clip: pageClip };
   }
 
   function groupHeadings(label) {

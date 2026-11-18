@@ -48,16 +48,23 @@ pub struct SummaryAnswer {
     pub value: String,
 }
 
-#[derive(PartialEq, serde::Deserialize, serde::Serialize)]
+#[derive(serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 struct NativeRow {
     answer: SummaryAnswer,
-    // Each rectangle belongs to visible heading, label or answer text.
-    // A null rectangle means those pixels cannot be bound to this viewport.
-    bounds: Option<Vec<[f64; 4]>>,
+    bounds: Option<Vec<NativeTextBounds>>,
 }
 
-#[derive(PartialEq, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct NativeTextBounds {
+    /// Layout rectangles, outer headings first, then the field label and value.
+    document: [f64; 4],
+    in_image: bool,
+    page_clip: bool,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 struct NativeSummary {
     rows: Vec<NativeRow>,
@@ -74,10 +81,13 @@ pub struct RecordedSummaryCapture {
 
 impl RecordedSummaryCapture {
     pub fn answers(&self) -> impl Iterator<Item = (&SummaryAnswer, bool)> {
-        self.native
-            .rows
-            .iter()
-            .map(|row| (&row.answer, row.bounds.is_some()))
+        self.native.rows.iter().map(|row| {
+            let in_image = row.bounds.as_ref().is_some_and(|bounds| {
+                bounds.len() == row.answer.key.sections.len() + 2
+                    && bounds.iter().all(|part| part.in_image)
+            });
+            (&row.answer, in_image)
+        })
     }
 
     pub fn incomplete(&self) -> bool {
@@ -87,6 +97,72 @@ impl RecordedSummaryCapture {
     pub fn digest(&self) -> &str {
         &self.digest
     }
+}
+
+#[derive(Clone, Copy, serde::Serialize)]
+pub struct SummaryClip {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+}
+
+pub struct RecordedSummaryRegion {
+    pub clip: SummaryClip,
+    pub image: String,
+}
+
+impl SummaryClip {
+    fn around(text: &[NativeTextBounds], page: (f64, f64)) -> Option<Self> {
+        let [x, y, w, h] = text.first()?.document;
+        let (mut left, mut top, mut right, mut bottom) = (x, y, x + w, y + h);
+        for part in text {
+            let [x, y, width, height] = part.document;
+            if !part.page_clip
+                || !part.document.iter().all(|value| value.is_finite())
+                || x < 0.
+                || y < 0.
+                || width <= 0.
+                || height <= 0.
+                || x + width > page.0
+                || y + height > page.1
+            {
+                return None;
+            }
+            left = left.min(x);
+            top = top.min(y);
+            right = right.max(x + width);
+            bottom = bottom.max(y + height);
+        }
+        let x = (left - 12.).floor().max(0.);
+        let y = (top - 8.).floor().max(0.);
+        let width = (right + 12.).ceil().min(page.0) - x;
+        let height = (bottom + 8.).ceil().min(page.1) - y;
+        // Fit the local vision input with enough detail to read label characters.
+        (width <= 1280. && height <= 540. && x + width <= 4096.).then_some(Self {
+            x,
+            y,
+            width,
+            height,
+        })
+    }
+}
+
+fn plan_clips(row: &NativeRow, page: (f64, f64)) -> Option<Vec<SummaryClip>> {
+    let bounds = row.bounds.as_ref()?;
+    let heading_count = row.answer.key.sections.len();
+    if heading_count > 8 || bounds.len() != heading_count + 2 {
+        return None;
+    }
+    if let Some(full) = SummaryClip::around(bounds, page) {
+        return Some(vec![full]);
+    }
+    let mut regions = bounds[..heading_count]
+        .iter()
+        .map(|heading| SummaryClip::around(std::slice::from_ref(heading), page))
+        .collect::<Option<Vec<_>>>()?;
+    regions.push(SummaryClip::around(&bounds[heading_count..], page)?);
+    Some(regions)
 }
 
 fn summary_changed() -> DriverError {
@@ -117,6 +193,39 @@ fn require_summary_replay(driver: &mut CdpDriver) -> Result<(), DriverError> {
 }
 
 impl CdpDriver {
+    /// Capture the native geometry for one row without scrolling it into view.
+    /// A separated heading is captured before the label/value region.
+    pub fn capture_recorded_summary_row(
+        &mut self,
+        capture: &RecordedSummaryCapture,
+        row: usize,
+    ) -> Result<Option<Vec<RecordedSummaryRegion>>, DriverError> {
+        if self.captured_scope.is_some() {
+            return Ok(None);
+        }
+        let row = capture.native.rows.get(row).ok_or_else(summary_changed)?;
+        let Some(regions) = plan_clips(row, self.page_dimensions()?) else {
+            return Ok(None);
+        };
+        self.verify_recorded_summary_native(capture)
+            .map_err(|error| DriverError(format!("Before the summary detail capture. {error}")))?;
+        let mut images = Vec::with_capacity(regions.len());
+        let mut encoded_bytes = 0;
+        for clip in regions {
+            let image = self.capture_page_tile(clip.x, clip.y, clip.width, clip.height, false)?;
+            encoded_bytes += image.len();
+            if encoded_bytes > 4 * 1024 * 1024 {
+                return Err(DriverError(
+                    "Summary detail exceeds the visual input budget".into(),
+                ));
+            }
+            images.push(RecordedSummaryRegion { clip, image });
+        }
+        self.verify_recorded_summary_native(capture)
+            .map_err(|error| DriverError(format!("After the summary detail capture. {error}")))?;
+        Ok(Some(images))
+    }
+
     pub(super) fn recorded_summary_before_image(
         &mut self,
         document: &RecordedDocument,
@@ -143,8 +252,34 @@ impl CdpDriver {
         capture: &RecordedSummaryCapture,
     ) -> Result<(), DriverError> {
         let (root, native) = self.recorded_summary_native(&capture.document)?;
-        if root != capture.root || native != capture.native {
+        if root != capture.root {
             return Err(summary_changed());
+        }
+        if native.viewport != capture.native.viewport {
+            return Err(DriverError(format!(
+                "The summary viewport changed from {:?} to {:?}",
+                capture.native.viewport, native.viewport
+            )));
+        }
+        if native.rows.len() != capture.native.rows.len()
+            || native.incomplete != capture.native.incomplete
+        {
+            return Err(DriverError(
+                "The structured summary inventory changed".into(),
+            ));
+        }
+        for (index, (current, before)) in native.rows.iter().zip(&capture.native.rows).enumerate() {
+            if current.answer != before.answer {
+                return Err(DriverError(format!("Summary answer {} changed", index + 1)));
+            }
+            if current.bounds != before.bounds {
+                return Err(DriverError(format!(
+                    "Summary row {} geometry changed from {:?} to {:?}",
+                    index + 1,
+                    before.bounds,
+                    current.bounds
+                )));
+            }
         }
         require_summary_replay(self)
     }

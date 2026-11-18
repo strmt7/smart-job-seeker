@@ -8,7 +8,7 @@ pub use dialog::{DialogChoice, DialogDescription, RecordedDialog, RecordedDialog
 #[path = "recorded_summary.rs"]
 mod summary;
 #[cfg(windows)]
-pub use summary::{RecordedSummaryCapture, SummaryAnswer, SummaryKey};
+pub use summary::{RecordedSummaryCapture, RecordedSummaryRegion, SummaryAnswer, SummaryKey};
 
 use super::*;
 use std::{

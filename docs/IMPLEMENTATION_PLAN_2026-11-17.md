@@ -384,6 +384,12 @@ answers within one viewport. Extend that evidence across bounded image
 regions, then qualify layouts that expose different review headings,
 repeated records, attachment widgets and unavailable values.
 
+[Summary detail images](g1/SUMMARY_DETAIL_IMAGES_2026-11-18.md) extend this
+verification below the initial viewport of the main recorded document.
+Separate heading and answer crops preserve exact scoped comparisons.
+Further work covers nested scroll containers, embedded summaries,
+attachment byte verification and held-out layouts.
+
 1. Enumerate every required section/control and relevant repeated record again.
    Establish which controls are currently applicable, hidden, unresolved or
    intentionally unanswered.

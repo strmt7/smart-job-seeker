@@ -280,19 +280,33 @@ function harness(api, onFinished) {
   const summaryRecord = {scope:'offline_saved_summary',status:'pending_manual_review',
     expected_count:2,matched_count:1,reason:'Some prepared answers need review',
     comparisons:[{key:{sections:['Contact'],label:'Email'},status:'native_value_differs'}]};
-  const summaryPreview = (final_review, final_summary) => {
+  const summaryPreview = (final_review, final_summary, options = {}) => {
     const panel = harness(async () => {}).preview({views:[preview.views[0],{...terminal,final_review,final_summary}],
-      rehearsal:{scope:'fictional_saved_form',halted:true,sections:[{view:1,status:'stopped',reason:'no_editable_fields',review_view:2}]}},{});
+      rehearsal:{scope:'fictional_saved_form',halted:true,sections:[{view:1,status:'stopped',reason:'no_editable_fields',review_view:2}]}},options);
     button(panel,'Open review view').listeners.click();
     return panel;
   };
   const pendingSummary = summaryPreview(false, summaryRecord);
   assert(find(pendingSummary,node => node.textContent==='Summary needs review'));
-  assert(find(pendingSummary,node => node.textContent==='1 of 2 prepared answers verified on this screen.'));
+  assert(find(pendingSummary,node => node.textContent==='1 of 2 prepared answers verified in the saved summary.'));
   assert(find(pendingSummary,node => node.textContent==='Contact · Email · Summary value differs'));
   const checkedSummary = summaryPreview(true,{...summaryRecord,status:'answers_verified',matched_count:2,reason:undefined,comparisons:[]});
   assert(find(checkedSummary,node => node.textContent==='Summary answers verified'));
-  assert(find(checkedSummary,node => node.textContent==='2 of 2 prepared answers verified on this screen.'));
+  assert(find(checkedSummary,node => node.textContent==='2 of 2 prepared answers verified in the saved summary.'));
+  const detailSummary = summaryPreview(false,{...summaryRecord,detail_reads:[{
+    key:{sections:['Contact'],label:'Email'},images:[
+      {part:'heading',image:'0004.png',sha256:digest},{part:'answer',image:'0005.png',sha256:digest}
+    ],
+  }]},{jobId:'job',attemptId:'attempt',api:async (route,body) => {
+    assert.equal(route,'/api/attempts/screenshot');
+    assert.equal(body.name,'0005.png');
+    assert.equal(body.attempt_id,'attempt');
+    return {name:body.name,sha256:digest,image_base64:'fixture'};
+  }});
+  assert(button(detailSummary,'View heading 1 image'));
+  assert(button(detailSummary,'View overview image'));
+  await button(detailSummary,'View answer image').listeners.click();
+  assert.equal(find(detailSummary,node => node.tag==='img').alt,'Saved view of Contact · Email · Answer');
   const unbound = harness(async () => {}).preview({views:[preview.views[0],{...terminal,observed_after_view:3}],rehearsal:{
     scope:'fictional_saved_form',sections:[{view:1,status:'stopped',reason:'no_editable_fields',review_view:2}],
   }},{});

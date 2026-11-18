@@ -498,7 +498,8 @@ fn record_scope(
                                 &image,
                                 summary,
                                 &rehearsal.fields[first_entry..],
-                                |image| rehearsal.vision.read_summary(image),
+                                |image| evidence.save(image),
+                                |input| rehearsal.vision.read_summary(input),
                             );
                             captured["final_review"] =
                                 json!(report["status"] == "answers_verified");
@@ -606,10 +607,13 @@ struct RehearsalVision {
 
 #[cfg(windows)]
 impl RehearsalVision {
-    fn read_summary(&mut self, image: &str) -> Result<Value, String> {
+    fn read_summary(
+        &mut self,
+        input: crate::recorded_summary::SummaryVisual<'_>,
+    ) -> Result<Value, String> {
         self.memory.check()?;
         let model = self.model.as_mut().ok_or("The local model needs review")?;
-        crate::visual_review::inspect_recorded_summary_image(model, self.addr, image)
+        crate::visual_review::inspect_recorded_summary_image(model, self.addr, input)
     }
 
     fn research_issue(
@@ -2722,6 +2726,11 @@ mod tests {
             expected_status: String,
             comparison_statuses: Option<Vec<String>>,
             test_visual_observation: Option<Value>,
+            #[serde(default)]
+            test_detail_observations: Vec<Value>,
+            expected_detail_images: Option<Vec<usize>>,
+            #[serde(default)]
+            check_scroll_sentinel: bool,
             model: Option<crate::private_inference::Selection>,
             replacement_url: Option<String>,
         }
@@ -2864,6 +2873,7 @@ mod tests {
                     view["sha256"]
                 );
                 let mut model_admission = Value::Null;
+                let mut summary_scroll_events = Value::Null;
                 if let Some(qualification) = &fixture.summary {
                     let summary = summary.ok_or("The native review summary was missing")?;
                     if let Some(replacement) = &qualification.replacement_url {
@@ -2907,7 +2917,8 @@ mod tests {
                             &image,
                             summary,
                             &prepared,
-                            |image| vision.read_summary(image),
+                            |image| evidence.save(image),
+                            |input| vision.read_summary(input),
                         );
                         let stopped = session.stop();
                         let drained = crate::private_inference::cleanup_namespace(&attempt, task);
@@ -2916,17 +2927,29 @@ mod tests {
                         drained?;
                         report
                     } else {
+                        let mut details = qualification.test_detail_observations.iter();
                         crate::recorded_summary::inspect(
                             &mut driver,
                             &form,
                             &image,
                             summary,
                             &prepared,
-                            |_| {
-                                qualification
-                                    .test_visual_observation
-                                    .clone()
-                                    .ok_or("Visual test input missing".into())
+                            |image| evidence.save(image),
+                            |input| match input {
+                                crate::recorded_summary::SummaryVisual::Viewport(_) => {
+                                    qualification
+                                        .test_visual_observation
+                                        .clone()
+                                        .ok_or("Visual test input missing".into())
+                                }
+                                crate::recorded_summary::SummaryVisual::Region(_)
+                                | crate::recorded_summary::SummaryVisual::Heading(_)
+                                | crate::recorded_summary::SummaryVisual::SeparateAnswer(_) => {
+                                    details
+                                        .next()
+                                        .cloned()
+                                        .ok_or("Detail test input missing".into())
+                                }
                             },
                         )
                     };
@@ -2936,10 +2959,18 @@ mod tests {
                         driver.page_controls().map_err(|error| error.to_string())?,
                         controls
                     );
+                    if qualification.check_scroll_sentinel {
+                        let events = driver
+                            .read_attribute("#submit", "data-scroll-events")
+                            .map_err(|error| error.to_string())?;
+                        assert_eq!(events.as_deref(), Some("0"));
+                        summary_scroll_events = json!(0);
+                    }
                 }
                 return Ok(
                     json!({"entry_fields":verified_entries,"sections":index+1,"view":view,"replay":replay,
-                        "delivery_control_unchanged":true,"model_admission":model_admission}),
+                        "delivery_control_unchanged":true,"summary_scroll_events":summary_scroll_events,
+                        "model_admission":model_admission}),
                 );
             }
             Err("The fictional fixture supplied no terminal section".into())
@@ -2975,6 +3006,25 @@ mod tests {
             }
             if summary.replacement_url.is_some() {
                 assert_eq!(report["native_revalidated"], false);
+            }
+            if let Some(expected) = summary.expected_detail_images {
+                let details = report["detail_reads"]
+                    .as_array()
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]);
+                let recorded: Vec<_> = details
+                    .iter()
+                    .map(|detail| {
+                        let images = detail["images"].as_array().unwrap();
+                        for image in images {
+                            let bytes =
+                                fs::read(output.join(image["image"].as_str().unwrap())).unwrap();
+                            assert_eq!(image["sha256"], waypoint_domain::sha256_hex(&bytes));
+                        }
+                        images.len()
+                    })
+                    .collect();
+                assert_eq!(recorded, expected);
             }
         }
     }

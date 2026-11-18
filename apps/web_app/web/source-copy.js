@@ -220,6 +220,7 @@
       if (!supportedView(view)) return;
       const reviewOnly = view.review_observation === true;
       const summary = reviewOnly && view.final_summary?.scope === 'offline_saved_summary' ? view.final_summary : null;
+      show.textContent = summary ? 'View overview image' : 'View image';
       const verifiedSummary = summary?.status === 'answers_verified' && view.final_review === true;
       const summaryLabel = verifiedSummary ? 'Summary answers verified' : 'Summary needs review';
       if (stopNotice) {
@@ -229,11 +230,15 @@
       }
       if (view.origin) details.append(el('p', view.origin, 'footnote'));
       if (summary) {
+        const scopedLabel = key => {
+          const sections = Array.isArray(key.sections) ? key.sections.filter(s => typeof s === 'string') : [];
+          return [...sections, key.label].join(' · ').slice(0, 500);
+        };
         const expected = count(summary.expected_count);
         const matched = count(summary.matched_count);
         if (!stopNotice) details.append(el('p', summaryLabel, verifiedSummary ? 'footnote' : 'review-label'));
         if (expected !== null && matched !== null && matched <= expected) {
-          details.append(el('p', `${matched} of ${expected} prepared answers verified on this screen.`, 'footnote'));
+          details.append(el('p', `${matched} of ${expected} prepared answers verified in the saved summary.`, 'footnote'));
         }
         if (typeof summary.reason === 'string') details.append(el('p', summary.reason.slice(0, 500), 'footnote'));
         if (!verifiedSummary && Array.isArray(summary.comparisons)) {
@@ -252,13 +257,33 @@
           if (affected.length) {
             const list = el('ul');
             for (const item of affected.slice(0, 40)) {
-              const sections = Array.isArray(item.key.sections) ? item.key.sections.filter(s => typeof s === 'string') : [];
-              const scopedLabel = [...sections, item.key.label].join(' · ').slice(0, 500);
-              list.append(el('li', `${scopedLabel} · ${reasons[item.status]}`));
+              list.append(el('li', `${scopedLabel(item.key)} · ${reasons[item.status]}`));
             }
             details.append(list);
             if (affected.length > 40) details.append(el('p', 'More summary checks are saved in the application record.', 'footnote'));
           }
+        }
+        const extra = Array.isArray(summary.detail_reads) ? summary.detail_reads.filter(detail =>
+          typeof detail?.key?.label === 'string' && Array.isArray(detail.images) && detail.images.length) : [];
+        if (extra.length) {
+          const images = el('details', '', 'source-copy-result');
+          images.append(el('summary', 'Summary detail images'));
+          for (const detail of extra) {
+            const label = scopedLabel(detail.key);
+            images.append(el('p', label, 'footnote'));
+            const actions = el('div', '', 'source-copy-actions');
+            let heading = 0;
+            for (const image of detail.images) {
+              if (!['heading', 'answer'].includes(image?.part)) continue;
+              const part = image.part === 'heading' ? `Heading ${++heading}` : 'Answer';
+              const button = el('button', `View ${part.toLowerCase()} image`, 'button-secondary');
+              button.type = 'button';
+              button.addEventListener('click', () => showImage({ ...image, label: `${label} · ${part}` }, button));
+              actions.append(button);
+            }
+            images.append(actions);
+          }
+          details.append(images);
         }
       }
       const fields = Array.isArray(view.fields) ? view.fields.filter(field => field && typeof field.label === 'string').slice(0, 40) : [];

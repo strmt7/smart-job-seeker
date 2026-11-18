@@ -11,6 +11,25 @@ struct VisionRead {
     observations: Vec<VisualAnswer>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RegionRead {
+    observations: Vec<VisualAnswer>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HeadingRead {
+    heading: String,
+}
+
+pub(crate) enum SummaryVisual<'a> {
+    Viewport(&'a str),
+    Region(&'a str),
+    Heading(&'a str),
+    SeparateAnswer(&'a str),
+}
+
 #[derive(Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 enum Phase {
@@ -19,7 +38,7 @@ enum Phase {
     Unclear,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 struct VisualAnswer {
     sections: Vec<String>,
@@ -66,8 +85,13 @@ fn identity(sections: &[String], label: &str) -> Vec<String> {
 fn parse_visual(raw: &Value) -> Result<VisionRead, &'static str> {
     let visual: VisionRead =
         serde_json::from_value(raw.clone()).map_err(|_| "The image read has an invalid shape")?;
-    if visual.observations.len() > 20
-        || visual.observations.iter().any(|answer| {
+    check_observations(&visual.observations)?;
+    Ok(visual)
+}
+
+fn check_observations(observed: &[VisualAnswer]) -> Result<(), &'static str> {
+    if observed.len() > 20
+        || observed.iter().any(|answer| {
             answer.visible_value.len() > 1000
                 || answer
                     .sections
@@ -78,7 +102,92 @@ fn parse_visual(raw: &Value) -> Result<VisionRead, &'static str> {
     {
         return Err("The image read exceeds the summary evidence bounds");
     }
-    Ok(visual)
+    Ok(())
+}
+
+fn read_region(
+    driver: &mut CdpDriver,
+    native: &RecordedSummaryCapture,
+    row: usize,
+    key: &SummaryKey,
+    save: &mut impl FnMut(&str) -> Result<(String, String), String>,
+    read: &mut impl FnMut(SummaryVisual<'_>) -> Result<Value, String>,
+) -> (Value, Vec<VisualAnswer>) {
+    let mut receipt = json!({"row":row+1,"key":key,"status":"needs_review","images":[]});
+    let observed = (|| -> Result<Vec<VisualAnswer>, String> {
+        let regions = driver
+            .capture_recorded_summary_row(native, row)
+            .map_err(|error| error.to_string())?
+            .ok_or("The complete row could not be captured without interacting with the page")?;
+        for (index, region) in regions.iter().enumerate() {
+            let (name, digest) = save(&region.image)?;
+            let part = if index + 1 == regions.len() {
+                "answer"
+            } else {
+                "heading"
+            };
+            receipt["images"]
+                .as_array_mut()
+                .expect("image receipt")
+                .push(json!({
+                   "image":name,"sha256":digest,"clip":region.clip,"part":part
+                }));
+        }
+        let (last, headings) = regions.split_last().ok_or("The detail image is missing")?;
+        let mut visible_headings = Vec::with_capacity(headings.len());
+        for (index, region) in headings.iter().enumerate() {
+            let raw = read(SummaryVisual::Heading(&region.image))?;
+            let parsed = serde_json::from_value::<HeadingRead>(raw.clone());
+            receipt["images"][index]["visual"] = raw;
+            let heading = parsed
+                .map_err(|_| "The heading read has an invalid shape")?
+                .heading;
+            if heading.trim().is_empty() || heading.len() > 1000 {
+                return Err("A separate section heading could not be read".into());
+            }
+            visible_headings.push(heading);
+        }
+        let input = if headings.is_empty() {
+            SummaryVisual::Region(&last.image)
+        } else {
+            SummaryVisual::SeparateAnswer(&last.image)
+        };
+        let raw = read(input)?;
+        let parsed: Result<RegionRead, _> = serde_json::from_value(raw.clone());
+        receipt["visual"] = raw;
+        let mut observed = parsed
+            .map_err(|_| "The detail read has an invalid shape")?
+            .observations;
+        check_observations(&observed)?;
+        if !headings.is_empty() {
+            for answer in &mut observed {
+                if !answer.sections.is_empty() {
+                    return Err("A separate answer reported unexpected section headings".into());
+                }
+                answer.sections.clone_from(&visible_headings);
+            }
+            receipt["combined_observations"] = json!(observed);
+        }
+        let key = identity(&key.sections, &key.label);
+        if observed.is_empty()
+            || observed
+                .iter()
+                .any(|answer| identity(&answer.sections, &answer.label) != key)
+        {
+            return Err("The detail image did not establish the same scoped label".into());
+        }
+        Ok(observed)
+    })();
+    match observed {
+        Ok(observed) => {
+            receipt["status"] = json!("bound_observation");
+            (receipt, observed)
+        }
+        Err(reason) => {
+            receipt["reason"] = json!(reason);
+            (receipt, vec![])
+        }
+    }
 }
 
 pub(super) fn inspect(
@@ -87,7 +196,8 @@ pub(super) fn inspect(
     image: &str,
     native: Result<Box<RecordedSummaryCapture>, DriverError>,
     fields: &[Value],
-    read: impl FnOnce(&str) -> Result<Value, String>,
+    mut save: impl FnMut(&str) -> Result<(String, String), String>,
+    mut read: impl FnMut(SummaryVisual<'_>) -> Result<Value, String>,
 ) -> Value {
     let native = match native {
         Ok(native) => native,
@@ -96,29 +206,17 @@ pub(super) fn inspect(
             "reason":error.to_string()})
         }
     };
-    let visual = if native.answers().next().is_some() {
-        read(image)
-    } else {
+    let mut rows: Vec<_> = native.answers().collect();
+    let visual = if rows.is_empty() {
         Err("No structured answers were found in the saved summary".into())
+    } else {
+        read(SummaryVisual::Viewport(image))
     };
-    let revalidated = driver
-        .verify_recorded_summary(form, &native)
-        .map_err(|error| error.to_string());
-    reconcile(&native, fields, visual, revalidated)
-}
-
-fn reconcile(
-    native: &RecordedSummaryCapture,
-    fields: &[Value],
-    visual: Result<Value, String>,
-    revalidated: Result<(), String>,
-) -> Value {
-    let rows: Vec<_> = native.answers().collect();
     let mut result = json!({"status":"pending_manual_review","scope":"offline_saved_summary",
         "native_sha256":native.digest(),"native_incomplete":native.incomplete(),
         "native_rows":rows.iter().map(|(answer,in_image)|json!({"answer":answer,"in_image":in_image})).collect::<Vec<_>>(),
         "expected_count":fields.len(),"matched_count":0});
-    let parsed = match visual {
+    let mut parsed = match visual {
         Ok(raw) => {
             let parsed = parse_visual(&raw).map_err(str::to_owned);
             result["visual"] = raw;
@@ -126,17 +224,36 @@ fn reconcile(
         }
         Err(reason) => Err(reason),
     };
-    if let Err(reason) = revalidated {
-        result["reason"] = json!(reason);
-        result["native_revalidated"] = json!(false);
-        return result;
-    }
-    result["native_revalidated"] = json!(true);
     let expected = fields
         .iter()
         .map(ExpectedAnswer::from_entry)
         .collect::<Result<Vec<_>, _>>()
         .map_err(str::to_owned);
+    if let (Ok(expected), Ok(visual)) = (&expected, &mut parsed) {
+        if visual.phase == Phase::FinalReview && !native.incomplete() {
+            let targets = detail_targets(expected, &rows, &visual.observations);
+            let mut receipts = Vec::new();
+            for (index, prior) in targets {
+                let (answer, in_image) = &mut rows[index];
+                let (receipt, observed) =
+                    read_region(driver, &native, index, &answer.key, &mut save, &mut read);
+                receipts.push(receipt);
+                if !observed.is_empty() {
+                    *in_image = true;
+                    merge_detail_read(&mut visual.observations, prior, observed);
+                }
+            }
+            if !receipts.is_empty() {
+                result["detail_reads"] = json!(receipts);
+            }
+        }
+    }
+    if let Err(reason) = driver.verify_recorded_summary(form, &native) {
+        result["reason"] = json!(reason.to_string());
+        result["native_revalidated"] = json!(false);
+        return result;
+    }
+    result["native_revalidated"] = json!(true);
     let (expected, visual) = match (expected, parsed) {
         (Ok(expected), Ok(visual)) => (expected, visual),
         (Err(error), _) | (_, Err(error)) => {
@@ -164,6 +281,69 @@ fn reconcile(
     };
     result["reason"] = json!(reason);
     result
+}
+
+fn detail_targets(
+    expected: &[ExpectedAnswer<'_>],
+    rows: &[(&SummaryAnswer, bool)],
+    observed: &[VisualAnswer],
+) -> Vec<(usize, Option<usize>)> {
+    let key = |answer: &SummaryKey| identity(&answer.sections, &answer.label);
+    let native_keys: Vec<_> = rows.iter().map(|(row, _)| key(&row.key)).collect();
+    let expected_keys: Vec<_> = expected.iter().map(|answer| key(&answer.key)).collect();
+    let visual_keys: Vec<_> = observed
+        .iter()
+        .map(|answer| identity(&answer.sections, &answer.label))
+        .collect();
+    let mut targets = Vec::new();
+    for (index, ((row, in_image), k)) in rows.iter().zip(&native_keys).enumerate() {
+        let mut sources = expected
+            .iter()
+            .zip(&expected_keys)
+            .filter(|(_, found)| *found == k);
+        let Some((source, _)) = sources.next() else {
+            continue;
+        };
+        if source.value != row.value
+            || source.attachment
+            || sources.next().is_some()
+            || native_keys
+                .iter()
+                .filter(|candidate| *candidate == k)
+                .count()
+                != 1
+        {
+            continue;
+        }
+        let mut prior = visual_keys
+            .iter()
+            .enumerate()
+            .filter(|(_, found)| *found == k);
+        let prior_index = prior.next().map(|(index, _)| index);
+        if prior.next().is_none()
+            && prior_index
+                .is_none_or(|index| !in_image && observed[index].visible_value == row.value)
+        {
+            targets.push((index, prior_index));
+        }
+    }
+    targets
+}
+
+// Keep contradictory reads so the final comparer refuses them. A corroborating
+// detail supersedes an earlier read that could not be bound to the viewport.
+fn merge_detail_read(
+    visual: &mut Vec<VisualAnswer>,
+    prior: Option<usize>,
+    mut observed: Vec<VisualAnswer>,
+) {
+    if let Some(index) = prior {
+        if observed.len() == 1 && visual[index].visible_value == observed[0].visible_value {
+            visual[index] = observed.pop().expect("one bound observation");
+            return;
+        }
+    }
+    visual.append(&mut observed);
 }
 
 fn compare_answers(
@@ -361,5 +541,41 @@ mod tests {
             {"sections":[],"label":"Résumé","visible_value":"Resume.pdf","extra":true}
         ]}))
         .is_err());
+    }
+
+    #[test]
+    fn detail_read_cannot_replace_a_conflicting_overview() {
+        let key = SummaryKey {
+            sections: vec!["Previous employer".into()],
+            label: "Role".into(),
+        };
+        let source = [ExpectedAnswer {
+            key: key.clone(),
+            value: "Engineer",
+            attachment: false,
+        }];
+        let native = SummaryAnswer {
+            key,
+            value: "Engineer".into(),
+        };
+        let read = |value: &str| VisualAnswer {
+            sections: vec!["Previous employer".into()],
+            label: "Role".into(),
+            visible_value: value.into(),
+        };
+        let rows = [(&native, false)];
+        let wrong = [read("Designer")];
+        assert!(detail_targets(&source, &rows, &wrong).is_empty());
+        let mut corroborated = vec![read("Engineer")];
+        assert_eq!(
+            detail_targets(&source, &rows, &corroborated),
+            vec![(0, Some(0))]
+        );
+        merge_detail_read(&mut corroborated, Some(0), vec![read("Engineer")]);
+        assert_eq!(corroborated.len(), 1);
+        merge_detail_read(&mut corroborated, Some(0), vec![read("Designer")]);
+        let (checks, matched, _, _) = compare_answers(&source, &[(&native, true)], &corroborated);
+        assert_eq!(matched, 0);
+        assert_eq!(checks[0]["status"], "visual_label_ambiguous");
     }
 }

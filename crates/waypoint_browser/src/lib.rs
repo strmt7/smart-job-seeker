@@ -39,7 +39,8 @@ pub use captured_frame::{
 pub use captured_frame::{DialogChoice, DialogDescription, RecordedDialog, RecordedDialogOutcome};
 #[cfg(windows)]
 pub use captured_frame::{
-    RecordedSectionOutcome, RecordedSectionStop, RecordedSummaryCapture, SummaryAnswer, SummaryKey,
+    RecordedSectionOutcome, RecordedSectionStop, RecordedSummaryCapture, RecordedSummaryRegion,
+    SummaryAnswer, SummaryKey,
 };
 pub mod capture_discovery;
 pub mod capture_privacy;
@@ -2936,6 +2937,17 @@ impl CdpDriver {
         width: f64,
         height: f64,
     ) -> Result<String, DriverError> {
+        self.capture_page_tile(x, y, width, height, true)
+    }
+
+    fn capture_page_tile(
+        &mut self,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        hide_caret: bool,
+    ) -> Result<String, DriverError> {
         if self.captured_scope.is_some() {
             return Err(DriverError("Review embedded fields individually; full document capture is unavailable in this view".into()));
         }
@@ -2956,7 +2968,14 @@ impl CdpDriver {
                 "Screenshot segment exceeds capture limits".into(),
             ));
         }
-        let result = self.capture_png(json!({"format":"png","captureBeyondViewport":true,"clip":{"x":x,"y":y,"width":width,"height":height,"scale":1}}))?;
+        let parameters = json!({"format":"png","captureBeyondViewport":true,"clip":{"x":x,"y":y,"width":width,"height":height,"scale":1}});
+        let result = if hide_caret {
+            self.capture_png(parameters)?
+        } else {
+            self.cdp
+                .call("Page.captureScreenshot", parameters)
+                .map_err(derr)?
+        };
         let data = result
             .get("data")
             .and_then(Value::as_str)
