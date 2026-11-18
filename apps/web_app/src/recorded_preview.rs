@@ -293,6 +293,7 @@ fn render_at(
             json!({"source_attempt":source.attempt_id,"manifest_sha256":manifest_sha256,
             "views":views,"uninspected_frames":uninspected,"truncated":truncated,"notices":notices,
             "replay":{"served":report["served"],"blocked":report["blocked"],"blocked_reasons":report["blocked_reasons"],
+                "network_isolation":report["network_isolation"],
                 "refused_request_samples":report["refused_request_samples"],"omitted_refusal_samples":report["omitted_refusal_samples"],
                 "cached_non_read_replies":report["cached_non_read_replies"],"unreplayed_transports":report["unreplayed_transports"],
                 "unmanaged_child_sessions":report["unmanaged_child_sessions"],"unsupported_targets":report["unsupported_targets"],

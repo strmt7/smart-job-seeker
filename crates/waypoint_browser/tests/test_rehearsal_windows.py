@@ -25,6 +25,30 @@ OUTPUT = None
 
 BOOTSTRAP = '''import json,runpy,sys,time
 ns=runpy.run_path(sys.argv[1],run_name='fictional_recovery_fixture')
+if sys.argv[2]=='canary_receiver_contact':
+    import socket
+    from urllib.parse import urlsplit
+    original=ns['send_cdp']
+    witness={}
+    def send(owner, command):
+        if command['method']!='Page.navigate':
+            return original(owner,command)
+        url=urlsplit(command['params']['url'])
+        assert url.hostname=='127.0.0.1'
+        witness['profile_name']=owner.name
+        witness['candidate_content_mounted']=any(
+            (owner.folder/name).exists() for name in ('content','attachments'))
+        # Deliberately contact only the test-owned canary from the fixture
+        # controller. The actual AppContainer receives no navigation command.
+        with socket.create_connection((url.hostname,url.port),timeout=1):
+            pass
+    ns['run'].__globals__['send_cdp']=send
+    try:
+        ns['run']()
+    except ns['WorkerError'] as error:
+        ns['emit']({'type':'probe_refused','code':str(error),**witness})
+        sys.exit(1)
+    raise RuntimeError('The worker accepted a connected canary')
 config=ns['validate_config'](ns['parse_json'](sys.stdin.buffer.readline(ns['MAX_CONFIG']+1),ns['MAX_CONFIG']))
 api=ns['Windows'](); owner=ns['Container'](api); checkpoint=sys.argv[2]
 def pause():
@@ -53,7 +77,7 @@ elif checkpoint=='after_atomic_create':
     api.CreateProcessW=interrupted
 else: raise RuntimeError('unknown test checkpoint')
 try:
-    binary,content,sid=owner.prepare(config)
+    binary,sid=owner.prepare(config)
     owner.launch(binary,sid)
 finally: owner.close()
 '''
@@ -128,6 +152,10 @@ class Session:
             self.api.check(self.root_handle, 'test_root_handle_unavailable')
         if expected == 'ready':
             assert value['appcontainer'] and value['capabilities'] == 0
+            isolation = value['network_isolation']
+            assert isolation['loopback_exempt'] is False
+            assert isolation['ipv4'] in ('access_denied', 'connection_timed_out')
+            assert isolation['ipv6'] in ('access_denied', 'connection_timed_out', 'loopback_unavailable')
         return value
 
     def finish(self):
@@ -190,6 +218,17 @@ class RehearsalLifecycleTests(unittest.TestCase):
         session.process.stdin.write(b'{"id":1,"id":2}\n')
         session.process.stdin.flush()
         self.assertEqual(session.receive()['code'], 'invalid_protocol_json')
+        self.assert_clean(session, 1)
+
+    def test_canary_contact_refuses_readiness_before_candidate_content_is_mounted(self):
+        session = Session(self.config, 'canary_receiver_contact')
+        self.addCleanup(session.finish)
+        result = session.receive()
+        self.assertEqual(result['type'], 'probe_refused')
+        self.assertEqual(result['code'], 'appcontainer_loopback_connection_observed')
+        self.assertIs(result['candidate_content_mounted'], False)
+        session.profile = result['profile_name']
+        self.assertRegex(session.profile, re.escape(worker.PREFIX) + '[a-f0-9]{32}')
         self.assert_clean(session, 1)
 
     def test_second_instance_is_refused_without_disturbing_first(self):

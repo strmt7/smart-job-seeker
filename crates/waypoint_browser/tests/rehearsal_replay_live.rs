@@ -157,6 +157,11 @@ fn isolated_replay_preserves_origin_scripts_steps_and_blocks_uncaptured_requests
         );
         assert!(report["blocked"].as_u64().unwrap() >= 1, "{report}");
         assert_eq!(report["server_validation"], "not_performed");
+        assert_eq!(report["network_isolation"]["loopback_exempt"], false);
+        assert!(matches!(
+            report["network_isolation"]["ipv4"].as_str(),
+            Some("access_denied" | "connection_timed_out")
+        ));
         assert!(!report.to_string().contains("Fictional Candidate"));
         assert!(!report.to_string().contains("fictional@example.invalid"));
         let screenshot = driver.screenshot_base64().unwrap();

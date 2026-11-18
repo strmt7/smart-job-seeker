@@ -4,6 +4,7 @@ import importlib.util
 import json
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -116,6 +117,36 @@ class RehearsalProtocolTests(unittest.TestCase):
                 worker.copy_verified(source, files, root / 'executable', 4096, True)
             with self.assertRaisesRegex(worker.WorkerError, 'budget'):
                 worker.copy_verified(source, files, root / 'oversized', 1)
+
+
+class NetworkPolicyTests(unittest.TestCase):
+    def test_matching_exemption_and_unavailable_policy_refuse_startup(self):
+        ct = worker.ct
+        entries = (worker.SidAndAttributes * 2)((8, 0), (9, 0))
+        released = []
+
+        def query(count, results):
+            ct.cast(count, ct.POINTER(worker.wt.DWORD))[0] = len(entries)
+            ct.cast(results, ct.POINTER(ct.POINTER(worker.SidAndAttributes)))[0] = entries
+            return 0
+
+        def free(heap, flags, value):
+            released.append(value.value if isinstance(value, worker.P) else value)
+            return True
+
+        api = SimpleNamespace(check=worker.Windows.check, GetProcessHeap=lambda: 1,
+                              EqualSid=lambda left, right: left == right, HeapFree=free)
+        with patch.object(ct, 'WinDLL', return_value=SimpleNamespace(
+                NetworkIsolationGetAppContainerConfig=query), create=True):
+            worker.Windows.require_no_loopback_exemption(api, 7)
+            self.assertEqual(released, [8, 9, ct.addressof(entries)])
+            released.clear()
+            with self.assertRaisesRegex(worker.WorkerError, 'appcontainer_loopback_exemption_present'):
+                worker.Windows.require_no_loopback_exemption(api, 8)
+            self.assertEqual(released, [8, 9, ct.addressof(entries)])
+        with patch.object(ct, 'WinDLL', side_effect=OSError, create=True):
+            with self.assertRaisesRegex(worker.WorkerError, 'appcontainer_network_policy_unavailable'):
+                worker.Windows.require_no_loopback_exemption(api, 8)
 
 
 class RecoveryTests(unittest.TestCase):

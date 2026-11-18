@@ -383,6 +383,7 @@
         "No real employer interactions beyond read-only; no application sends"
       ],
       "evidence": [
+        "docs/g1/REHEARSAL_NETWORK_ADMISSION_2026-11-18.md",
         "docs/g1/SAVED_CONTACT_SNAPSHOTS_2026-11-14.md",
         "docs/g1/MULTI_SESSION_FIXTURE_READINESS_2026-11-14.md",
         "docs/g1/SELECTED_CANDIDATE_PDFS_2026-11-14.md",
@@ -396,12 +397,12 @@
         "Independently verify OS containment, network outcomes, document identities and stale/revoked authorization behavior.",
         "Keep live candidate interaction disabled; no finite test result becomes a zero-risk universal claim."
       ],
-      "next_action": "Retain zero-capability offline/fictional candidate execution and live read-only boundary.",
+      "next_action": "Carry the per-session network observation through representative saved application attempts. Extend independent receiver evidence for replay frames, worker and popup lifecycles and already-established channels. Keep server-dependent actions in review pending a separately verified delivery design.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "start_requirements": [
         "Applies before each new action channel; do not wait for R04 to complete before enforcing containment."
       ],
-      "open_checkpoint": "Native stale-load and extra-request fixture failures are retained; the final session/URL/loader-bound, explicit-icon test and full 139-case local selection pass without narrowing wildcard interception or count assertions. Bound contact inputs do not transfer public network authority. Established WebSocket, OS/transport, challenge and real-employer restrictions remain; no universal no-send proof or package completion."
+      "open_checkpoint": "Windows startup now requires an exact AppContainer SID without a loopback exemption and direct loopback observations before mounting content. Four native browser cases, eight recovery and worker cases, two replay cases and the compiled saved-report path passed. A forced local canary connection refused admission before staging. Cross-host and remaining transport qualification stay open."
     },
     {
       "id": "R06",

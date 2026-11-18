@@ -570,13 +570,14 @@ class Archive:
 
 class Broker:
     """Services Fetch on the continuously pumped browser pipe, including children."""
-    def __init__(self, archive, send, emit, discovery=False):
+    def __init__(self, archive, send, emit, discovery=False, network_isolation=None):
         if type(discovery) is not bool:
             raise ReplayError('invalid_discovery_mode')
         self.archive, self.send, self.emit = archive, send, emit
         self.started = time.monotonic()
         self.entry_request_accept, self.entry_document_requests = None, 0
         self.discovery = discovery
+        self.network_isolation = network_isolation
         self.discovery_session, self.discovery_frames = None, set()
         self.proposals, self.proposal_bytes, self.omitted_proposals, self.ineligible_requests = {}, 0, 0, 0
         self.asset_proposals, self.asset_request_origins, self.conflicting_proposals = {}, {}, set()
@@ -605,6 +606,7 @@ class Broker:
                 'blocked_reasons': dict(self.reasons), 'unsupported_targets': dict(self.gaps),
                 'refused_request_samples': list(self.refusal_samples.values()),
                 'omitted_refusal_samples': self.omitted_refusal_samples,
+                'network_isolation': self.network_isolation,
                 'server_validation': 'not_performed', 'external_delivery': 'not_performed_by_replay'}
 
     def observe_refusal(self, request, resource_type, reason):

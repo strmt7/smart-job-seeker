@@ -243,6 +243,13 @@ fn scripted_channel_qualification(address: std::net::SocketAddr) {
     let before = server.counts();
 
     let (mut driver, evidence) = CdpDriver::launch_rehearsal(&python, config).unwrap();
+    assert!(!evidence.network_isolation.loopback_exempt);
+    if address.is_ipv6() {
+        assert_ne!(
+            evidence.network_isolation.ipv6,
+            waypoint_browser::rehearsal::LoopbackObservation::LoopbackUnavailable
+        );
+    }
     assert_eq!(
         control_version,
         driver.browser_version().unwrap(),

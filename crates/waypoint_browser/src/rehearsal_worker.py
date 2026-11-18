@@ -16,7 +16,9 @@ import math
 import os
 from pathlib import Path, PurePosixPath
 import re
+import select
 import shutil
+import socket
 import stat
 import subprocess
 import sys
@@ -182,6 +184,10 @@ class Capabilities(ct.Structure):
     _fields_ = [('sid', P), ('capabilities', P), ('count', wt.DWORD), ('reserved', wt.DWORD)]
 
 
+class SidAndAttributes(ct.Structure):
+    _fields_ = [('sid', P), ('attributes', wt.DWORD)]
+
+
 class SecurityAttributes(ct.Structure):
     _fields_ = [('length', wt.DWORD), ('descriptor', P), ('inherit', wt.BOOL)]
 
@@ -260,6 +266,8 @@ class Windows:
             ('kernel', 'MoveFileExW', wt.BOOL, [wt.LPCWSTR, wt.LPCWSTR, wt.DWORD]),
             ('kernel', 'IsProcessInJob', wt.BOOL, [wt.HANDLE, wt.HANDLE, ct.POINTER(wt.BOOL)]),
             ('kernel', 'LocalFree', P, [P]),
+            ('kernel', 'GetProcessHeap', wt.HANDLE, []),
+            ('kernel', 'HeapFree', wt.BOOL, [wt.HANDLE, wt.DWORD, P]),
             ('kernel', 'GlobalMemoryStatusEx', wt.BOOL, [ct.POINTER(MemoryStatus)]),
             ('kernel', 'CreateMutexW', wt.HANDLE, [P, wt.BOOL, wt.LPCWSTR]),
             ('kernel', 'ReleaseMutex', wt.BOOL, [wt.HANDLE]),
@@ -308,6 +316,42 @@ class Windows:
                     raise WorkerError('token_appcontainer_identity_changed')
         finally:
             self.CloseHandle(token)
+
+    def require_no_loopback_exemption(self, sid):
+        """Read the OS exemption table for this exact AppContainer SID."""
+        try:
+            firewall = ct.WinDLL('FirewallAPI.dll', winmode=0x800)
+            query = firewall.NetworkIsolationGetAppContainerConfig
+        except (OSError, AttributeError):
+            raise WorkerError('appcontainer_network_policy_unavailable') from None
+        query.restype = wt.DWORD
+        query.argtypes = [ct.POINTER(wt.DWORD), ct.POINTER(ct.POINTER(SidAndAttributes))]
+        heap = self.check(self.GetProcessHeap(), 'appcontainer_policy_heap_unavailable')
+        count, entries = wt.DWORD(), ct.POINTER(SidAndAttributes)()
+        error = query(ct.byref(count), ct.byref(entries))
+        exempt = False
+        invalid = bool(count.value and not entries)
+        freed = True
+        if entries:
+            try:
+                for index in range(count.value):
+                    entry = entries[index].sid
+                    if not entry:
+                        invalid = True
+                        continue
+                    try:
+                        if not error and self.EqualSid(entry, sid):
+                            exempt = True
+                    finally:
+                        freed = bool(self.HeapFree(heap, 0, entry)) and freed
+            finally:
+                freed = bool(self.HeapFree(heap, 0, ct.cast(entries, P))) and freed
+        if error:
+            raise WorkerError('appcontainer_network_policy_query_failed:' + str(error))
+        if invalid or not freed:
+            raise WorkerError('appcontainer_network_policy_inventory_failed')
+        if exempt:
+            raise WorkerError('appcontainer_loopback_exemption_present')
 
     def sid_text(self, sid):
         raw = P()
@@ -617,11 +661,15 @@ class Container:
         expected = (Path(os.environ['LOCALAPPDATA']) / 'Packages' / self.name / 'AC').resolve()
         if self.folder != expected:
             raise WorkerError('profile_folder_mismatch')
+        api.require_no_loopback_exemption(self.sid)
         engine = self.folder / 'engine'
         copy_verified(source_root(config['engine_root']), config['engine_files'], engine, 600 * 1024**2)
         binary = engine / 'chrome-headless-shell.exe'
         if not binary.is_file() or not (engine / 'icudtl.dat').is_file():
             raise WorkerError('headless_engine_incomplete')
+        return binary, sid_text
+
+    def stage_content(self, config):
         content = self.folder / 'content'
         copy_verified(source_root(config['content_root']), config['content_files'], content, 64 * 1024**2, True, config['schema'] in (2,3))
         if 'attachments' in config:
@@ -631,7 +679,7 @@ class Container:
         entry = str(relative_path(config['entry']))
         if entry not in config['content_files'] or Path(entry).suffix.lower() not in ('.html', '.htm'):
             raise WorkerError('invalid_snapshot_entry')
-        return binary, content, sid_text
+        return content
 
     def launch(self, binary, sid_text, *, hide_scrollbars=False):
         api = self.api
@@ -700,7 +748,7 @@ class Container:
             args = [str(binary), '--headless=new', '--no-sandbox', '--no-first-run',
                     '--site-per-process',
                     '--enable-logging=stderr',
-                    '--disable-gpu', '--disable-background-networking', '--disable-extensions',
+                    '--disable-gpu', '--disable-background-networking', '--disable-extensions', '--no-proxy-server',
                     '--disable-sync', '--no-default-browser-check', '--window-size=1280,900',
                     '--user-data-dir=' + str(self.folder / 'browser'), '--remote-debugging-pipe',
                     '--log-file=' + str(self.folder / 'browser-diagnostics.log'),
@@ -831,6 +879,123 @@ class Container:
         return errors
 
 
+def read_pipe(owner, fd, pending):
+    available = owner.available(fd)
+    if available is None:
+        return False
+    if available:
+        pending.extend(os.read(fd, min(available, 65536)))
+    if len(pending) > MAX_FRAME:
+        raise WorkerError('protocol_size_limit')
+    return True
+
+
+def frames(pending, separator):
+    while separator in pending:
+        end = pending.index(separator)
+        raw = bytes(pending[:end])
+        del pending[:end + 1]
+        yield parse_json(raw, MAX_FRAME)
+
+
+def send_cdp(owner, value):
+    wire = json.dumps(value, ensure_ascii=True, separators=(',', ':')).encode('ascii') + b'\0'
+    if len(wire) > MAX_FRAME or os.write(owner.write_fd, wire) != len(wire):
+        raise WorkerError('protocol_write_failed')
+
+
+LOOPBACK_ERRORS = {
+    'net::ERR_NETWORK_ACCESS_DENIED': 'access_denied',
+    'net::ERR_CONNECTION_TIMED_OUT': 'connection_timed_out',
+}
+
+
+def attest_browser_loopback(owner, browser):
+    """Probe direct loopback from a fresh tab before mounting content or replay."""
+    deadline = time.monotonic() + 15
+    command_id = 0
+
+    def call(method, params, session=None, listener=None):
+        nonlocal command_id
+        command_id += 1
+        command = {'id': command_id, 'method': method, 'params': params}
+        if session is not None:
+            command['sessionId'] = session
+        send_cdp(owner, command)
+        while time.monotonic() < deadline:
+            if listener is not None and select.select([listener], [], [], 0)[0]:
+                raise WorkerError('appcontainer_loopback_connection_observed')
+            if not read_pipe(owner, owner.read_fd, browser):
+                raise WorkerError('appcontainer_network_probe_pipe_closed')
+            for response in frames(browser, b'\0'):
+                if not isinstance(response, dict):
+                    raise WorkerError('appcontainer_network_probe_invalid_reply')
+                if 'id' not in response:
+                    continue  # Navigation and target events can precede replies.
+                if (response['id'] != command_id or response.get('sessionId') != session
+                        or not isinstance(response.get('result'), dict) or 'error' in response):
+                    raise WorkerError('appcontainer_network_probe_invalid_reply')
+                return response['result']
+            time.sleep(.005)
+        phase = method if listener is None else (
+            'ipv6' if listener.family == socket.AF_INET6 else 'ipv4'
+        )
+        raise WorkerError('appcontainer_network_probe_timed_out:' + phase)
+
+    context = call('Target.createBrowserContext', {'disposeOnDetach': True}).get('browserContextId')
+    if not isinstance(context, str) or not context:
+        raise WorkerError('appcontainer_network_probe_context_unavailable')
+    target = call('Target.createTarget', {
+        'url': 'about:blank', 'browserContextId': context,
+    }).get('targetId')
+    if not isinstance(target, str) or not target:
+        raise WorkerError('appcontainer_network_probe_target_unavailable')
+    session = call('Target.attachToTarget', {'targetId': target, 'flatten': True}).get('sessionId')
+    if not isinstance(session, str) or not session:
+        raise WorkerError('appcontainer_network_probe_session_unavailable')
+
+    def probe(family, address, authority):
+        try:
+            listener = socket.socket(family, socket.SOCK_STREAM)
+        except OSError as error:
+            if family == socket.AF_INET6 and getattr(error, 'winerror', None) == 10047:
+                return 'loopback_unavailable'
+            raise
+        with listener:
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            try:
+                listener.bind((address, 0))
+            except OSError as error:
+                if family == socket.AF_INET6 and getattr(error, 'winerror', None) in (10047, 10049):
+                    return 'loopback_unavailable'
+                raise
+            listener.listen(1)
+            listener.settimeout(1)
+            port = listener.getsockname()[1]
+            # Positive control from the owner to the same live, exclusively
+            # bound receiver. The confined browser supplies no test data.
+            with socket.create_connection((address, port), timeout=1):
+                connection, _ = listener.accept()
+                connection.close()
+            reply = call('Page.navigate', {'url': f'http://{authority}:{port}/isolation-check'},
+                         session, listener)
+            if select.select([listener], [], [], 0)[0]:
+                raise WorkerError('appcontainer_loopback_connection_observed')
+            result = LOOPBACK_ERRORS.get(reply.get('errorText'))
+            if result is None or not reply.get('frameId') or reply.get('isDownload'):
+                raise WorkerError('appcontainer_loopback_denial_unverified')
+            return result
+
+    ipv4 = probe(socket.AF_INET, '127.0.0.1', '127.0.0.1')
+    ipv6 = probe(socket.AF_INET6, '::1', '[::1]')
+    call('Target.disposeBrowserContext', {'browserContextId': context})
+    inventory = call('Target.getBrowserContexts', {}).get('browserContextIds')
+    if not isinstance(inventory, list) or context in inventory:
+        raise WorkerError('appcontainer_network_probe_context_not_closed')
+    owner.api.require_no_loopback_exemption(owner.sid)
+    return {'loopback_exempt': False, 'ipv4': ipv4, 'ipv6': ipv6}
+
+
 def emit(value):
     raw = json.dumps(value, ensure_ascii=True, separators=(',', ':')).encode('ascii')
     if len(raw) > MAX_FRAME:
@@ -874,17 +1039,22 @@ def run():
     max_profile_bytes = 0
     archive = broker = None
     try:
-        binary, content, sid_text = owner.prepare(config)
+        binary, sid_text = owner.prepare(config)
+        owner.launch(binary, sid_text, hide_scrollbars=config['schema'] == 2)
+        owner.audit_children()
+        browser = bytearray()
+        network_isolation = attest_browser_loopback(owner, browser)
+        content = owner.stage_content(config)
         if config['schema'] in (2,3):
             spec=importlib.util.spec_from_file_location('smart_jobseeker_replay',Path(__file__).with_name('rehearsal_replay.py'))
             module=importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
             archive=module.Archive(content,config['replay_manifest'],config['content_files'],config['entry'])
-        owner.launch(binary, sid_text, hide_scrollbars=config['schema'] == 2)
         owner.audit_children()
         if api.WaitForSingleObject(owner.process.process, 0) == 0:
             raise WorkerError('browser_exited_before_ready')
         ready={'type': 'ready', 'schema': config['schema'], 'appcontainer': True, 'capabilities': 0,
+              'network_isolation': network_isolation,
               'pid': owner.process.pid, 'content_root': str(content), 'entry': config['entry'],
               'entry_url': archive.entry_url if archive else (content / config['entry']).as_uri(),
               'profile_name': owner.name,
@@ -895,13 +1065,12 @@ def run():
             ready['replay']={'manifest_sha256':archive.manifest_sha256,'resources':len(archive.resources)}
         emit(ready)
         def send(value):
-            wire=json.dumps(value,ensure_ascii=True,separators=(',',':')).encode('ascii')+b'\0'
-            if len(wire)>MAX_FRAME or os.write(owner.write_fd,wire)!=len(wire):
-                raise WorkerError('protocol_write_failed')
+            send_cdp(owner, value)
         if archive:
-            broker=module.Broker(archive,send,emit,discovery=config['schema']==3)
+            broker=module.Broker(archive,send,emit,discovery=config['schema']==3,
+                                 network_isolation=network_isolation)
         host_fd = sys.stdin.fileno()
-        host, browser = bytearray(), bytearray()
+        host = bytearray()
         deadline = time.monotonic() + config['seconds']
         audit_at = resource_at = storage_at = 0
         closing = False
@@ -930,19 +1099,10 @@ def run():
             for fd, pending, separator, is_host in [
                 (host_fd, host, b'\n', True), (owner.read_fd, browser, b'\0', False)
             ]:
-                available = owner.available(fd)
-                if available is None:
+                if not read_pipe(owner, fd, pending):
                     closing = True
                     break
-                if available:
-                    pending.extend(os.read(fd, min(available, 65536)))
-                if len(pending) > MAX_FRAME:
-                    raise WorkerError('protocol_size_limit')
-                while separator in pending:
-                    end = pending.index(separator)
-                    raw = bytes(pending[:end])
-                    del pending[:end + 1]
-                    value = parse_json(raw, MAX_FRAME)
+                for value in frames(pending, separator):
                     if is_host:
                         if not validate_command(value):
                             closing = True

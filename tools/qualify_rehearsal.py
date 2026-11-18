@@ -256,7 +256,7 @@ def main() -> int:
         commands = [
             ('rust', 5 if args.public_egress else 4, browser_command),
             ('rust', 1, [cargo, 'test', '-p', 'waypoint_browser', '--lib', 'consumer_failure_recovers_the_profile_before_releasing_admission', '--', '--ignored', '--test-threads=1']),
-            ('python', 6, [str(args.python), '-X', 'utf8', '-B', str(REPO / 'crates/waypoint_browser/tests/test_rehearsal_windows.py'), '-v']),
+            ('python', 7, [str(args.python), '-X', 'utf8', '-B', str(REPO / 'crates/waypoint_browser/tests/test_rehearsal_windows.py'), '-v']),
         ]
         for index, (kind, expected, command) in enumerate(commands):
             log = folder / f'check-{index}.private.log'

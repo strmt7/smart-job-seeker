@@ -492,6 +492,11 @@ wordings without production branches keyed to the test employer/ATS.
    uploads/autosave, beacon, images/links carrying data, redirects, popups,
    service/shared workers, frames, sockets and alternate protocols. Include
    already-established channels, not only new requests.
+   Startup verifies the sandbox's Windows loopback policy and requires native
+   observations from a disposable browser context before mounting source files
+   or attachments. Carry the observation into the archived replay evidence.
+   Qualify each remaining transport using a positive receiver and a measured
+   restricted case.
 3. Keep the model outside the authorization boundary. Page instructions, a
    familiar ATS, a learned procedure or a plausible button name cannot enable
    an operation blocked by policy or transport containment.

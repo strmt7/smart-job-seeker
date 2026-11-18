@@ -38,6 +38,22 @@ pub struct ReplayReady {
     pub resources: u32,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LoopbackObservation {
+    AccessDenied,
+    ConnectionTimedOut,
+    LoopbackUnavailable,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NetworkIsolationReady {
+    pub loopback_exempt: bool,
+    pub ipv4: LoopbackObservation,
+    pub ipv6: LoopbackObservation,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RehearsalReady {
@@ -46,6 +62,7 @@ pub struct RehearsalReady {
     pub schema: u32,
     pub appcontainer: bool,
     pub capabilities: u32,
+    pub network_isolation: NetworkIsolationReady,
     pub pid: u32,
     pub content_root: PathBuf,
     pub entry: String,
@@ -80,6 +97,8 @@ impl RehearsalReady {
             }
             || !self.appcontainer
             || self.capabilities != 0
+            || self.network_isolation.loopback_exempt
+            || self.network_isolation.ipv4 == LoopbackObservation::LoopbackUnavailable
             || self.pid == 0
             || self.job_memory_limit != 2 * 1024 * 1024 * 1024
             || self.recovered_profiles > 256
@@ -748,9 +767,15 @@ pub(crate) use windows::{PipeTransport, RehearsalOwner};
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn isolation() -> serde_json::Value {
+        serde_json::json!({"loopback_exempt":false,"ipv4":"connection_timed_out","ipv6":"access_denied"})
+    }
+
     #[test]
     fn readiness_rejects_capabilities_and_unrelated_profile_identities() {
         let good = serde_json::json!({"type":"ready","schema":1,"appcontainer":true,"capabilities":0,
+            "network_isolation":isolation(),
             "pid":1,"content_root":std::env::temp_dir(),"entry":"index.html","entry_url":"file:///fictional/index.html",
             "profile_name":"SmartJobseeker.Rehearsal.0123456789abcdef0123456789abcdef","job_memory_limit":2147483648u64,
             "recovered_profiles":0,"recovery_pending":0});
@@ -775,6 +800,7 @@ mod tests {
     #[test]
     fn replay_readiness_requires_bound_manifest_https_and_exact_mode() {
         let good = serde_json::json!({"type":"ready","schema":2,"appcontainer":true,"capabilities":0,
+            "network_isolation":isolation(),
             "pid":1,"content_root":std::env::temp_dir(),"entry":"index.html","entry_url":"https://fixture.invalid/form#application",
             "profile_name":"SmartJobseeker.Rehearsal.0123456789abcdef0123456789abcdef","job_memory_limit":2147483648u64,
             "recovered_profiles":0,"recovery_pending":0,"replay":{"manifest_sha256":"a".repeat(64),"resources":8}});
@@ -815,6 +841,31 @@ mod tests {
             assert!(serde_json::from_value::<RehearsalReady>(changed)
                 .unwrap()
                 .validate()
+                .is_err());
+        }
+    }
+
+    #[test]
+    fn readiness_requires_native_loopback_observation_and_no_exception() {
+        let good = serde_json::json!({"type":"ready","schema":1,"appcontainer":true,"capabilities":0,
+            "network_isolation":{"loopback_exempt":false,"ipv4":"access_denied","ipv6":"loopback_unavailable"},
+            "pid":1,"content_root":std::env::temp_dir(),"entry":"index.html","entry_url":"file:///fictional/index.html",
+            "profile_name":"SmartJobseeker.Rehearsal.0123456789abcdef0123456789abcdef","job_memory_limit":2147483648u64,
+            "recovered_profiles":0,"recovery_pending":0});
+        assert!(serde_json::from_value::<RehearsalReady>(good.clone())
+            .unwrap()
+            .validate()
+            .is_ok());
+        for observation in [
+            serde_json::Value::Null,
+            serde_json::json!({"loopback_exempt":true,"ipv4":"access_denied","ipv6":"access_denied"}),
+            serde_json::json!({"loopback_exempt":false,"ipv4":"loopback_unavailable","ipv6":"access_denied"}),
+            serde_json::json!({"loopback_exempt":false,"ipv4":"connection_refused","ipv6":"access_denied"}),
+        ] {
+            let mut changed = good.clone();
+            changed["network_isolation"] = observation;
+            assert!(serde_json::from_value::<RehearsalReady>(changed)
+                .and_then(|ready| ready.validate().map_err(serde::de::Error::custom))
                 .is_err());
         }
     }
