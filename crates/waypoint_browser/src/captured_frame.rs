@@ -4,6 +4,11 @@
 mod dialog;
 #[cfg(windows)]
 pub use dialog::{DialogChoice, DialogDescription, RecordedDialog, RecordedDialogOutcome};
+#[cfg(windows)]
+#[path = "recorded_summary.rs"]
+mod summary;
+#[cfg(windows)]
+pub use summary::{RecordedSummaryCapture, SummaryAnswer, SummaryKey};
 
 use super::*;
 use std::{
@@ -65,6 +70,7 @@ pub enum RecordedSectionOutcome {
         reason: RecordedSectionStop,
         form: LiveForm,
         image: String,
+        summary: Option<Result<Box<RecordedSummaryCapture>, DriverError>>,
     },
     Stopped(RecordedSectionStop),
 }
@@ -695,11 +701,18 @@ impl CdpDriver {
         let Some((form, reason)) = observation else {
             return Ok(Stopped(NoNewSection));
         };
+        let summary = matches!(reason, NoEditableFields)
+            .then(|| self.recorded_summary_before_image(&document));
         let image = if self.captured_scope.is_some() {
             self.screenshot_captured_frame()?
         } else {
             self.screenshot_base64()?
         };
+        let summary = summary.map(|result| {
+            let capture = result?;
+            self.verify_recorded_summary_native(&capture)?;
+            Ok(Box::new(capture))
+        });
         if self.inspect_current()? != form || self.recorded_document()? != document {
             return Ok(Stopped(DocumentChanged));
         }
@@ -710,6 +723,7 @@ impl CdpDriver {
             reason,
             form,
             image,
+            summary,
         })
     }
 

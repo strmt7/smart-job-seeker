@@ -97,6 +97,8 @@ mod private_inference;
 mod public_document;
 mod qualification_number;
 mod recorded_preview;
+#[cfg(windows)]
+mod recorded_summary;
 mod rehearsal_candidate;
 mod rehearsal_facts;
 mod resident_inference;

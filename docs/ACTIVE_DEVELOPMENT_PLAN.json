@@ -268,6 +268,8 @@
         "apps/web_app/src/rehearsal_facts.rs",
         "crates/waypoint_browser/src/captured_frame.rs",
         "crates/waypoint_browser/src/recorded_number_qualification.rs",
+        "crates/waypoint_browser/src/recorded_summary.rs",
+        "apps/web_app/src/recorded_summary.rs",
         "tools/form_corpus.py"
       ],
       "acceptance": [
@@ -277,6 +279,7 @@
         "Local inference with evaluated bounded runtime public research; no PII query leakage, remote-model fallback or transfer of research network authority to candidate actions"
       ],
       "evidence": [
+        "docs/g1/FINAL_SUMMARY_VERIFICATION_2026-11-18.md",
         "docs/g1/INDEPENDENT_ENTRY_EVIDENCE_2026-11-11.md",
         "docs/g1/TELEPHONE_PRESENTATION_2026-11-13.md",
         "docs/g1/HELD_OUT_INTAKE_AND_DOCUMENT_MATCHING_2026-11-13.md",
@@ -314,7 +317,7 @@
         "Measure the local model on the frozen corpus; provide actionable review records rather than invented answers.",
         "Qualify native-supported inference profiles per role, including projector/renderer/parser and advertised effort. Retain actual thinking/final/tool observations and sufficient admitted budgets; do not force maximum effort onto every primitive or promote from component probes. Incorporate current primary-source research and the adapted catalog guidance without treating instructions as runtime implementation."
       ],
-      "next_action": "Capture read-only native terminal summary evidence bound to the current document and compare blind visual observations independently against candidate-backed answers. Exercise missing, wrong and duplicate answers, repeated sections and replaced documents. The dense fictional replay verified 20 of 20 fields and saved the terminal view. The eight-field fictional replay independently exercised exact visual readback and two recoveries with the repeat stop. Both remain development evidence pending terminal and held-out qualification.",
+      "next_action": "Extend bound terminal-summary verification beyond one viewport. Capture bounded native regions without site interaction, retain heading-to-row identity across images, and verify agreement after segmented coverage. The current two-answer Qwen run verified a structured fictional summary; five changed, missing, duplicate, off-screen or replaced cases stayed pending. Add held-out structured and unfamiliar layouts, distinguish detached filenames from current file bytes, and continue measuring complete workflows.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "start_requirements": [
         "The frozen schema2 known-source initial-control case and native mutation fixture admit investigation of the observed actuator failure. This does not admit broad planner promotion; that still requires the varied held-out tranche and full workflow truth.",

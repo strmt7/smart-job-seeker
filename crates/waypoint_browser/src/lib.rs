@@ -38,7 +38,9 @@ pub use captured_frame::{
 #[cfg(windows)]
 pub use captured_frame::{DialogChoice, DialogDescription, RecordedDialog, RecordedDialogOutcome};
 #[cfg(windows)]
-pub use captured_frame::{RecordedSectionOutcome, RecordedSectionStop};
+pub use captured_frame::{
+    RecordedSectionOutcome, RecordedSectionStop, RecordedSummaryCapture, SummaryAnswer, SummaryKey,
+};
 pub mod capture_discovery;
 pub mod capture_privacy;
 pub mod capture_session;

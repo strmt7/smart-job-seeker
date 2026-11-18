@@ -378,6 +378,12 @@ read-only page when model admission fails. The five-step native fixture
 exercised capture. Use the retained dense-form timing and refusal evidence to
 qualify the verification steps below.
 
+The [independent summary check](g1/FINAL_SUMMARY_VERIFICATION_2026-11-18.md)
+now reconciles the current native summary, archived image and prepared
+answers within one viewport. Extend that evidence across bounded image
+regions, then qualify layouts that expose different review headings,
+repeated records, attachment widgets and unavailable values.
+
 1. Enumerate every required section/control and relevant repeated record again.
    Establish which controls are currently applicable, hidden, unresolved or
    intentionally unanswered.

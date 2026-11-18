@@ -219,10 +219,48 @@
       details.replaceChildren();
       if (!supportedView(view)) return;
       const reviewOnly = view.review_observation === true;
+      const summary = reviewOnly && view.final_summary?.scope === 'offline_saved_summary' ? view.final_summary : null;
+      const verifiedSummary = summary?.status === 'answers_verified' && view.final_review === true;
+      const summaryLabel = verifiedSummary ? 'Summary answers verified' : 'Summary needs review';
       if (stopNotice) {
-        stopNotice.textContent = reviewOnly ? 'The rehearsal stopped here. Inspect this saved view before continuing.' : stopMessage;
+        stopNotice.textContent = summary ? summaryLabel
+          : reviewOnly ? 'The rehearsal stopped here. Inspect this saved view before continuing.' : stopMessage;
+        stopNotice.className = verifiedSummary ? 'footnote' : 'review-label';
       }
       if (view.origin) details.append(el('p', view.origin, 'footnote'));
+      if (summary) {
+        const expected = count(summary.expected_count);
+        const matched = count(summary.matched_count);
+        if (!stopNotice) details.append(el('p', summaryLabel, verifiedSummary ? 'footnote' : 'review-label'));
+        if (expected !== null && matched !== null && matched <= expected) {
+          details.append(el('p', `${matched} of ${expected} prepared answers verified on this screen.`, 'footnote'));
+        }
+        if (typeof summary.reason === 'string') details.append(el('p', summary.reason.slice(0, 500), 'footnote'));
+        if (!verifiedSummary && Array.isArray(summary.comparisons)) {
+          const reasons = {
+            prepared_label_ambiguous: 'Repeated prepared label',
+            missing_from_summary: 'Missing from the summary',
+            native_label_ambiguous: 'Repeated summary label',
+            native_value_differs: 'Summary value differs',
+            outside_review_image: 'Outside the saved image',
+            missing_from_image_read: 'Unreadable in the saved image',
+            visual_label_ambiguous: 'Repeated label in the image',
+            visual_value_differs: 'Visible value differs',
+            attachment_content_unverified: 'Attachment contents need review',
+          };
+          const affected = summary.comparisons.filter(item => item?.key && typeof item.key.label === 'string' && reasons[item.status]);
+          if (affected.length) {
+            const list = el('ul');
+            for (const item of affected.slice(0, 40)) {
+              const sections = Array.isArray(item.key.sections) ? item.key.sections.filter(s => typeof s === 'string') : [];
+              const scopedLabel = [...sections, item.key.label].join(' · ').slice(0, 500);
+              list.append(el('li', `${scopedLabel} · ${reasons[item.status]}`));
+            }
+            details.append(list);
+            if (affected.length > 40) details.append(el('p', 'More summary checks are saved in the application record.', 'footnote'));
+          }
+        }
+      }
       const fields = Array.isArray(view.fields) ? view.fields.filter(field => field && typeof field.label === 'string').slice(0, 40) : [];
       const total = count(view.field_count);
       if (total > fields.length) details.append(el('p', `Showing ${fields.length} of ${total} fields.`, 'footnote'));

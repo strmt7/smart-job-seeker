@@ -277,6 +277,22 @@ function harness(api, onFinished) {
   assert.equal(find(review,node => node.textContent==='No fields were tested in this view.'),undefined);
   await button(review,'View image').listeners.click();
   assert(find(review,node => node.tag==='img'));
+  const summaryRecord = {scope:'offline_saved_summary',status:'pending_manual_review',
+    expected_count:2,matched_count:1,reason:'Some prepared answers need review',
+    comparisons:[{key:{sections:['Contact'],label:'Email'},status:'native_value_differs'}]};
+  const summaryPreview = (final_review, final_summary) => {
+    const panel = harness(async () => {}).preview({views:[preview.views[0],{...terminal,final_review,final_summary}],
+      rehearsal:{scope:'fictional_saved_form',halted:true,sections:[{view:1,status:'stopped',reason:'no_editable_fields',review_view:2}]}},{});
+    button(panel,'Open review view').listeners.click();
+    return panel;
+  };
+  const pendingSummary = summaryPreview(false, summaryRecord);
+  assert(find(pendingSummary,node => node.textContent==='Summary needs review'));
+  assert(find(pendingSummary,node => node.textContent==='1 of 2 prepared answers verified on this screen.'));
+  assert(find(pendingSummary,node => node.textContent==='Contact · Email · Summary value differs'));
+  const checkedSummary = summaryPreview(true,{...summaryRecord,status:'answers_verified',matched_count:2,reason:undefined,comparisons:[]});
+  assert(find(checkedSummary,node => node.textContent==='Summary answers verified'));
+  assert(find(checkedSummary,node => node.textContent==='2 of 2 prepared answers verified on this screen.'));
   const unbound = harness(async () => {}).preview({views:[preview.views[0],{...terminal,observed_after_view:3}],rehearsal:{
     scope:'fictional_saved_form',sections:[{view:1,status:'stopped',reason:'no_editable_fields',review_view:2}],
   }},{});

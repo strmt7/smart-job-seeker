@@ -365,6 +365,7 @@ fn record_scope(
 ) -> Result<(), String> {
     use waypoint_browser::{RecordedSectionOutcome, RecordedSectionStop};
     let first_view = views.len() + 1;
+    let first_entry = rehearsal.as_ref().map_or(0, |run| run.fields.len());
     let mut prior = Vec::new();
     let mut pending: Option<(usize, String)> = None;
     let mut pending_dialog: Option<usize> = None;
@@ -478,17 +479,31 @@ fn record_scope(
                 reason,
                 form,
                 image,
+                summary,
             }) => {
                 let mut transition = json!({"view":view,"status":"stopped","reason":reason});
                 match save_review_observation(
                     evidence,
                     label,
-                    form,
-                    image,
+                    &form,
+                    &image,
                     embedded,
                     (first_view, section, view),
                 ) {
-                    Ok(captured) => {
+                    Ok(mut captured) => {
+                        if let Some(summary) = summary {
+                            let report = crate::recorded_summary::inspect(
+                                driver,
+                                &form,
+                                &image,
+                                summary,
+                                &rehearsal.fields[first_entry..],
+                                |image| rehearsal.vision.read_summary(image),
+                            );
+                            captured["final_review"] =
+                                json!(report["status"] == "answers_verified");
+                            captured["final_summary"] = report;
+                        }
                         views.push(captured);
                         transition["review_view"] = json!(views.len());
                     }
@@ -591,6 +606,12 @@ struct RehearsalVision {
 
 #[cfg(windows)]
 impl RehearsalVision {
+    fn read_summary(&mut self, image: &str) -> Result<Value, String> {
+        self.memory.check()?;
+        let model = self.model.as_mut().ok_or("The local model needs review")?;
+        crate::visual_review::inspect_recorded_summary_image(model, self.addr, image)
+    }
+
     fn research_issue(
         &mut self,
         directory: &Path,
@@ -1458,6 +1479,7 @@ impl Rehearsal {
             let index = self.fields.len();
             let mut result =
                 json!({"view":view,"label":bounded_text(&field.label),"status":"entry_unverified"});
+            result["summary_key"] = json!(waypoint_browser::SummaryKey::from_field(field));
             if field.field_type != FormFieldType::File {
                 result["candidate_source"] = json!({"scope":self.candidate_metadata["scope"],
                     "profile_sha256":profile_sha,"snapshot_sha256":self.candidate_metadata["snapshot_sha256"],"schema_sha256":schema_sha});
@@ -1857,7 +1879,7 @@ fn capture_view(
         .map(|field| driver.recorded_control_identity(&form, &field.selector))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| error.to_string())?;
-    let mut view = save_view(evidence, label, form, image, embedded)?;
+    let mut view = save_view(evidence, label, &form, &image, embedded)?;
     for (field, control) in view["fields"]
         .as_array_mut()
         .ok_or("Saved control inventory is unavailable")?
@@ -1881,8 +1903,8 @@ fn bounded_text(text: &str) -> String {
 fn save_review_observation(
     evidence: &mut ScreenshotArchive<'_>,
     label: &str,
-    form: waypoint_applications::driver::LiveForm,
-    image: String,
+    form: &waypoint_applications::driver::LiveForm,
+    image: &str,
     embedded: bool,
     (scope_view, section, from): (usize, usize, usize),
 ) -> Result<Value, String> {
@@ -1899,11 +1921,11 @@ fn save_review_observation(
 fn save_view(
     evidence: &mut ScreenshotArchive<'_>,
     label: &str,
-    form: waypoint_applications::driver::LiveForm,
-    image: String,
+    form: &waypoint_applications::driver::LiveForm,
+    image: &str,
     embedded: bool,
 ) -> Result<Value, String> {
-    let (name, sha256) = evidence.save(&image)?;
+    let (name, sha256) = evidence.save(image)?;
     let fields: Vec<_> = form
         .schema
         .fields
@@ -2691,6 +2713,17 @@ mod tests {
             sections: Vec<Vec<(String, String)>>,
             #[serde(default)]
             measure_first_section: bool,
+            summary: Option<SummaryQualification>,
+        }
+
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct SummaryQualification {
+            expected_status: String,
+            comparison_statuses: Option<Vec<String>>,
+            test_visual_observation: Option<Value>,
+            model: Option<crate::private_inference::Selection>,
+            replacement_url: Option<String>,
         }
         let target = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../target")
@@ -2727,6 +2760,7 @@ mod tests {
                 .map_err(|error| error.to_string())?;
             let mut prior = Vec::new();
             let mut verified_entries = 0;
+            let mut prepared = Vec::new();
             for (index, expected) in fixture.sections.iter().enumerate() {
                 assert_eq!(form.schema.fields.len(), expected.len());
                 let mut entries = Vec::new();
@@ -2749,6 +2783,11 @@ mod tests {
                     let entry = entry.map_err(|error| error.to_string())?;
                     assert_eq!(entry.observed_value(), value);
                     assert!(entry.continuation().is_none());
+                    if fixture.summary.is_some() {
+                        let key = waypoint_browser::SummaryKey::from_field(field);
+                        prepared.push(json!({"summary_key":key,"intended_value":value,
+                            "status":"visually_matched","native_verified":true,"kind":"text"}));
+                    }
                     entries.push(entry);
                     verified_entries += 1;
                 }
@@ -2786,6 +2825,7 @@ mod tests {
                     reason: RecordedSectionStop::NoEditableFields,
                     form,
                     image,
+                    summary,
                 } = outcome
                 else {
                     return Err("The terminal observation was unavailable".into());
@@ -2807,11 +2847,11 @@ mod tests {
                 }
                 assert_eq!(replay["unsupported_targets"], json!({}));
                 let mut evidence = ScreenshotArchive::new(&output);
-                let view = save_review_observation(
+                let mut view = save_review_observation(
                     &mut evidence,
                     "Page",
-                    form,
-                    image,
+                    &form,
+                    &image,
                     false,
                     (1, index + 1, index + 1),
                 )?;
@@ -2823,8 +2863,83 @@ mod tests {
                     waypoint_domain::sha256_hex(&fs::read(path).unwrap()),
                     view["sha256"]
                 );
+                let mut model_admission = Value::Null;
+                if let Some(qualification) = &fixture.summary {
+                    let summary = summary.ok_or("The native review summary was missing")?;
+                    if let Some(replacement) = &qualification.replacement_url {
+                        let replacement_form = driver
+                            .open(replacement)
+                            .map_err(|error| error.to_string())?;
+                        assert_eq!(replacement_form.schema.fields, form.schema.fields);
+                        assert_eq!(replacement_form.walls, form.walls);
+                    }
+                    let report = if let Some(selection) = &qualification.model {
+                        assert!(qualification.test_visual_observation.is_none());
+                        let _lease = crate::doc_suggest::lease()?;
+                        let task = "terminal-summary-qualification";
+                        let attempt = output.join(task);
+                        let screenshots = attempt.join("screenshots");
+                        fs::create_dir(&attempt).map_err(|error| error.to_string())?;
+                        fs::create_dir(&screenshots).map_err(|error| error.to_string())?;
+                        crate::private_inference::create_namespace(&attempt, task)?;
+                        let mut session = crate::private_inference::Session::admit(
+                            selection,
+                            &fixture.python,
+                            &screenshots,
+                        )
+                        .map_err(|error| match error {
+                            crate::private_inference::AdmissionError::Unavailable(reason)
+                            | crate::private_inference::AdmissionError::CleanupFailed(reason) => {
+                                reason
+                            }
+                        })?;
+                        assert_eq!(session.metadata["mode"], "private");
+                        let mut vision = RehearsalVision::new(
+                            session.addr,
+                            selection.choice.as_ref(),
+                            session.runtime.clone(),
+                            true,
+                            std::time::Instant::now() + std::time::Duration::from_secs(150),
+                        );
+                        let report = crate::recorded_summary::inspect(
+                            &mut driver,
+                            &form,
+                            &image,
+                            summary,
+                            &prepared,
+                            |image| vision.read_summary(image),
+                        );
+                        let stopped = session.stop();
+                        let drained = crate::private_inference::cleanup_namespace(&attempt, task);
+                        model_admission = session.metadata.clone();
+                        stopped?;
+                        drained?;
+                        report
+                    } else {
+                        crate::recorded_summary::inspect(
+                            &mut driver,
+                            &form,
+                            &image,
+                            summary,
+                            &prepared,
+                            |_| {
+                                qualification
+                                    .test_visual_observation
+                                    .clone()
+                                    .ok_or("Visual test input missing".into())
+                            },
+                        )
+                    };
+                    view["final_review"] = json!(report["status"] == "answers_verified");
+                    view["final_summary"] = report;
+                    assert_eq!(
+                        driver.page_controls().map_err(|error| error.to_string())?,
+                        controls
+                    );
+                }
                 return Ok(
-                    json!({"entry_fields":verified_entries,"sections":index+1,"view":view,"replay":replay,"delivery_control_unchanged":true}),
+                    json!({"entry_fields":verified_entries,"sections":index+1,"view":view,"replay":replay,
+                        "delivery_control_unchanged":true,"model_admission":model_admission}),
                 );
             }
             Err("The fictional fixture supplied no terminal section".into())
@@ -2846,6 +2961,22 @@ mod tests {
             serde_json::to_vec_pretty(&saved).unwrap(),
         )
         .unwrap();
+        if let Some(summary) = fixture.summary {
+            let report = &saved["view"]["final_summary"];
+            assert_eq!(report["status"], summary.expected_status);
+            if let Some(comparisons) = summary.comparison_statuses {
+                let checks: Vec<_> = report["comparisons"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|check| check["status"].as_str().unwrap())
+                    .collect();
+                assert_eq!(checks, comparisons);
+            }
+            if summary.replacement_url.is_some() {
+                assert_eq!(report["native_revalidated"], false);
+            }
+        }
     }
 
     #[cfg(windows)]

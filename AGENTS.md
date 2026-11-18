@@ -397,6 +397,11 @@ used by development tools and tests. Do not add WSL or Docker as product require
   section headings separate in the model response. Retain the raw observations
   and compare the visible characters exactly. See
   [literal field readback](docs/g1/LITERAL_FIELD_READBACK_2026-11-18.md).
+- The form inspector includes section names in display labels. For final
+  summary checks, derive the field label from the recorded section path and
+  keep the path separate. Compare current native and blind visual observations
+  with the prepared value. A matched filename does not establish file bytes.
+  See [summary verification](docs/g1/FINAL_SUMMARY_VERIFICATION_2026-11-18.md).
 - An iframe's full-box center can be offscreen while its fields are visible.
   Owner availability uses a common ancestor-viewport intersection and native
   hit tests; each actual field still requires complete visual/native checks.
