@@ -261,10 +261,11 @@ impl CdpDriver {
             });
         }
         review_target(&RecordedTargetCapture {
-            associated_label_detail: false,
             witness: None,
-            detail_image: Some(detail),
-            detail_error: None,
+            detail: RecordedDetailCapture {
+                image: Some(detail),
+                ..Default::default()
+            },
             image,
             label: control.label.clone(),
             required_marker: false,

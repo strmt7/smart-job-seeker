@@ -215,6 +215,7 @@ enum FieldContextCrop {
 struct FieldLabelContextBounds {
     bounds: [f64; 8],
     viewport: [f64; 2],
+    focus: [f64; 4],
 }
 
 // A radio's question and option text usually extend beyond its tiny input box.
@@ -2280,29 +2281,15 @@ impl CdpDriver {
     /// Capture a native-associated label/control region without changing focus.
     /// A distant or clipped label can remain unreadable; this grants no action.
     pub fn screenshot_field_detail(&mut self, selector: &str) -> Result<String, DriverError> {
-        self.screenshot_field_detail_bound(selector)
-            .map(|(image, _)| image)
-    }
-
-    fn screenshot_field_detail_bound(
-        &mut self,
-        selector: &str,
-    ) -> Result<(String, bool), DriverError> {
         self.screenshot_field_detail_with_labels(selector, false)
-    }
-
-    fn screenshot_file_detail_bound(
-        &mut self,
-        selector: &str,
-    ) -> Result<(String, bool), DriverError> {
-        self.screenshot_field_detail_with_labels(selector, true)
+            .map(|(image, _)| image)
     }
 
     fn screenshot_field_detail_with_labels(
         &mut self,
         selector: &str,
         tight_file_labels: bool,
-    ) -> Result<(String, bool), DriverError> {
+    ) -> Result<(String, Option<[f64; 4]>), DriverError> {
         let node = self
             .node_id(selector)?
             .ok_or_else(|| DriverError("Field is unavailable for detail capture".into()))?;
@@ -2317,7 +2304,7 @@ impl CdpDriver {
                     "Field label geometry changed during capture".into(),
                 ));
             }
-            return Ok((image, true));
+            return Ok((image, Some(bounds.focus)));
         }
         if self.captured_scope.is_some() {
             return Err(DriverError(
@@ -2334,7 +2321,7 @@ impl CdpDriver {
             .ok_or_else(|| DriverError("Field has no detail bounds".into()))?;
         let numbers: Vec<f64> = quad.iter().filter_map(Value::as_f64).collect();
         self.screenshot_bounds_with_crop(&numbers, true, false, FieldContextCrop::Detail)
-            .map(|image| (image, false))
+            .map(|image| (image, None))
     }
 
     fn field_label_context_bounds(
@@ -2369,13 +2356,22 @@ impl CdpDriver {
         if value["unavailable"] == true {
             return Ok(None);
         }
-        serde_json::from_value(value.clone())
-            .map(Some)
-            .map_err(|_| {
+        let bounds: FieldLabelContextBounds =
+            serde_json::from_value(value.clone()).map_err(|_| {
                 DriverError(
                     "Associated labels are clipped, hidden or exceed the detail budget".into(),
                 )
-            })
+            })?;
+        let [left, top, right, bottom] = bounds.focus;
+        if !bounds.focus.iter().all(|edge| (0.0..=1.0).contains(edge))
+            || left >= right
+            || top >= bottom
+        {
+            return Err(DriverError(
+                "Control bounds are outside the associated label capture".into(),
+            ));
+        }
+        Ok(Some(bounds))
     }
 
     /// Capture post-entry context, including more of a native file chooser's

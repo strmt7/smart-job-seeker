@@ -64,11 +64,44 @@ minimum sampled host availability was 11,490,328,576 bytes. The model session
 closed. The retained result is under
 `target/private-rehearsal-qualification-ms6tq2hh/`.
 
-Coverage remains scoped to authored replay fixtures and explicit native button
-controls. The employment fixture needs target-focused detail capture to address
-the neighboring control disagreement without weakening the conflict check.
-Representative navigation across embedded, custom and server-managed workflows
-remains open.
+## Field location in detail images
+
+The browser now compares both the crop and the target's position before and
+after capturing a native-associated detail image. The model receives the
+target's fractional location within the image. It reads one label and control
+type from the original pixels. The first visual observation and the detail
+response are both retained. The reviewer blocks ambiguous observations and
+checks for conflicting readings when the two passes describe the same control.
+
+On the same frozen employment-history input, Qwen 3.8 27B visually verified
+**4/4** native entries and selected **Review application**. The final review
+matched all four expected answers, with zero extra rows and a fresh native
+verification. The replay recorded `not_performed_by_replay` for delivery. The
+early stop in the previous 3/4 run remains in the comparison evidence. Both
+runs used source-fixture SHA-256 `70bc4c6311082063ea5f38e0e1c3005d3381098d231ed32da85ab691950a92c9`.
+
+The four focused responses each contained one observation and ended naturally.
+The native Ollama 0.40.16 requests used `xhigh`, 16,384 context tokens and an
+8,192-token output budget. Their outputs used 139, 2,342, 170 and 1,643 tokens.
+Both month controls were slower to reason about. The controller took 698.879
+seconds including build, setup and cleanup. Peak job commit was 14,552,711,168
+bytes and minimum sampled free physical memory was 13,285,388,288 bytes. The
+private model session closed. Retained records and the reviewed summary image
+are under `target/private-rehearsal-qualification-zqagvh4y/`.
+
+An isolated native select fixture matched the recorded focus rectangle to the
+browser's border quad. It withheld focus for hidden, distant and clipped labels.
+The isolated file-label and dialog suites passed. The Windows workspace passed
+1,489 tests with 624 opt-in tests ignored by that command. Clippy passed with
+warnings denied. Native regression receipts are under
+`target/focused-field-detail-7d921ac4/final/`.
+
+This comparison covers one authored history workflow. The next qualification
+needs unfamiliar repeated and embedded layouts, including close neighboring
+controls, and should measure whether focused vision stays accurate on them.
+Server-managed workflows also remain open.
+
+## Workspace validation for the original navigation change
 
 The Windows workspace suite passed 1,488 tests, with 624 opt-in checks ignored
 by that command. Clippy passed with warnings denied. The first workspace run

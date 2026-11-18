@@ -234,9 +234,7 @@ fn section_fields(form: &LiveForm) -> std::collections::BTreeSet<Vec<String>> {
 /// Only the recorded driver can construct this evidence.
 pub struct RecordedFieldCapture {
     image: String,
-    detail_image: Option<String>,
-    detail_error: Option<String>,
-    associated_label_detail: bool,
+    detail: RecordedDetailCapture,
     native_text_without_placeholder: bool,
     label: String,
     kind: RecordedFieldKind,
@@ -263,14 +261,19 @@ struct RecordedFieldBinding {
 /// The caller may refuse the action; accepting never bypasses native checks.
 pub struct RecordedTargetCapture {
     image: String,
-    detail_image: Option<String>,
-    detail_error: Option<String>,
-    associated_label_detail: bool,
+    detail: RecordedDetailCapture,
     label: String,
     kind: &'static str,
     required_marker: bool,
     file_group_label: Option<String>,
     witness: Option<RecordedFieldWitness>,
+}
+
+#[derive(Default)]
+struct RecordedDetailCapture {
+    image: Option<String>,
+    error: Option<String>,
+    focus: Option<[f64; 4]>,
 }
 
 /// Legacy native identity plus separate read-only structural evaluation identity.
@@ -424,7 +427,7 @@ fn unique_file_group_label(form: &LiveForm, field: &FormField) -> Option<String>
 
 impl RecordedTargetCapture {
     pub fn associated_label_detail(&self) -> bool {
-        self.associated_label_detail
+        self.detail.focus.is_some()
     }
     pub fn witness(&self) -> Option<RecordedFieldWitness> {
         self.witness.clone()
@@ -436,10 +439,15 @@ impl RecordedTargetCapture {
         &self.image
     }
     pub fn detail_image(&self) -> Option<&str> {
-        self.detail_image.as_deref()
+        self.detail.image.as_deref()
     }
     pub fn detail_error(&self) -> Option<&str> {
-        self.detail_error.as_deref()
+        self.detail.error.as_deref()
+    }
+    /// Control edges (left, top, right, bottom) in fractional image coordinates.
+    /// Only stable, native-associated detail captures include this information.
+    pub fn detail_focus(&self) -> Option<[f64; 4]> {
+        self.detail.focus
     }
     pub fn label(&self) -> &str {
         &self.label
@@ -471,17 +479,17 @@ impl RecordedFieldCapture {
     /// verification continues to use the retained command and binding.
     pub fn release_archived_pixels(&mut self) {
         self.image = String::new();
-        self.detail_image = None;
+        self.detail.image = None;
     }
 
     pub fn associated_label_detail(&self) -> bool {
-        self.associated_label_detail
+        self.detail.focus.is_some()
     }
     /// The detail has a native label binding and a nonempty native control
     /// value, with the placeholder hidden on both sides of the capture.
     pub fn literal_readback_available(&self) -> bool {
-        self.associated_label_detail
-            && self.detail_image.is_some()
+        self.associated_label_detail()
+            && self.detail.image.is_some()
             && self.native_text_without_placeholder
     }
     /// A native-inspected additive state, never an approval or an old fill plan.
@@ -497,10 +505,10 @@ impl RecordedFieldCapture {
     }
 
     pub fn detail_image(&self) -> Option<&str> {
-        self.detail_image.as_deref()
+        self.detail.image.as_deref()
     }
     pub fn detail_error(&self) -> Option<&str> {
-        self.detail_error.as_deref()
+        self.detail.error.as_deref()
     }
     pub fn file_group_label(&self) -> Option<&str> {
         self.file_group_label.as_deref()
@@ -806,9 +814,7 @@ impl CdpDriver {
         let image = self.screenshot_field_context(&target.selector)?;
         let screenshot = RecordedTargetCapture {
             witness: None,
-            detail_image: None,
-            detail_error: None,
-            associated_label_detail: false,
+            detail: RecordedDetailCapture::default(),
             image,
             label: target.label.clone(),
             required_marker: false,
@@ -1248,13 +1254,10 @@ impl CdpDriver {
             self.scroll_field_into_view(selector)?;
             self.screenshot_field_context(selector)?
         };
-        let (detail_image, detail_error, associated_label_detail) =
-            self.recorded_detail_context(selector, kind);
+        let detail = self.recorded_detail_context(selector, kind);
         let control = self.recorded_control_identity(form, selector)?;
         review_target(&RecordedTargetCapture {
-            associated_label_detail,
-            detail_image,
-            detail_error,
+            detail,
             witness: Some(RecordedFieldWitness {
                 selector: selector.to_owned(),
                 control: control.clone(),
@@ -1349,8 +1352,7 @@ impl CdpDriver {
         } else {
             self.screenshot_field_feedback(selector)?
         };
-        let (detail_image, detail_error, associated_label_detail) =
-            self.recorded_detail_context(selector, kind);
+        let detail = self.recorded_detail_context(selector, kind);
         let native_text_without_placeholder = if let Some(before) = text_before {
             let after = self.native_text_snapshot(selector)?;
             if after.value != observed_value {
@@ -1405,12 +1407,10 @@ impl CdpDriver {
             _ => None,
         };
         Ok(RecordedFieldCapture {
-            associated_label_detail,
+            detail,
             native_text_without_placeholder,
             binding,
             continuation,
-            detail_image,
-            detail_error,
             file_group_context: file_group_label.as_ref().map(|_| field.context.clone()),
             file_group_label,
             observed_value,
@@ -1432,26 +1432,25 @@ impl CdpDriver {
         &mut self,
         selector: &str,
         kind: RecordedFieldKind,
-    ) -> (Option<String>, Option<String>, bool) {
-        if matches!(
-            kind,
+    ) -> RecordedDetailCapture {
+        let tight_file_labels = match kind {
+            RecordedFieldKind::File => true,
+            RecordedFieldKind::Radio => return RecordedDetailCapture::default(),
             RecordedFieldKind::Text
-                | RecordedFieldKind::Number
-                | RecordedFieldKind::Month
-                | RecordedFieldKind::Select
-                | RecordedFieldKind::File
-        ) {
-            let detail = if matches!(kind, RecordedFieldKind::File) {
-                self.screenshot_file_detail_bound(selector)
-            } else {
-                self.screenshot_field_detail_bound(selector)
-            };
-            match detail {
-                Ok((image, bound)) => (Some(image), None, bound),
-                Err(error) => (None, Some(error.to_string()), false),
-            }
-        } else {
-            (None, None, false)
+            | RecordedFieldKind::Number
+            | RecordedFieldKind::Month
+            | RecordedFieldKind::Select => false,
+        };
+        match self.screenshot_field_detail_with_labels(selector, tight_file_labels) {
+            Ok((image, focus)) => RecordedDetailCapture {
+                image: Some(image),
+                focus,
+                error: None,
+            },
+            Err(error) => RecordedDetailCapture {
+                error: Some(error.to_string()),
+                ..Default::default()
+            },
         }
     }
 
@@ -1699,18 +1698,15 @@ impl CdpDriver {
         } else {
             self.screenshot_field_feedback(selector)?
         };
-        let (detail, error, associated_label_detail) =
-            self.recorded_detail_context(selector, capture.kind);
+        let detail = self.recorded_detail_context(selector, capture.kind);
         let text_after = self.verify_recorded_observation_state(capture)?;
-        if capture.associated_label_detail && !associated_label_detail {
+        if capture.associated_label_detail() && detail.focus.is_none() {
             return Err(DriverError(
                 "The recorded field label could not be verified in a fresh image".into(),
             ));
         }
         capture.image = image;
-        capture.detail_image = detail;
-        capture.detail_error = error;
-        capture.associated_label_detail = associated_label_detail;
+        capture.detail = detail;
         capture.native_text_without_placeholder = text_before && text_after;
         Ok(())
     }
@@ -2655,22 +2651,22 @@ mod tests {
             let result=(|| -> Result<Value,DriverError> {
                 let before=driver.open(entry)?;
                 let original=driver.screenshot_field_feedback("#upload")?;
-                let (image,error,associated)=driver.recorded_detail_context("#upload",crate::RecordedFieldKind::File);
+                let detail=driver.recorded_detail_context("#upload",crate::RecordedFieldKind::File);
                 if driver.inspect_current()? != before { return Err(DriverError("Read-only detail capture changed the form".into())); }
                 let repeated=driver.screenshot_field_feedback("#upload")?;
                 if original.get(..44) != repeated.get(..44) { return Err(DriverError("Primary context geometry changed".into())); }
                 if allowed {
-                    let image=image.ok_or_else(||DriverError(format!("File detail missing: {error:?}")))?;
-                    if !associated {return Err(DriverError("File label association was not bound".into()));}
+                    let image=detail.image.ok_or_else(||DriverError(format!("File detail missing: {:?}",detail.error)))?;
+                    let focus=detail.focus.ok_or_else(||DriverError("File label association was not bound".into()))?;
                     let node=driver.node_id("#upload")?.ok_or_else(||DriverError("File input disappeared".into()))?;
                     let bounds=driver.field_label_context_bounds(node,true)?.ok_or_else(||DriverError("File label context disappeared".into()))?.bounds;
                     let (width,height)=(bounds[2]-bounds[0],bounds[5]-bounds[1]);
                     if !(340.0..=720.0).contains(&width) || !(40.0..=400.0).contains(&height) {return Err(DriverError("File-only bounds exceed their complete context budget".into()));}
                     crate::rehearsal_capture::write_new(&folder,&format!("file-{name}.base64.private.txt"),image.as_bytes()).map_err(DriverError)?;
-                    if name=="wide" && driver.screenshot_field_detail_bound("#upload").is_ok() {return Err(DriverError("Wide-label fixture failed to exceed the old element-box budget".into()));}
-                    Ok(json!({"width":width,"height":height,"associated":associated,"image_sha256":waypoint_domain::sha256_hex(image.as_bytes())}))
-                } else if image.is_none() && error.is_some() && !associated {
-                    Ok(json!({"refused":true,"reason":error}))
+                    if name=="wide" && driver.screenshot_field_detail("#upload").is_ok() {return Err(DriverError("Wide-label fixture failed to exceed the old element-box budget".into()));}
+                    Ok(json!({"width":width,"height":height,"associated":true,"focus":focus,"image_sha256":waypoint_domain::sha256_hex(image.as_bytes())}))
+                } else if detail.image.is_none() && detail.error.is_some() && detail.focus.is_none() {
+                    Ok(json!({"refused":true,"reason":detail.error}))
                 } else {Err(DriverError("Incomplete/wrong-type file label context was accepted".into()))}
             })();
             let closed=driver.execute(&waypoint_applications::form_mapping::BrowserCommand::Close).is_ok();

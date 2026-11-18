@@ -5,7 +5,8 @@ function waypointFieldLabelContext(tightFileLabels = false, projectInline = true
     // Only the fixed native file-detail caller opts into text-range label
     // geometry. Existing text/select crops keep their original element bounds.
     if (tightFileLabels && (this.localName !== 'input' || this.type !== 'file')) return null;
-    const root = this.getRootNode(), labels = new Set(), regions = [this];
+    const control = this.getBoundingClientRect();
+    const root = this.getRootNode(), labels = new Set(), regions = [{element:this, rect:control}];
     const references = element => {
         const raw = element.getAttribute('aria-labelledby');
         if (raw === null) return true;
@@ -87,6 +88,11 @@ function waypointFieldLabelContext(tightFileLabels = false, projectInline = true
     if (left < 0 || top < 0 || right > innerWidth || bottom > innerHeight || right-left > 704 || bottom-top > 384) return null;
     left = Math.max(0, left-8); top = Math.max(0, top-8);
     right = Math.min(innerWidth, right+8); bottom = Math.min(innerHeight, bottom+8);
+    // Relative bounds survive the translation into each parent viewport and
+    // the screenshot's uniform raster scale. Include them in the repeated
+    // geometry observation even if the surrounding label bounds stay fixed.
+    const focus = [(control.left-left)/(right-left), (control.top-top)/(bottom-top),
+        (control.right-left)/(right-left), (control.bottom-top)/(bottom-top)];
     // DOM ranges in same-origin frames use child viewport coordinates. Bind
     // the rendered crop to each native frame owner before using page pixels.
     let view = this.ownerDocument.defaultView;
@@ -116,5 +122,5 @@ function waypointFieldLabelContext(tightFileLabels = false, projectInline = true
         view = outer;
     }
     if (!view) return null;
-    return {bounds:[left,top,right,top,right,bottom,left,bottom], viewport:[view.innerWidth,view.innerHeight]};
+    return {bounds:[left,top,right,top,right,bottom,left,bottom], viewport:[view.innerWidth,view.innerHeight], focus};
 }

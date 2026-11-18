@@ -52,14 +52,11 @@ fn native_label_detail_captures_complete_context_or_refuses() {
             } else {
                 Value::Null
             };
-            let image = driver.screenshot_field_detail_bound("#country");
+            let image = driver.screenshot_field_detail_with_labels("#country", false);
             if allowed {
-                let (image, associated) = image?;
-                if !associated {
-                    return Err(DriverError(
-                        "Native associated context was not bound".into(),
-                    ));
-                }
+                let (image, focus) = image?;
+                let focus = focus
+                    .ok_or_else(|| DriverError("Native associated context was not bound".into()))?;
                 let node = driver
                     .node_id("#country")?
                     .ok_or_else(|| DriverError("Field disappeared".into()))?;
@@ -73,6 +70,27 @@ fn native_label_detail_captures_complete_context_or_refuses() {
                         "Complete label/group context was not captured within budget".into(),
                     ));
                 }
+                let model = driver
+                    .cdp
+                    .call("DOM.getBoxModel", json!({"nodeId":node}))
+                    .map_err(derr)?;
+                let quad: [f64; 8] = serde_json::from_value(model["model"]["border"].clone())
+                    .map_err(|_| DriverError("Control has no native border quad".into()))?;
+                let expected = [
+                    (quad[0] - bounds[0]) / width,
+                    (quad[1] - bounds[1]) / height,
+                    (quad[4] - bounds[0]) / width,
+                    (quad[5] - bounds[1]) / height,
+                ];
+                if focus
+                    .iter()
+                    .zip(expected)
+                    .any(|(actual, expected)| (actual - expected).abs() > 0.002)
+                {
+                    return Err(DriverError(
+                        "Detail focus did not match the native control quad".into(),
+                    ));
+                }
                 crate::rehearsal_capture::write_new(
                     &folder,
                     &format!("{name}.base64.private.txt"),
@@ -80,7 +98,7 @@ fn native_label_detail_captures_complete_context_or_refuses() {
                 )
                 .map_err(DriverError)?;
                 Ok(
-                    json!({"width":width,"height":height,"base64_sha256":waypoint_domain::sha256_hex(image.as_bytes())}),
+                    json!({"width":width,"height":height,"focus":focus,"native_focus":expected,"base64_sha256":waypoint_domain::sha256_hex(image.as_bytes())}),
                 )
             } else if image.is_err() {
                 Ok(json!({"refused":true,"clipping":clipping}))

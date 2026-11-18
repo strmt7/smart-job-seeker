@@ -362,9 +362,11 @@ are the next completion gates. [Rehearsal evidence](g1/REHEARSAL_PROGRESS_2026-1
 The saved-copy workflow now classifies native button intent from the current
 control inventory. It rechecks the selected native identity, visual target and
 resulting document. The mounted two-step Spanish fixture reached and verified
-final review. The frozen history fixture still stops on an inconsistent visual
-read of a neighboring control. Use native geometry to focus its detail image
-and retain the original conflict evidence.
+final review. The unchanged history fixture also reached final review after
+native geometry focused the detail read. All four answers matched. The previous
+neighboring-control conflict remains in the comparison evidence. Qualify this
+method on unfamiliar repeated layouts and embedded forms, and measure the
+longer visual reasoning observed on the month controls.
 [Navigation qualification](g1/RECORDED_NAVIGATION_2026-11-18.md)
 
 ### R04.3 — Repeated, conditional and complex controls
