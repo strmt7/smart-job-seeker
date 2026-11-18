@@ -45,8 +45,25 @@ fn setup() -> (PathBuf, RehearsalConfig, PathBuf) {
     )
 }
 
-fn assert_matching_control_engine(config: &RehearsalConfig) {
+fn assert_matching_control_engine(python: &std::path::Path, config: &RehearsalConfig) {
     use std::io::Read;
+    use std::os::windows::process::CommandExt;
+    // An unrestricted headless browser can still trigger Windows firewall UI.
+    let tools = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tools");
+    let status = std::process::Command::new(python)
+        .args([
+            "-B",
+            "-c",
+            "import sys; sys.path.insert(0, sys.argv[1]); from owned_process import windows_session_id; sys.exit(0 if windows_session_id() == 0 else 2)",
+        ])
+        .arg(tools)
+        .creation_flags(0x08000000) // CREATE_NO_WINDOW
+        .status()
+        .expect("check native Windows session for unrestricted browser controls");
+    assert!(
+        status.success(),
+        "unrestricted browser controls require a non-interactive Windows session (session 0)"
+    );
     let executable = std::fs::canonicalize(
         std::env::var_os("WAYPOINT_BROWSER").expect("explicit matched control engine"),
     )
@@ -195,7 +212,7 @@ fn isolated_ipv6_channels_have_a_matching_unrestricted_baseline() {
 
 fn scripted_channel_qualification(address: std::net::SocketAddr) {
     let (python, mut config, local) = setup();
-    assert_matching_control_engine(&config);
+    assert_matching_control_engine(&python, &config);
     let server = network::Receiver::start_on(address);
     let folder = config.content_root.parent().unwrap().join(format!(
         "channel-snapshot-{}-{}",
@@ -320,7 +337,7 @@ fn start_relay_attempt(driver: &mut CdpDriver) {
 #[ignore = "explicit matched headless engine; fictional IPv4/IPv6 UDP/TCP relay receivers only"]
 fn isolated_webrtc_relay_channels_have_matching_unrestricted_baselines() {
     let (python, config, local) = setup();
-    assert_matching_control_engine(&config);
+    assert_matching_control_engine(&python, &config);
     let root = config.content_root.parent().unwrap().to_owned();
     let mut observations = Vec::new();
     for address in ["127.0.0.1:0", "[::1]:0"] {
@@ -404,7 +421,7 @@ fn public_https_canary_observations() {
         nonce: String,
     }
     let (python, config, local) = setup();
-    assert_matching_control_engine(&config);
+    assert_matching_control_engine(&python, &config);
     let root = config.content_root.parent().unwrap();
     let spec = std::fs::canonicalize(
         std::env::var_os("WAYPOINT_INTERNET_CANARY_CONFIG").expect("explicit temporary receiver"),

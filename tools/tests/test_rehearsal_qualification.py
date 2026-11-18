@@ -2,6 +2,7 @@
 import importlib.util
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 import unittest
 import tempfile
 from unittest.mock import MagicMock, patch
@@ -15,6 +16,21 @@ with patch.object(sys, 'path', [str(TOOLS), *sys.path]):
 
 
 class TestQualificationDenominators(unittest.TestCase):
+    def test_interactive_public_egress_is_refused_before_allocating_a_runtime(self):
+        argv = ['qualify_rehearsal.py', '--engine', 'unused', '--public-egress']
+        with patch.object(qualification, 'os', SimpleNamespace(name='nt')), \
+                patch.object(qualification, 'windows_session_id', return_value=1), \
+                patch.object(sys, 'argv', argv), patch.object(sys, 'stderr'), \
+                patch.object(qualification, 'inventory') as inventory, \
+                patch.object(qualification.tempfile, 'mkdtemp') as allocate, \
+                patch.object(qualification, 'run') as launch:
+            with self.assertRaises(SystemExit) as failure:
+                qualification.main()
+            self.assertEqual(failure.exception.code, 2)
+            inventory.assert_not_called()
+            allocate.assert_not_called()
+            launch.assert_not_called()
+
     def test_ram_monitor_keeps_observing_after_history_fills(self):
         available = [2] + [8] * 900 + [4]
         readings = iter(available)

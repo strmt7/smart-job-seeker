@@ -21,7 +21,7 @@ import sys
 import tempfile
 import time
 
-from owned_process import ChildContainment, CREATE_SUSPENDED, admit_child_memory_bytes, resume_owned_child, available_physical_bytes
+from owned_process import ChildContainment, CREATE_SUSPENDED, admit_child_memory_bytes, resume_owned_child, available_physical_bytes, windows_session_id
 from internet_canary import InternetCanary
 
 REPO = Path(__file__).resolve().parents[1]
@@ -202,6 +202,10 @@ def main() -> int:
     args = parser.parse_args()
     if os.name != 'nt':
         parser.error('This qualification requires 64-bit Windows')
+    session_id = windows_session_id()
+    network_controls = session_id == 0
+    if args.public_egress and not network_controls:
+        parser.error('Unrestricted browser controls require a non-interactive Windows session (session 0).')
     if not args.python.is_absolute() or not args.python.is_file():
         parser.error('Python must be an explicit absolute executable')
     files = inventory(args.engine)
@@ -211,12 +215,7 @@ def main() -> int:
     target = REPO / 'target'
     target.mkdir(exist_ok=True)
     folder = Path(tempfile.mkdtemp(prefix='rehearsal-qualification-', dir=target))
-    control = folder / 'control-engine'
     worker_path = REPO / 'crates/waypoint_browser/src/rehearsal_worker.py'
-    spec = importlib.util.spec_from_file_location('qualification_copy_worker', worker_path)
-    worker = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(worker)
-    worker.copy_verified(args.engine, files, control, 600 * 1024**2)
     content = folder / 'content'
     content.mkdir()
     (content / 'index.html').write_text(FIXTURE, encoding='utf-8')
@@ -228,9 +227,9 @@ def main() -> int:
     path = folder / 'configuration.private.json'
     path.write_text(json.dumps(config), encoding='utf-8')
     environment = os.environ.copy()
+    environment.pop('WAYPOINT_BROWSER', None)
     environment.update(WAYPOINT_REHEARSAL_CONFIG=str(path), WAYPOINT_REHEARSAL_CONFIG_SHA256=digest(path),
-                       WAYPOINT_REHEARSAL_PYTHON=str(args.python), PYTHONUTF8='1', CARGO_BUILD_JOBS='2',
-                       WAYPOINT_BROWSER=str(control / 'chrome-headless-shell.exe'))
+                       WAYPOINT_REHEARSAL_PYTHON=str(args.python), PYTHONUTF8='1', CARGO_BUILD_JOBS='2')
     sources = [REPO / 'crates/waypoint_browser' / item for item in [
         'Cargo.toml', 'src/cdp.rs', 'src/lib.rs', 'src/rehearsal.rs', 'src/rehearsal_worker.py', 'src/rehearsal_replay.py',
         'tests/rehearsal_live.rs', 'tests/test_rehearsal_windows.py', 'tests/support/rehearsal_network.rs',
@@ -240,21 +239,34 @@ def main() -> int:
     evidence = {'schema': 1, 'source_sha256': {p.relative_to(REPO).as_posix(): digest(p) for p in sources},
                 'started_at': datetime.now(timezone.utc).isoformat(),
                 'config_sha256': digest(path), 'results': [], 'complete': False,
-                'scope': 'fictional local forms and loopback receiver; no general no-egress claim'}
+                'windows_session_id': session_id, 'network_controls': network_controls,
+                'scope': ('fictional local forms with matched unrestricted controls'
+                          if network_controls else 'isolated fictional forms and lifecycle checks')}
     receipt = folder / 'result.private.json'
     canary = None
     try:
+        if network_controls:
+            control = folder / 'control-engine'
+            spec = importlib.util.spec_from_file_location('qualification_copy_worker', worker_path)
+            worker = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(worker)
+            worker.copy_verified(args.engine, files, control, 600 * 1024**2)
+            environment['WAYPOINT_BROWSER'] = str(control / 'chrome-headless-shell.exe')
         if args.public_egress:
             canary = InternetCanary.create()
             spec_path = folder / 'internet-canary.private.json'
             canary.write_spec(spec_path)
             environment.update(WAYPOINT_INTERNET_CANARY_CONFIG=str(spec_path),
                                WAYPOINT_INTERNET_CANARY_SHA256=digest(spec_path))
-        browser_command = [cargo, 'test', '-p', 'waypoint_browser', '--test', 'rehearsal_live', '--', '--ignored', '--test-threads=1']
-        if not args.public_egress:
+        browser_command = [cargo, 'test', '-p', 'waypoint_browser', '--test', 'rehearsal_live']
+        if not network_controls:
+            browser_command.append('isolated_driver_fills_navigates_captures_and_removes_profile')
+        browser_command += ['--', '--ignored', '--test-threads=1']
+        if network_controls and not args.public_egress:
             browser_command += ['--skip', 'public_https_canary_observations']
+        expected_browser = (5 if args.public_egress else 4) if network_controls else 1
         commands = [
-            ('rust', 5 if args.public_egress else 4, browser_command),
+            ('rust', expected_browser, browser_command),
             ('rust', 1, [cargo, 'test', '-p', 'waypoint_browser', '--lib', 'consumer_failure_recovers_the_profile_before_releasing_admission', '--', '--ignored', '--test-threads=1']),
             ('python', 7, [str(args.python), '-X', 'utf8', '-B', str(REPO / 'crates/waypoint_browser/tests/test_rehearsal_windows.py'), '-v']),
         ]
@@ -273,7 +285,7 @@ def main() -> int:
         if len(resource_bytes) > 16 * 1024:
             raise RuntimeError('Resource observations exceed their budget')
         sessions = json.loads(resource_bytes)['closed_sessions']
-        if len(sessions) < 3:
+        if len(sessions) < (3 if network_controls else 1):
             raise RuntimeError('Missing normal-close resource denominator')
         evidence['worker_resources'] = {
             'scope': 'browser-job commit peaks and periodic samples for normal closes; not full host/GPU peaks',

@@ -190,19 +190,35 @@ captured-site interaction. Do not infer recovery ownership from a PID alone.
 
 ```powershell
 py -3.13 -X utf8 -B tools/qualify_rehearsal.py --engine <absolute-headless-shell-directory>
-# Optional: temporary public HTTPS receiver; random fictional markers only:
+# Non-interactive Windows session 0 only. Temporary public receiver and fictional markers.
 py -3.13 -X utf8 -B tools/qualify_rehearsal.py --engine <absolute-headless-shell-directory> --public-egress
 py -3.13 -X utf8 -B crates/waypoint_browser/tests/test_rehearsal_worker.py -v
 ```
 
-The default command creates fictional content, streams file hashes and runs five
-opt-in Rust checks plus six lifecycle methods sequentially; the public option
-adds one Rust observation check and independent receiver verification. It owns a 4 GiB job,
-enforces time/log budgets, verifies unchanged source hashes, and retains private
-results, explicit executed/ignored denominators, scoped resource observations
-and a PNG in `target/rehearsal-qualification-*`. It does not download
-engines or alter shared caches. `--python` selects an absolute interpreter; the
-embedded worker targets Python 3.12+, while this development command uses 3.13.
+On the user's desktop the command runs one isolated browser fixture, the
+consumer-failure recovery check and seven Python lifecycle checks. The
+isolated browser uses private control pipes. The command never creates the
+unrestricted comparison engine in a desktop session.
+
+In non-interactive Windows session 0 the command also runs the three matched
+unrestricted network controls. The public option adds one Rust observation
+check and independent receiver verification in that session. These controls
+remain separate qualification evidence. Each command uses an owned job,
+enforces time and log budgets, verifies unchanged source hashes, and retains
+private results, executed test counts, scoped resource observations and a PNG
+in `target/rehearsal-qualification-*`. Supply the engine locally. `--python`
+selects an absolute interpreter. The embedded worker targets Python 3.12+ and
+this development command uses 3.13.
+
+On 18 November 2026 Windows attributed two firewall permission requests
+to temporary unrestricted browser copies created by the qualifier. The
+corrected run in desktop session 1 passed both selected Rust checks and
+seven Python checks. It staged zero unrestricted control engines, closed
+four isolated sessions and recorded no new Smart Jobseeker browser firewall
+prompts in the event log. A direct Rust baseline invocation stopped at the
+session guard before launch. Private evidence is under
+`target/quiet-rehearsal-7cf70dfc` and
+`target/rehearsal-qualification-8ov6h4wb`.
 The fourteen portable protocol/ownership/storage tests also run in CI, alongside
 eighteen replay/archive checks. Opt-in live
 checks must not be counted as executed when skipped.

@@ -304,6 +304,11 @@ used by development tools and tests. Do not add WSL or Docker as product require
   show automated interactions. Do not use visible-session test fixtures unless
   the user explicitly requests that interaction in a future instruction. This
   constraint applies to agent work, not to the user's own use of the product.
+- Windows can show firewall permission dialogs for an unrestricted headless
+  browser. Run the unrestricted rehearsal network controls only in a
+  non-interactive Windows session. On the user's desktop, the qualifier runs
+  the pipe-backed isolated fixture and lifecycle checks. Preserve both scopes
+  and their separate test counts. Leave host firewall settings intact.
 - Until script-triggered external writes are prevented and verified, do not
   click, type, upload, select, or otherwise interact with real application forms
   during development; even a non-submit control can trigger a submission. Use

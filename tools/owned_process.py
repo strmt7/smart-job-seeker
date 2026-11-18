@@ -11,6 +11,19 @@ CREATE_SUSPENDED = 0x00000004
 JOB_OBJECT_LIMIT_JOB_MEMORY = 0x00000200
 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
 
+
+def windows_session_id() -> int:
+    """Read the actual process session before starting a network test control."""
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    query = kernel.ProcessIdToSessionId
+    query.argtypes = [wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
+    query.restype = wintypes.BOOL
+    value = wintypes.DWORD()
+    if not query(os.getpid(), ctypes.byref(value)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    return value.value
+
+
 class _JobObjectBasicLimitInformation(ctypes.Structure):
     _fields_ = [
         ("per_process_user_time_limit", ctypes.c_longlong),
