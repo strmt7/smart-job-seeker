@@ -63,6 +63,24 @@ class TestQualificationDenominators(unittest.TestCase):
             admission.assert_called_once_with(20 * 1024**3)
             launch.assert_not_called()
 
+    def test_owned_child_inherits_isolated_browser_mode_only_on_desktop(self):
+        environment = {'WAYPOINT_ISOLATED_BROWSER_TESTS_ONLY': 'caller'}
+        for session in [0, 1]:
+            with self.subTest(session=session), tempfile.TemporaryDirectory() as temp, \
+                    patch.object(qualification, 'os', SimpleNamespace(name='nt')), \
+                    patch.object(qualification, 'windows_session_id', return_value=session), \
+                    patch.object(qualification, 'admit_child_memory_bytes', return_value=4 * 1024**3), \
+                    patch.object(qualification.subprocess, 'Popen') as launch, \
+                    patch.object(qualification, 'ChildContainment'), \
+                    patch.object(qualification, 'resume_owned_child'):
+                child = launch.return_value
+                child.poll.return_value = child.wait.return_value = 0
+                result = qualification.run(['fictional-child'], environment, Path(temp) / 'run.log')
+                self.assertEqual(result['exit_code'], 0)
+                self.assertEqual(launch.call_args.kwargs['env']['WAYPOINT_ISOLATED_BROWSER_TESTS_ONLY'],
+                                 '1' if session else 'caller')
+        self.assertEqual(environment, {'WAYPOINT_ISOLATED_BROWSER_TESTS_ONLY': 'caller'})
+
     def test_live_reserve_refuses_low_or_unavailable_memory(self):
         with patch.object(qualification, 'available_physical_bytes', return_value=3 * 1024**3):
             qualification.ensure_host_reserve()

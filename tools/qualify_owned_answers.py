@@ -27,7 +27,7 @@ import uuid
 from urllib.request import Request, build_opener, ProxyHandler
 
 from qualify_history_ui import RamSamples
-from owned_process import available_physical_bytes
+from owned_process import available_physical_bytes, windows_session_id
 from qualify_rehearsal import run, ensure_host_reserve, test_denominator
 
 REPO = Path(__file__).resolve().parents[1]
@@ -37,7 +37,13 @@ FRAME_VISION_TEST = 'source_vision_qualification::private_runtime_reviews_record
 REHEARSAL_VISION_SUITE = 'vision-saved-rehearsal'
 REHEARSAL_VISION_TEST = 'recorded_preview::tests::owned_runtime_reviews_saved_copy_rehearsal'
 FRAME_VISION_SUITES = ('vision-frames','vision-frames-system','vision-frames-confirmed')
-TESTS = {'answers':TEST, 'vision':VISION_TEST, 'vision-system':VISION_TEST, **dict.fromkeys(FRAME_VISION_SUITES,FRAME_VISION_TEST)}
+UNRESTRICTED_VISION_SUITES = ('vision', 'vision-system')
+UNRESTRICTED_VISION_REQUIRES_RUNNER = (
+    'The legacy vision suites require a non-interactive Windows session (session 0). '
+    'Use the saved-copy vision qualification on a desktop.'
+)
+TESTS = {'answers': TEST, **dict.fromkeys(UNRESTRICTED_VISION_SUITES, VISION_TEST),
+         **dict.fromkeys(FRAME_VISION_SUITES, FRAME_VISION_TEST)}
 TESTS[REHEARSAL_VISION_SUITE] = REHEARSAL_VISION_TEST
 TESTS['templates'] = 'template_plan::tests::owned_model_uses_requirements_late_in_the_listing'
 GIB = 1024**3
@@ -317,6 +323,8 @@ def worker(config_path):
         raise RuntimeError('Owned runtime requires Windows process-tree containment')
     folder = config_path.parent
     suite = config.get('suite','answers')
+    if suite in UNRESTRICTED_VISION_SUITES and windows_session_id() != 0:
+        raise RuntimeError(UNRESTRICTED_VISION_REQUIRES_RUNNER)
     test_name = TESTS[suite]
     runtime_log = folder / 'ollama.private.log'
     server = client = None
@@ -353,7 +361,7 @@ def worker(config_path):
                 'WAYPOINT_OWNED_VISION_REPORT': str(folder / (suite + '.private.json')),
                 'WAYPOINT_OWNED_VISION_MODE': 'confirmed' if suite=='vision-frames-confirmed' else 'system' if suite in ('vision-system','vision-frames-system') else 'raw',
                 'PATH':str(folder / 'test-runtime') + os.pathsep + os.environ.get('PATH','')}
-            if suite in ('vision','vision-system'): environment['WAYPOINT_BROWSER']=config['browser']
+            if suite in UNRESTRICTED_VISION_SUITES: environment['WAYPOINT_BROWSER']=config['browser']
             if suite in FRAME_VISION_SUITES: environment['WAYPOINT_OWNED_FRAME_VISION_SHA256']=config['frame_input_sha256']
             if suite == REHEARSAL_VISION_SUITE:
                 environment['WAYPOINT_OWNED_REHEARSAL_SHA256'] = config['rehearsal_input_sha256']
@@ -409,6 +417,8 @@ def main():
     parser.add_argument('--replay-result', type=Path, help='Retained fictional --frame-controls result for vision-frames')
     parser.add_argument('--recorded-rehearsal-fixture', type=Path, help='Private saved-copy fixture configuration for vision-saved-rehearsal')
     args = parser.parse_args()
+    if os.name == 'nt' and args.suite in UNRESTRICTED_VISION_SUITES and windows_session_id() != 0:
+        parser.error(UNRESTRICTED_VISION_REQUIRES_RUNNER)
     if (args.suite in FRAME_VISION_SUITES) != (args.replay_result is not None):
         parser.error('A replay result is required only for recorded-frame vision suites')
     if (args.suite == REHEARSAL_VISION_SUITE) != (args.recorded_rehearsal_fixture is not None):
@@ -425,7 +435,7 @@ def main():
     job_budget = args.job_memory_gib * GIB
     if job_budget <= 0 or available_physical_bytes() < job_budget + 3 * GIB:
         parser.error('Available RAM cannot admit the requested job and 3 GiB host reserve')
-    if args.suite in ('vision','vision-system') and (not args.browser or not args.browser.is_absolute() or not args.browser.is_file()):
+    if args.suite in UNRESTRICTED_VISION_SUITES and (not args.browser or not args.browser.is_absolute() or not args.browser.is_file()):
         parser.error('Vision qualification requires an explicit headless-capable browser executable')
     shell = shutil.which('pwsh') or shutil.which('powershell')
     if not shell: parser.error('A Windows PowerShell runtime is required')

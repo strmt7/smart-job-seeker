@@ -94,6 +94,8 @@ def run(command: list[str], environment: dict[str, str], log: Path, seconds: int
         if memory_limit_bytes + host_reserve_bytes > available_physical_bytes():
             raise RuntimeError('Insufficient host RAM for the requested app job and reserve')
         budget = memory_limit_bytes
+    if os.name == 'nt' and windows_session_id() != 0:
+        environment = {**environment, 'WAYPOINT_ISOLATED_BROWSER_TESTS_ONLY': '1'}
     containment = None
     peak = None
     peak_error = None

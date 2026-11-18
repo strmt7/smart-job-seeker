@@ -8,6 +8,7 @@ import shutil
 from pathlib import Path
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 from unittest.mock import MagicMock
@@ -19,6 +20,25 @@ with patch.object(sys, 'path', [str(TOOLS), *sys.path]): spec.loader.exec_module
 
 
 class OwnedAnswerQualification(unittest.TestCase):
+    def test_desktop_rejects_legacy_vision_before_allocating_or_loading_model(self):
+        for suite in ['vision', 'vision-system']:
+            argv = ['qualify_owned_answers.py', '--ollama', 'unused', '--model-store', 'unused',
+                    '--digest', 'unused', '--suite', suite]
+            with self.subTest(suite=suite), \
+                    patch.object(qualification, 'os', SimpleNamespace(name='nt')), \
+                    patch.object(qualification, 'windows_session_id', return_value=1), \
+                    patch.object(sys, 'argv', argv), patch.object(sys, 'stderr') as errors, \
+                    patch.object(qualification, 'resident_models') as models, \
+                    patch.object(qualification.tempfile, 'mkdtemp') as allocate, \
+                    patch.object(qualification, 'run') as launch:
+                with self.assertRaises(SystemExit) as failure:
+                    qualification.main()
+                self.assertEqual(failure.exception.code, 2)
+                self.assertIn('session 0', errors.write.call_args.args[0])
+                models.assert_not_called()
+                allocate.assert_not_called()
+                launch.assert_not_called()
+
     def test_metadata_timeout_retries_the_same_live_server_without_restarting(self):
         server=MagicMock();server.poll.return_value=None
         errors=[];config={'version':'fixture','model':'fictional:tiny','digest':'a'*64}

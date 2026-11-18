@@ -13,6 +13,9 @@ It does not fill employer forms or demonstrate application delivery.
 executes the raw transcription criteria. `--suite vision-system` uses the same
 seven rendered images and eight answer conditions, then checks actual field
 state through the production DOM verifier and permits three focused recaptures.
+These two legacy suites require non-interactive Windows session 0 because their
+browser starts with a debugging listener. For desktop qualification use the
+isolated saved-copy workflow in [isolated rehearsal](ISOLATED_REHEARSAL.md).
 The runtime is separately owned and contained as described in
 [the controller's lifecycle](OWNED_ANSWER_QUALIFICATION.md).
 

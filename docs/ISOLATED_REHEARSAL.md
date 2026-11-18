@@ -220,9 +220,12 @@ session guard before launch. Private evidence is under
 `target/quiet-rehearsal-7cf70dfc` and
 `target/rehearsal-qualification-8ov6h4wb`.
 
-The Windows build helper requires isolated browser launches during desktop
-tests. The unrestricted CDP launcher checks that requirement before creating a
-profile. Run the raw `cdp_live` suite on a dedicated test runner.
+The Windows build helper and shared qualification launcher require isolated
+browser launches for their desktop children. The unrestricted CDP launcher
+checks that requirement before creating a profile. Run the raw `cdp_live`
+suite on a dedicated test runner. The legacy raw and system vision suites use
+unrestricted CDP and require Windows session 0. Use the isolated saved-copy
+vision workflow for local desktop qualification.
 
 Interface and browser-zoom checks load their test extension over Playwright's
 existing pipe. On 18 November 2026 the owned Chrome 157 layout run verified the

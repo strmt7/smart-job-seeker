@@ -309,8 +309,11 @@ used by development tools and tests. Do not add WSL or Docker as product require
   non-interactive Windows session. On the user's desktop, the qualifier runs
   the pipe-backed isolated fixture and lifecycle checks. Preserve both scopes
   and their separate test counts. Leave host firewall settings intact.
-- Run the unrestricted `cdp_live` suite on a dedicated runner. The Windows
-  build helper rejects unrestricted browser launches during desktop tests.
+- Run the unrestricted `cdp_live` suite on a dedicated runner. On a Windows
+  desktop, the build helper and owned qualification launcher pass the isolated
+  browser requirement to child processes before they run. Use saved-copy or
+  recorded-frame vision checks on the desktop. The legacy `vision` and
+  `vision-system` suites require non-interactive session 0.
   Use Playwright's existing pipe connection for interface and browser-zoom
   checks, including extension setup. Keep those checks in owned headless jobs.
 - Until script-triggered external writes are prevented and verified, do not
