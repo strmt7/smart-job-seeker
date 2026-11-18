@@ -2,6 +2,116 @@
 use super::*;
 
 #[test]
+#[ignore = "explicit contained engine; verifies scoped native month and year controls"]
+fn recorded_history_periods_keep_native_scope_and_exact_values() {
+    let (mut config, folder, python) =
+        crate::capture_session::qualification::qualification_config();
+    let entry = "https://fixture.invalid/career-history";
+    let html = include_str!("../../../apps/web_app/tests/form-history-periods.html");
+    let wire = format!("HTTP/1.1 200 Fictional\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\n\r\n{html}", html.len());
+    let response = waypoint_net::read_asset_response(
+        &mut std::io::Cursor::new(wire.into_bytes()),
+        "GET",
+        1024 * 1024,
+    )
+    .unwrap();
+    let mut builder =
+        crate::rehearsal_capture::SnapshotBuilder::start(&folder.join("history-periods"), entry)
+            .unwrap();
+    builder.add(entry, response).unwrap();
+    let snapshot = builder.finish().unwrap();
+    config.schema = 2;
+    config.content_root = snapshot.root;
+    config.content_files = snapshot.files;
+    config.entry = snapshot.entry;
+    config.replay_manifest = Some(snapshot.manifest);
+    let (mut driver, ready) = CdpDriver::launch_rehearsal(&python, config).unwrap();
+    assert!(ready.appcontainer && ready.capabilities == 0);
+    let outcome = (|| -> Result<Value, DriverError> {
+        let form = driver.open(entry)?;
+        assert_eq!(form.schema.fields.len(), 4);
+        let current = &form.schema.fields[1];
+        let previous = &form.schema.fields[3];
+        assert_eq!(current.selector, "#current-month");
+        assert_eq!(previous.selector, "#previous-month");
+        assert_ne!(current.context.sections, previous.context.sections);
+        for invalid in ["2021-04-12", "2008-04", "2021-05"] {
+            let mut reviews = 0;
+            let outcome = driver.rehearse_recorded_field_progressive(
+                &form,
+                &current.selector,
+                invalid,
+                &[],
+                |_| {
+                    reviews += 1;
+                    Ok(())
+                },
+            );
+            assert!(outcome.is_err());
+            assert_eq!(reviews, 0);
+            assert_eq!(driver.native_text_snapshot(&current.selector)?.value, "");
+        }
+        let expected = [
+            ("#current-year", "2021", "number"),
+            ("#current-month", "2021-04", "month"),
+            ("#previous-year", "2014", "number"),
+            ("#previous-month", "2014-07", "month"),
+        ];
+        let mut captures = Vec::new();
+        let mut observations = Vec::new();
+        for (selector, value, kind) in expected {
+            let verified: Vec<_> = captures.iter().collect();
+            let mut reviews = 0;
+            let capture = driver.rehearse_recorded_field_progressive(
+                &form,
+                selector,
+                value,
+                &verified,
+                |target| {
+                    reviews += 1;
+                    assert_eq!(target.kind(), "text");
+                    Ok(())
+                },
+            )?;
+            assert_eq!(reviews, 1);
+            assert_eq!(json!(capture.kind()), kind);
+            assert_eq!(capture.value(), value);
+            assert_eq!(capture.observed_value(), value);
+            driver.verify_recorded_field(&capture)?;
+            crate::rehearsal_capture::write_new(
+                &folder,
+                &format!("{}.base64", &selector[1..]),
+                capture.image().as_bytes(),
+            )
+            .map_err(DriverError)?;
+            observations.push(json!({"label":capture.label(),"value":capture.observed_value(),"kind":kind,"literal_readback_available":capture.literal_readback_available()}));
+            captures.push(capture);
+        }
+        assert!(driver
+            .rehearse_recorded_field_progressive(&form, "#previous-month", "2015-07", &[], |_| Ok(
+                ()
+            ))
+            .is_err());
+        for capture in &captures {
+            driver.verify_recorded_field(capture)?;
+        }
+        Ok(json!(observations))
+    })();
+    let closed = driver.execute(&BrowserCommand::Close).is_ok();
+    crate::rehearsal_capture::write_new(
+        &folder,
+        "history-periods.private.json",
+        &serde_json::to_vec_pretty(
+            &json!({"result":outcome.as_ref().map_err(|e|e.to_string()),"closed":closed}),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(closed);
+    assert_eq!(outcome.unwrap().as_array().unwrap().len(), 4);
+}
+
+#[test]
 #[ignore = "explicit contained engine; numeric min/max/step and focus-mutation refusal"]
 fn recorded_number_entry_checks_native_constraints_before_events() {
     let (template, folder, python) = crate::capture_session::qualification::qualification_config();

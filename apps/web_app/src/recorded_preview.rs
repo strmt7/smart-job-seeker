@@ -1199,7 +1199,7 @@ impl Rehearsal {
         form: &waypoint_applications::driver::LiveForm,
     ) -> Option<waypoint_applications::driver::LiveForm> {
         use waypoint_applications::driver::BrowserDriver;
-        use waypoint_applications::form_mapping::{FormFieldType, PacketValue};
+        use waypoint_applications::form_mapping::FormFieldType;
         if self.halted || form.independent_field_entry_blocked() {
             return None;
         }
@@ -1285,14 +1285,7 @@ impl Rehearsal {
                                     .iter()
                                     .find(|field| field.selector == mapping.field_selector)
                                     .expect("resolved field exists");
-                                let supported = matches!(
-                                    field.field_type,
-                                    FormFieldType::Text
-                                        | FormFieldType::TextArea
-                                        | FormFieldType::Select { .. }
-                                        | FormFieldType::Radio { .. }
-                                ) && matches!(&mapping.value,PacketValue::Text(value) if !value.trim().is_empty() && value.len()<=1000);
-                                if supported {
+                                if recorded_mapping_value(field, &mapping.value).is_some() {
                                     history_sources.insert(mapping.field_selector.clone(), source);
                                     mappings.push(mapping);
                                 } else {
@@ -1511,12 +1504,11 @@ impl Rehearsal {
                 };
                 *name
             } else {
-                let Some(value) = mappings.iter().find_map(|mapping| match &mapping.value {
-                    PacketValue::Text(value) if mapping.field_selector == field.selector => {
-                        Some(value.as_str())
-                    }
-                    _ => None,
-                }) else {
+                let Some(value) = mappings
+                    .iter()
+                    .filter(|mapping| mapping.field_selector == field.selector)
+                    .find_map(|mapping| recorded_mapping_value(field, &mapping.value))
+                else {
                     continue;
                 };
                 value
@@ -1981,6 +1973,7 @@ fn save_view(
             let kind = match field.field_type {
                 FormFieldType::Text | FormFieldType::Email | FormFieldType::TextArea => "text",
                 FormFieldType::Number { .. } => "number",
+                FormFieldType::Month => "month",
                 FormFieldType::Select { .. } => "select",
                 FormFieldType::Radio { .. } => "radio",
                 FormFieldType::File => "file",
@@ -2005,6 +1998,27 @@ fn save_view(
         json!({"kind":if embedded{"frame"}else{"page"},"label":bounded_text(label),"origin":bounded_text(&form.origin),
         "image":name,"sha256":sha256,"fields":fields,"field_count":form.schema.fields.len(),"omitted_fields":form.schema.fields.len().saturating_sub(VIEW_FIELD_LIMIT),"walls":walls,"wall_count":form.walls.len(),"omitted_walls":form.walls.len().saturating_sub(walls.len()),"independent_entry":{"blocked":form.independent_field_entry_blocked(),"barriers":form.independent_field_barriers().iter().take(8).map(|value|bounded_text(value)).collect::<Vec<_>>(),"barrier_count":form.independent_field_barriers().len()}}),
     )
+}
+
+#[cfg(windows)]
+fn recorded_mapping_value<'a>(
+    field: &waypoint_applications::form_mapping::FormField,
+    value: &'a waypoint_applications::form_mapping::PacketValue,
+) -> Option<&'a str> {
+    use waypoint_applications::form_mapping::{valid_iso_month, FormFieldType, PacketValue};
+    match (&field.field_type, value) {
+        (
+            FormFieldType::Text
+            | FormFieldType::Email
+            | FormFieldType::TextArea
+            | FormFieldType::Number { .. }
+            | FormFieldType::Select { .. }
+            | FormFieldType::Radio { .. },
+            PacketValue::Text(text),
+        ) if !text.trim().is_empty() && text.len() <= 1000 => Some(text),
+        (FormFieldType::Month, PacketValue::Date(month)) if valid_iso_month(month) => Some(month),
+        _ => None,
+    }
 }
 
 #[cfg(windows)]
@@ -2088,6 +2102,36 @@ fn save_field_images(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(windows)]
+    #[test]
+    fn checked_history_periods_reach_only_their_native_control_type() {
+        use waypoint_applications::form_mapping::{FormField, FormFieldType, PacketValue};
+
+        let month: FormField = serde_json::from_value(serde_json::json!({"selector":"#month",
+            "label":"Current employment — Starting month and year","field_type":"month","required":true,"sensitive":false})).unwrap();
+        let year = FormField {
+            field_type: FormFieldType::Number {
+                min: Some("2010".into()),
+                max: Some("2026".into()),
+                step: Some("1".into()),
+            },
+            ..month.clone()
+        };
+        let date = crate::history_advice::value_for(&month, "start_year_month", "2021-04").unwrap();
+        let number = crate::history_advice::value_for(&year, "start_year", "2014").unwrap();
+        assert_eq!(
+            super::recorded_mapping_value(&month, &date),
+            Some("2021-04")
+        );
+        assert_eq!(super::recorded_mapping_value(&year, &number), Some("2014"));
+        assert_eq!(super::recorded_mapping_value(&month, &number), None);
+        assert_eq!(super::recorded_mapping_value(&year, &date), None);
+        assert_eq!(
+            super::recorded_mapping_value(&month, &PacketValue::Date("2021-04-01".into())),
+            None
+        );
+    }
+
     #[test]
     fn review_memory_wait_requires_a_valid_sample_within_its_budget() {
         use crate::InferenceMemoryRefusal;
@@ -3317,6 +3361,7 @@ mod tests {
             simulate_initial_review_pressure: bool,
             #[serde(default)]
             simulate_review_pressure_entries: Vec<usize>,
+            checked_history: Option<Value>,
             journey: Option<Journey>,
         }
         #[derive(serde::Deserialize)]
@@ -3349,13 +3394,33 @@ mod tests {
             waypoint_domain::sha256_hex(&bytes),
             std::env::var("WAYPOINT_AUTO_MODEL_FIXTURE_SHA256").unwrap()
         );
-        let fixture: Fixture = serde_json::from_slice(&bytes).unwrap();
+        let mut fixture: Fixture = serde_json::from_slice(&bytes).unwrap();
         assert!(fixture.source.rehearse);
         let folder = path.parent().unwrap();
         let attempt = folder.join("automatic-rehearsal");
         fs::create_dir(&attempt).unwrap();
         let screenshots = attempt.join("screenshots");
         fs::create_dir(&screenshots).unwrap();
+        if let Some(history) = fixture.checked_history {
+            assert!(fixture.journey.is_some());
+            assert!(fixture.source.candidate_snapshot_sha256.is_none());
+            fs::create_dir(attempt.join("materials")).unwrap();
+            let profile = json!({"career_history": history.to_string()}).to_string();
+            fixture.source.candidate_snapshot_sha256 = Some(
+                crate::rehearsal_candidate::stage_inputs(
+                    &waypoint_workspace::Workspace::in_memory().unwrap(),
+                    &screenshots,
+                    &fixture.source.job_id,
+                    Some(&profile),
+                    crate::rehearsal_candidate::InputSelection {
+                        history: true,
+                        ..Default::default()
+                    },
+                    &[],
+                )
+                .unwrap(),
+            );
+        }
         let lease = crate::doc_suggest::lease().unwrap();
         crate::private_inference::create_namespace(&attempt, "automatic-rehearsal").unwrap();
         let existing = crate::resident_model_status().unwrap();

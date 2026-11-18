@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en-US">
+<meta charset="utf-8">
+<link rel="icon" href="data:,">
+<title>Career history</title>
+<style>
+  body { font: 18px Arial, sans-serif; margin: 24px; }
+  fieldset { max-width: 440px; margin: 0 0 18px; padding: 16px; }
+  legend, label { font-weight: 600; }
+  label { display: block; margin: 6px 0; }
+  input { display: block; font: inherit; width: 220px; padding: 8px; }
+</style>
+<h1>Career history</h1>
+<form>
+  <fieldset>
+    <legend>Current employment</legend>
+    <label for="current-year">Starting year</label>
+    <input id="current-year" type="number" min="2010" max="2026" step="1" required>
+    <label for="current-month">Starting month and year</label>
+    <input id="current-month" type="month" min="2010-01" max="2026-12" step="3" required>
+  </fieldset>
+  <fieldset>
+    <legend>Most recent completed employment</legend>
+    <label for="previous-year">Starting year</label>
+    <input id="previous-year" type="number" min="2010" max="2026" step="1" required>
+    <label for="previous-month">Starting month and year</label>
+    <input id="previous-month" type="month" min="2010-01" max="2026-12" step="3" required>
+  </fieldset>
+</form>
+</html>

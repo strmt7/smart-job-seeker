@@ -1,5 +1,5 @@
 //! Compare native Gregorian month displays using ICU/CLDR, preserving precision.
-//! Only the visual-review caller for completed native month controls uses this.
+//! Callers bind the expected value to a verified native month control.
 use icu_calendar::{Date, Gregorian};
 use icu_datetime::{
     fieldsets::YM, options::YearStyle, pattern::FixedCalendarDateTimeNames,

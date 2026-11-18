@@ -59,6 +59,7 @@ struct ExpectedAnswer<'a> {
     key: SummaryKey,
     value: &'a str,
     attachment: bool,
+    native_month: bool,
 }
 
 impl<'a> ExpectedAnswer<'a> {
@@ -66,14 +67,28 @@ impl<'a> ExpectedAnswer<'a> {
         if entry["status"] != "visually_matched" || entry["native_verified"] != true {
             return Err("A prior entry was not verified");
         }
+        let value = entry["intended_value"]
+            .as_str()
+            .ok_or("A prior entry has no prepared answer")?;
+        let native_month = entry["kind"] == "month";
+        if native_month
+            && (entry["native_value"] != value
+                || !waypoint_applications::form_mapping::valid_iso_month(value))
+        {
+            return Err("A prior month has no exact native readback");
+        }
         Ok(Self {
             key: serde_json::from_value(entry["summary_key"].clone())
                 .map_err(|_| "A prior entry has no scoped label")?,
-            value: entry["intended_value"]
-                .as_str()
-                .ok_or("A prior entry has no prepared answer")?,
+            value,
             attachment: entry["kind"] == "file",
+            native_month,
         })
+    }
+
+    fn matches_native_value(&self, value: &str) -> bool {
+        self.value == value
+            || (self.native_month && crate::native_month::equivalent(value, self.value))
     }
 }
 
@@ -399,7 +414,7 @@ fn detail_targets(
         let Some((source, _)) = sources.next() else {
             continue;
         };
-        if source.value != row.value
+        if !source.matches_native_value(&row.value)
             || sources.next().is_some()
             || native_keys
                 .iter()
@@ -505,9 +520,10 @@ fn compare_answer(
     if native.next().is_some() {
         return "native_label_ambiguous";
     }
-    if answer.value != expected.value {
+    if !expected.matches_native_value(&answer.value) {
         return "native_value_differs";
     }
+    let native_value = &answer.value;
     if !in_image {
         return "outside_review_image";
     }
@@ -521,7 +537,7 @@ fn compare_answer(
     if visual.next().is_some() {
         return "visual_label_ambiguous";
     }
-    if answer.visible_value != expected.value {
+    if &answer.visible_value != native_value {
         return "visual_value_differs";
     }
     if expected.attachment {
@@ -533,6 +549,38 @@ fn compare_answer(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn month_summary_requires_typed_readback_and_visual_agreement_with_the_native_row() {
+        let key = SummaryKey {
+            sections: vec!["Previous employment".into()],
+            label: "Starting month and year".into(),
+        };
+        let mut entry = json!({"summary_key":key,"kind":"month","status":"visually_matched",
+            "native_verified":true,"intended_value":"2020-06","native_value":"2020-06"});
+        let expected = [ExpectedAnswer::from_entry(&entry).unwrap()];
+        for (native, visual, status) in [
+            ("June 2020", "June 2020", "matched"),
+            ("2020-06", "2020-06", "matched"),
+            ("July 2020", "July 2020", "native_value_differs"),
+            ("June 20", "June 20", "native_value_differs"),
+            ("June 2020", "2020-06", "visual_value_differs"),
+        ] {
+            let native = SummaryAnswer {
+                key: key.clone(),
+                value: native.into(),
+            };
+            let visual = VisualAnswer {
+                sections: key.sections.clone(),
+                label: key.label.clone(),
+                visible_value: visual.into(),
+            };
+            let (checks, _, _, _) = compare_answers(&expected, &[(&native, true)], &[visual]);
+            assert_eq!(checks[0]["status"], status);
+        }
+        entry["native_value"] = json!("2020-07");
+        assert!(ExpectedAnswer::from_entry(&entry).is_err());
+    }
 
     #[test]
     fn compares_exact_values_within_distinct_repeated_sections() {
@@ -549,11 +597,13 @@ mod tests {
                 key: first.clone(),
                 value: "Anvil & Co.",
                 attachment: false,
+                native_month: false,
             },
             ExpectedAnswer {
                 key: second.clone(),
                 value: "Anchor GmbH",
                 attachment: false,
+                native_month: false,
             },
         ];
         let first = SummaryAnswer {
@@ -613,6 +663,7 @@ mod tests {
             key,
             value: "Resume.pdf",
             attachment: true,
+            native_month: false,
         }];
         let row = json!({"sections":[],"label":"Résumé","visible_value":"Resume.pdf"});
         let wrong = json!({"sections":[],"label":"Résumé","visible_value":"resume.pdf"});
@@ -647,6 +698,7 @@ mod tests {
             key: key.clone(),
             value: "Engineer",
             attachment: false,
+            native_month: false,
         }];
         let native = SummaryAnswer {
             key,

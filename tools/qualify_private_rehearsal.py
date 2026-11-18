@@ -95,8 +95,9 @@ def main():
         parser.error('Qualification caches must stay under target without reparse points')
     url = json.loads((source / 'source-page/archive/replay.json').read_bytes())['entry_url']
     payload = {key: value[key] for key in ['source', 'python', 'config', 'manifest_sha256']}
-    if 'journey' in value:
-        payload['journey'] = value['journey']
+    for key in ('journey', 'checked_history'):
+        if key in value:
+            payload[key] = value[key]
     payload.update(url=url, selection={'choice': choice, 'cache_root': str(cache)})
     input_path = folder / 'fixture.private.json'
     input_path.write_text(json.dumps(payload), encoding='utf-8')
@@ -104,6 +105,9 @@ def main():
         'apps/web_app/src/local_model_worker.py', 'apps/web_app/src/owned_runtime.rs',
         'apps/web_app/src/runtime_start.rs', 'apps/web_app/src/model_start.rs', 'apps/web_app/src/model_preferences.rs',
         'apps/web_app/src/visual_review.rs', 'apps/web_app/src/recorded_summary.rs',
+        'apps/web_app/src/native_month.rs', 'apps/web_app/src/rehearsal_candidate.rs',
+        'apps/web_app/src/candidate_history.rs', 'apps/web_app/src/history_advice.rs',
+        'apps/web_app/src/history_batch.rs', 'apps/web_app/src/history_record_choice.rs',
         'apps/web_app/src/rehearsal_facts.rs', 'apps/web_app/src/doc_suggest.rs', 'apps/web_app/src/job_capture.rs',
         'apps/web_app/src/main.rs', 'crates/waypoint_browser/src/lib.rs', 'crates/waypoint_browser/src/captured_frame.rs',
         'crates/waypoint_browser/src/frame_identity.rs', 'crates/waypoint_browser/src/file_readback.rs',

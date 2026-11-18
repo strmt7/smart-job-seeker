@@ -382,6 +382,13 @@ are the next completion gates. [Rehearsal evidence](g1/REHEARSAL_PROGRESS_2026-1
    intent against explicit native candidate flags before combining values from
    a whole record. Concurrent current roles must remain genuinely ambiguous.
 
+Native month and year controls now accept checked history values in saved-copy
+rehearsals, with scope, constraint, readback and localized month checks.
+Continue with explicit ordering evidence for repeated record groups whose
+section names and question wording are indistinguishable. Preserve a manual
+review outcome whenever several records fit the same control.
+[Qualification evidence](g1/HISTORY_PERIODS_2026-11-18.md)
+
 ### R04.4 — Independent final review
 
 The [post-navigation checkpoint](g1/POST_NAVIGATION_REVIEW_2026-11-17.md)

@@ -5839,28 +5839,37 @@ impl CdpDriver {
     /// Check a number against Chromium's current native constraints on a
     /// detached clone, so an invalid candidate does not alter the live input.
     fn check_number_candidate(&mut self, object: &str, candidate: &str) -> Result<(), DriverError> {
-        let result = self
-            .cdp
-            .call(
-                "Runtime.callFunctionOn",
-                json!({"objectId":object,"functionDeclaration":r#"function(value) {
-            if (!this.isConnected) return false;
-            if (!(this instanceof HTMLInputElement) || this.type !== 'number') return true;
-            const probe = this.cloneNode(false);
-            probe.value = value;
-            return probe.value === value && probe.validity.valid;
-        }"#,"arguments":[{"value":candidate}],"returnByValue":true}),
-            )
-            .map_err(derr)?;
-        if result.get("exceptionDetails").is_some()
-            || result.pointer("/result/value").and_then(Value::as_bool) != Some(true)
-        {
+        if !self.native_input_accepts_value(object, candidate, "number", true)? {
             return Err(DriverError(
                 "Number does not satisfy the field's current constraints; review it manually"
                     .into(),
             ));
         }
         Ok(())
+    }
+
+    fn native_input_accepts_value(
+        &mut self,
+        object: &str,
+        candidate: &str,
+        input_type: &str,
+        allow_other_type: bool,
+    ) -> Result<bool, DriverError> {
+        let result = self
+            .cdp
+            .call(
+                "Runtime.callFunctionOn",
+                json!({"objectId":object,"functionDeclaration":r#"function(value, type, allowOtherType) {
+            if (!this.isConnected) return false;
+            if (!(this instanceof HTMLInputElement) || this.type !== type) return allowOtherType;
+            const probe = this.cloneNode(false);
+            probe.value = value;
+            return probe.value === value && probe.validity.valid;
+        }"#,"arguments":[{"value":candidate},{"value":input_type},{"value":allow_other_type}],"returnByValue":true}),
+            )
+            .map_err(derr)?;
+        Ok(result.get("exceptionDetails").is_none()
+            && result.pointer("/result/value").and_then(Value::as_bool) == Some(true))
     }
 
     /// Native constraints can change after inspection or on focus. Evaluate a
