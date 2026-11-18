@@ -113,6 +113,74 @@ pub(crate) struct FrameInspectionIdentity {
     owners: BTreeMap<String, OwnerIdentity>,
 }
 
+/// Control selectors carry a sequence of owner/document pairs. Keep the
+/// original namespace (including any shadow hosts above an iframe) so a
+/// navigation candidate resolves through exactly the same native path.
+#[cfg(windows)]
+#[derive(Debug, PartialEq, Eq, serde::Serialize)]
+pub(crate) struct InlineRecordedAddress {
+    pub(crate) prefix: String,
+    frames: Vec<(u64, u64)>,
+}
+
+#[cfg(windows)]
+impl InlineRecordedAddress {
+    pub(crate) fn from_selector(selector: &str) -> Result<Option<Self>, DriverError> {
+        let mut inner = selector;
+        let mut frames = Vec::new();
+        let mut prefix = "";
+        while let Some((is_frame, rest)) = inner
+            .strip_prefix("waypoint-frame:")
+            .map(|rest| (true, rest))
+            .or_else(|| {
+                inner
+                    .strip_prefix("waypoint-shadow:")
+                    .map(|rest| (false, rest))
+            })
+        {
+            let mut parts = rest.splitn(3, ':');
+            let owner = parts.next().and_then(|part| part.parse::<u64>().ok());
+            let document = parts.next().and_then(|part| part.parse::<u64>().ok());
+            let next = parts.next().filter(|part| !part.is_empty());
+            let (Some(owner), Some(document), Some(next)) = (owner, document, next) else {
+                return Err(inline_recorded_review());
+            };
+            if is_frame {
+                frames.push((owner, document));
+                prefix = &selector[..selector.len() - next.len()];
+            }
+            inner = next;
+        }
+        Ok((!frames.is_empty()).then(|| Self {
+            prefix: prefix.to_owned(),
+            frames,
+        }))
+    }
+}
+
+/// Observed, rather than inferred, owner identities in their native parent
+/// chain. The census digest includes loaders, document roots and origins.
+#[cfg(windows)]
+#[derive(Debug, PartialEq, Eq, serde::Serialize)]
+pub(crate) struct InlineRecordedScope {
+    pub(crate) address: InlineRecordedAddress,
+    pub(crate) frames: Vec<(String, u64)>,
+    pub(crate) document: u64,
+    census: String,
+}
+
+#[cfg(windows)]
+impl InlineRecordedScope {
+    pub(crate) fn frame(&self) -> &str {
+        &self.frames.last().expect("bound inline frame").0
+    }
+}
+
+#[cfg(windows)]
+fn inline_recorded_review() -> DriverError {
+    DriverError("The saved form's inline document could not be bound to its controls".into())
+}
+
 fn identity_text(value: &Value, key: &str, limit: usize) -> Result<String, DriverError> {
     value[key]
         .as_str()
@@ -248,6 +316,36 @@ fn dom_owners(root: &Value) -> Result<BTreeMap<String, OwnerIdentity>, DriverErr
 }
 
 impl FrameInspectionIdentity {
+    #[cfg(windows)]
+    fn recorded_frame_chain(
+        &self,
+        root_frame: &str,
+        address: &InlineRecordedAddress,
+    ) -> Result<Vec<(String, u64)>, DriverError> {
+        let mut parent = root_frame;
+        let mut frames = Vec::new();
+        for &(backend, document) in &address.frames {
+            let mut matches = self.owners.iter().filter(|(id, owner)| {
+                owner.backend == backend
+                    && owner.document == Some(document)
+                    && owner.rendering.as_ref().is_some_and(|rendering| {
+                        rendering.access == Some(true) && !rendering.needs_review
+                    })
+                    && self.frames[*id].parent.as_deref() == Some(parent)
+            });
+            let (id, _) = matches.next().ok_or_else(inline_recorded_review)?;
+            if matches.next().is_some() {
+                return Err(inline_recorded_review());
+            }
+            frames.push((id.clone(), backend));
+            parent = id;
+        }
+        if !self.document_source_verified(parent, address.frames.len()) {
+            return Err(inline_recorded_review());
+        }
+        Ok(frames)
+    }
+
     fn observed_origin(&self, id: &str) -> Option<&str> {
         let frame = self.frames.get(id)?;
         let valid = |origin: &str| {
@@ -358,6 +456,52 @@ impl FrameInspectionIdentity {
 }
 
 impl CdpDriver {
+    #[cfg(windows)]
+    pub(crate) fn bind_recorded_inline_scope(
+        &mut self,
+        main_frame: &str,
+        address: InlineRecordedAddress,
+    ) -> Result<InlineRecordedScope, DriverError> {
+        let root = self.document_with_frames(true)?;
+        let census = self.frame_inspection_identity(&root)?;
+        let frames = census.recorded_frame_chain(main_frame, &address)?;
+        let document = address.frames.last().ok_or_else(inline_recorded_review)?.1;
+        Ok(InlineRecordedScope {
+            address,
+            frames,
+            document,
+            census: census.digest()?,
+        })
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn recorded_inline_root(
+        &mut self,
+        scope: &InlineRecordedScope,
+    ) -> Result<Value, DriverError> {
+        let root = self.document_with_frames(true)?;
+        if self.frame_inspection_identity(&root)?.digest()? != scope.census {
+            return Err(inline_recorded_review());
+        }
+        let mut pending = vec![root];
+        while let Some(mut node) = pending.pop() {
+            if node["nodeType"].as_u64() == Some(9)
+                && node["backendNodeId"].as_u64() == Some(scope.document)
+            {
+                return Ok(node);
+            }
+            for key in ["children", "shadowRoots"] {
+                if let Some(Value::Array(children)) = node.get_mut(key).map(Value::take) {
+                    pending.extend(children);
+                }
+            }
+            if let Some(document) = node.get_mut("contentDocument") {
+                pending.push(document.take());
+            }
+        }
+        Err(inline_recorded_review())
+    }
+
     pub(crate) fn frame_inspection_identity(
         &mut self,
         root: &Value,

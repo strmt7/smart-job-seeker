@@ -72,15 +72,36 @@ pub(super) struct FileInspection<'a> {
 }
 
 impl CdpDriver {
-    pub(super) fn file_inspection_context(&mut self) -> Result<u64, DriverError> {
-        let tree = self
-            .cdp
-            .call("Page.getFrameTree", json!({}))
-            .map_err(derr)?;
-        let frame = tree
-            .pointer("/frameTree/frame/id")
-            .and_then(Value::as_str)
-            .ok_or_else(|| DriverError("File inspection frame is unavailable".into()))?;
+    pub(super) fn recorded_file_inspection_context(
+        &mut self,
+        selector: &str,
+    ) -> Result<u64, DriverError> {
+        #[cfg(windows)]
+        if let Some(scope) = self.recorded_inline_control_scope(selector)? {
+            return self.file_inspection_context(Some(scope.frame()));
+        }
+        #[cfg(not(windows))]
+        let _ = selector;
+        self.file_inspection_context(None)
+    }
+
+    pub(super) fn file_inspection_context(
+        &mut self,
+        frame: Option<&str>,
+    ) -> Result<u64, DriverError> {
+        let tree;
+        let frame = match frame {
+            Some(frame) => frame,
+            None => {
+                tree = self
+                    .cdp
+                    .call("Page.getFrameTree", json!({}))
+                    .map_err(derr)?;
+                tree.pointer("/frameTree/frame/id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| DriverError("File inspection frame is unavailable".into()))?
+            }
+        };
         let world = self
             .cdp
             .call(

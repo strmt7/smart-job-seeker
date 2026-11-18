@@ -14,6 +14,8 @@ pub use summary::{
 };
 
 use super::*;
+#[cfg(windows)]
+use crate::frame_identity::{InlineRecordedAddress, InlineRecordedScope};
 use std::{
     borrow::Cow,
     panic::{catch_unwind, AssertUnwindSafe},
@@ -564,7 +566,11 @@ impl CdpDriver {
             return Ok(Stopped(PageNeedsReview));
         }
         let document = self.recorded_document()?;
-        let controls = self.page_controls()?;
+        let inline = match self.recorded_section_address(std::iter::once(before).chain(visited))? {
+            Some(address) => Some(self.bind_recorded_inline_scope(&document.frame, address)?),
+            None => None,
+        };
+        let controls = self.recorded_section_controls(inline.as_ref())?;
         if controls.incomplete {
             return Ok(Stopped(IncompleteControls));
         }
@@ -644,7 +650,7 @@ impl CdpDriver {
         {
             return Ok(Stopped(FieldChanged));
         }
-        if self.page_controls()? != controls {
+        if self.recorded_section_controls(inline.as_ref())? != controls {
             return Ok(Stopped(ControlChanged));
         }
         if !replay_intact(self)? {
@@ -687,6 +693,17 @@ impl CdpDriver {
             if after.origin != before.origin || self.recorded_document()? != document {
                 return Ok(Stopped(DocumentChanged));
             }
+            if let Some(scope) = &inline {
+                if self.recorded_inline_root(scope).is_err()
+                    || (!after.schema.fields.is_empty()
+                        && self
+                            .recorded_section_address(std::iter::once(&after))?
+                            .as_ref()
+                            != Some(&scope.address))
+                {
+                    return Ok(Stopped(DocumentChanged));
+                }
+            }
             if !after.walls.is_empty() {
                 observation = Some((after, PageNeedsReview));
                 break;
@@ -711,10 +728,19 @@ impl CdpDriver {
         let Some((form, reason)) = observation else {
             return Ok(Stopped(NoNewSection));
         };
-        let summary = matches!(reason, NoEditableFields)
-            .then(|| self.recorded_summary_before_image(&document));
+        let mut summary = matches!(reason, NoEditableFields)
+            .then(|| self.recorded_summary_before_image(&document, inline));
         let image = if self.captured_scope.is_some() {
             self.screenshot_captured_frame()?
+        } else if let Some(Ok(capture)) = &summary {
+            match self.recorded_summary_inline_overview(capture) {
+                Ok(Some(image)) => image,
+                Ok(None) => self.screenshot_base64()?,
+                Err(error) => {
+                    summary = Some(Err(error));
+                    self.screenshot_base64()?
+                }
+            }
         } else {
             self.screenshot_base64()?
         };
@@ -735,6 +761,69 @@ impl CdpDriver {
             image,
             summary,
         })
+    }
+
+    #[cfg(windows)]
+    fn recorded_section_address<'a>(
+        &self,
+        forms: impl Iterator<Item = &'a LiveForm>,
+    ) -> Result<Option<InlineRecordedAddress>, DriverError> {
+        let mut address = None;
+        for field in forms.flat_map(|form| &form.schema.fields) {
+            let raw = match &self.captured_scope {
+                Some(scope) => field
+                    .selector
+                    .strip_prefix(PREFIX)
+                    .and_then(|selector| selector.split_once(':'))
+                    .filter(|(key, _)| *key == scope.key)
+                    .map(|(_, raw)| raw)
+                    .ok_or_else(review)?,
+                None => &field.selector,
+            };
+            let current = InlineRecordedAddress::from_selector(raw)?;
+            if (self.captured_scope.is_some() && current.is_some())
+                || address
+                    .as_ref()
+                    .is_some_and(|previous| *previous != current)
+            {
+                return Err(DriverError(
+                    "The saved workflow spans multiple control documents and needs review".into(),
+                ));
+            }
+            address = Some(current);
+        }
+        Ok(address.flatten())
+    }
+
+    #[cfg(windows)]
+    fn recorded_section_controls(
+        &mut self,
+        inline: Option<&InlineRecordedScope>,
+    ) -> Result<PageControls, DriverError> {
+        match inline {
+            Some(scope) => {
+                let root = self.recorded_inline_root(scope)?;
+                self.page_controls_in(&root, &scope.address.prefix)
+            }
+            None => self.page_controls(),
+        }
+    }
+
+    #[cfg(windows)]
+    pub(super) fn recorded_inline_control_scope(
+        &mut self,
+        selector: &str,
+    ) -> Result<Option<InlineRecordedScope>, DriverError> {
+        let raw = self.decode_captured_selector(selector)?;
+        let Some(address) = InlineRecordedAddress::from_selector(&raw)? else {
+            return Ok(None);
+        };
+        if self.captured_scope.is_some() {
+            return Err(review());
+        }
+        let document = self.recorded_document()?;
+        self.bind_recorded_inline_scope(&document.frame, address)
+            .map(Some)
     }
 
     /// Exercise an unambiguous text or native choice control. Bind pixels to
@@ -1850,7 +1939,7 @@ impl CdpDriver {
     /// Bind viewport points to the current frame owner using native hit tests.
     fn captured_frame_projection(
         &mut self,
-        [width, height]: [f64; 2],
+        viewport: [f64; 2],
         points: &[[f64; 2]],
     ) -> Result<CapturedFrameProjection, DriverError> {
         let frame = self
@@ -1860,10 +1949,26 @@ impl CdpDriver {
             .frame
             .clone();
         let owner = self.parent_frame_owner(&frame)?;
-        self.with_protocol_session(&frame.parent_session,|driver|{
-            let resolved=driver.cdp.call("DOM.resolveNode",json!({"nodeId":owner})).map_err(derr)?;
-            let object=resolved.pointer("/object/objectId").and_then(Value::as_str).ok_or_else(review)?;
-            let checked=driver.cdp.call("Runtime.callFunctionOn",json!({"objectId":object,"functionDeclaration":r#"function(points,width,height){
+        self.with_protocol_session(&frame.parent_session, |driver| {
+            driver.frame_owner_projection(owner, viewport, points)
+        })
+    }
+
+    fn frame_owner_projection(
+        &mut self,
+        owner: u64,
+        [width, height]: [f64; 2],
+        points: &[[f64; 2]],
+    ) -> Result<CapturedFrameProjection, DriverError> {
+        let resolved = self
+            .cdp
+            .call("DOM.resolveNode", json!({"nodeId":owner}))
+            .map_err(derr)?;
+        let object = resolved
+            .pointer("/object/objectId")
+            .and_then(Value::as_str)
+            .ok_or_else(review)?;
+        let checked=self.cdp.call("Runtime.callFunctionOn",json!({"objectId":object,"functionDeclaration":r#"function(points,width,height){
                 if(!this.isConnected || !(this instanceof HTMLIFrameElement) || this.closest('a[href],button:not([type="button"]),input[type="submit" i],input[type="image" i]')) return null;
                 if(Math.abs(this.clientWidth-width)>.5 || Math.abs(this.clientHeight-height)>.5) return null;
                 const rect=this.getBoundingClientRect(),style=getComputedStyle(this);
@@ -1874,28 +1979,115 @@ impl CdpDriver {
                     const px=left+x,py=top+y;
                     return x>=0 && y>=0 && x<width && y<height && px>=0 && py>=0 && px<innerWidth && py<innerHeight && document.elementFromPoint(px,py)===this;
                 })) return null;
-                return {left,top,width:innerWidth,height:innerHeight};
+                return [left,top,innerWidth,innerHeight];
             }"#,"arguments":[{"value":points},{"value":width},{"value":height}],"returnByValue":true}));
-            let released=driver.cdp.call("Runtime.releaseObject",json!({"objectId":object}));
-            let checked=checked.map_err(derr)?;released.map_err(derr)?;
-            if checked.get("exceptionDetails").is_some(){return Err(review());}
-            let checked=checked.pointer("/result/value").ok_or_else(review)?;
-            let values:Vec<_>=["left","top","width","height"].iter().filter_map(|key|checked[key].as_f64().filter(|v|v.is_finite())).collect();
-            if values.len()!=4 || values[2]<=0.0 || values[3]<=0.0 {return Err(review());}
-            Ok(CapturedFrameProjection { session: frame.parent_session.clone(), offset:[values[0],values[1]],viewport:[values[2],values[3]] })
+        let released = self
+            .cdp
+            .call("Runtime.releaseObject", json!({"objectId":object}));
+        let checked = checked.map_err(derr)?;
+        released.map_err(derr)?;
+        if checked.get("exceptionDetails").is_some() {
+            return Err(review());
+        }
+        let [left, top, width, height]: [f64; 4] = serde_json::from_value(
+            checked
+                .pointer("/result/value")
+                .cloned()
+                .ok_or_else(review)?,
+        )
+        .map_err(|_| review())?;
+        if ![left, top, width, height].into_iter().all(f64::is_finite)
+            || width <= 0.0
+            || height <= 0.0
+        {
+            return Err(review());
+        }
+        Ok(CapturedFrameProjection {
+            session: self.cdp.session.clone(),
+            offset: [left, top],
+            viewport: [width, height],
+        })
+    }
+
+    #[cfg(windows)]
+    fn inline_frame_projection(
+        &mut self,
+        scope: &InlineRecordedScope,
+        mut viewport: [f64; 2],
+        points: &[[f64; 2]],
+    ) -> Result<CapturedFrameProjection, DriverError> {
+        self.recorded_inline_root(scope)?;
+        let mut points = points.to_vec();
+        let mut offset = [0.0, 0.0];
+        for (frame, backend) in scope.frames.iter().rev() {
+            let owner = self
+                .cdp
+                .call("DOM.getFrameOwner", json!({"frameId":frame}))
+                .map_err(derr)?;
+            if owner["backendNodeId"].as_u64() != Some(*backend) {
+                return Err(review());
+            }
+            let node = owner["nodeId"]
+                .as_u64()
+                .filter(|id| *id > 0)
+                .ok_or_else(review)?;
+            let projected = self.frame_owner_projection(node, viewport, &points)?;
+            viewport = projected.viewport;
+            offset[0] += projected.offset[0];
+            offset[1] += projected.offset[1];
+            for [x, y] in &mut points {
+                *x += projected.offset[0];
+                *y += projected.offset[1];
+            }
+        }
+        Ok(CapturedFrameProjection {
+            session: self.cdp.session.clone(),
+            offset,
+            viewport,
         })
     }
 
     /// Capture a native viewport rectangle in the document that renders it.
     pub(super) fn screenshot_viewport_bounds(
         &mut self,
-        mut quad: [f64; 8],
+        quad: [f64; 8],
         viewport: [f64; 2],
         allow_larger_element: bool,
     ) -> Result<String, DriverError> {
         if self.captured_scope.is_none() {
             return self.screenshot_bounds(&quad, false, allow_larger_element, false);
         }
+        self.screenshot_projected_viewport(
+            quad,
+            viewport,
+            allow_larger_element,
+            Self::captured_frame_projection,
+        )
+    }
+
+    #[cfg(windows)]
+    fn screenshot_inline_viewport_bounds(
+        &mut self,
+        inline: &InlineRecordedScope,
+        quad: [f64; 8],
+        viewport: [f64; 2],
+    ) -> Result<String, DriverError> {
+        self.screenshot_projected_viewport(quad, viewport, true, |driver, viewport, points| {
+            driver.inline_frame_projection(inline, viewport, points)
+        })
+    }
+
+    fn screenshot_projected_viewport(
+        &mut self,
+        mut quad: [f64; 8],
+        viewport: [f64; 2],
+        allow_larger_element: bool,
+        mut project: impl FnMut(
+            &mut Self,
+            [f64; 2],
+            &[[f64; 2]],
+        ) -> Result<CapturedFrameProjection, DriverError>,
+    ) -> Result<String, DriverError> {
         let [left, top, right, _, _, bottom, _, _] = quad;
         let dx = 0.5_f64.min((right - left) / 4.);
         let dy = 0.5_f64.min((bottom - top) / 4.);
@@ -1906,15 +2098,19 @@ impl CdpDriver {
             [left + dx, bottom - dy],
             [(left + right) / 2., (top + bottom) / 2.],
         ];
-        let projected = self.captured_frame_projection(viewport, &points)?;
+        let projected = project(self, viewport, &points)?;
         for point in quad.as_chunks_mut::<2>().0 {
             point[0] += projected.offset[0];
             point[1] += projected.offset[1];
         }
-        let image = self.with_captured_parent_capture(|driver| {
-            driver.screenshot_bounds(&quad, false, allow_larger_element, false)
-        })?;
-        if self.captured_frame_projection(viewport, &points)? != projected {
+        let image = if self.captured_scope.is_some() {
+            self.with_captured_parent_capture(|driver| {
+                driver.screenshot_bounds(&quad, false, allow_larger_element, false)
+            })?
+        } else {
+            self.screenshot_bounds(&quad, false, allow_larger_element, false)?
+        };
+        if project(self, viewport, &points)? != projected {
             return Err(DriverError(
                 "The embedded viewport moved during capture".into(),
             ));

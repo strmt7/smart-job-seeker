@@ -77,6 +77,7 @@ struct NativeSummary {
 
 pub struct RecordedSummaryCapture {
     document: RecordedDocument,
+    inline: Option<InlineRecordedScope>,
     root: (u64, u64),
     native: NativeSummary,
     digest: String,
@@ -85,6 +86,7 @@ pub struct RecordedSummaryCapture {
 /// A previously verified file input in the owned rehearsal.
 pub struct RecordedAttachmentWitness {
     document: RecordedDocument,
+    inline_document: Option<u64>,
     control: u64,
     form_owner: Option<u64>,
     key: SummaryKey,
@@ -245,7 +247,11 @@ impl CdpDriver {
         prepared_sha256: &str,
     ) -> Result<RecordedAttachmentWitness, DriverError> {
         self.require_recorded_frames()?;
-        let BrowserCommand::UploadFile { file_name, .. } = &capture.command else {
+        let BrowserCommand::UploadFile {
+            file_name,
+            selector,
+        } = &capture.command
+        else {
             return Err(DriverError(
                 "The recorded control does not hold an attachment".into(),
             ));
@@ -259,7 +265,9 @@ impl CdpDriver {
             ));
         }
         let prepared = FileExpectation::read(&path, Some(prepared_sha256))?;
-        let context = self.file_inspection_context()?;
+        let inline = self.recorded_inline_control_scope(selector)?;
+        let context =
+            self.file_inspection_context(inline.as_ref().map(InlineRecordedScope::frame))?;
         let form_owner = self.with_file_review_object(
             json!({"backendNodeId":binding.backend}),
             Some(context),
@@ -271,6 +279,7 @@ impl CdpDriver {
         self.stop_if_non_read_request_observed(capture.network_before)?;
         Ok(RecordedAttachmentWitness {
             document: capture.document.clone(),
+            inline_document: inline.map(|scope| scope.document),
             control: binding.backend,
             form_owner,
             key: SummaryKey::from_field(&binding.field),
@@ -313,12 +322,19 @@ impl CdpDriver {
         if self.recorded_document()? != summary.document {
             return Err(summary_changed());
         }
-        let context = self.file_inspection_context()?;
+        if let Some(inline) = &summary.inline {
+            self.recorded_inline_root(inline)?;
+        }
+        let context =
+            self.file_inspection_context(summary.inline.as_ref().map(InlineRecordedScope::frame))?;
         let mut resolved = Vec::new();
         let mut outcomes = Vec::new();
         for (index, witness) in witnesses.iter().enumerate() {
             let objects = (|| -> Result<(String, Option<String>), DriverError> {
-                if witness.document != summary.document {
+                if witness.document != summary.document
+                    || witness.inline_document
+                        != summary.inline.as_ref().map(|scope| scope.document)
+                {
                     return Err(summary_changed());
                 }
                 let (path, admitted_sha256) = self.recorded_attachment(&witness.prepared.name)?;
@@ -394,6 +410,9 @@ impl CdpDriver {
         if self.recorded_document()? != summary.document {
             return Err(summary_changed());
         }
+        if let Some(inline) = &summary.inline {
+            self.recorded_inline_root(inline)?;
+        }
         require_summary_replay(self)?;
         Ok(outcomes)
     }
@@ -411,7 +430,7 @@ impl CdpDriver {
         };
         self.verify_recorded_summary_native(capture)
             .map_err(|error| DriverError(format!("Before the summary detail capture. {error}")))?;
-        let regions = if self.captured_scope.is_none() {
+        let regions = if self.captured_scope.is_none() && capture.inline.is_none() {
             plan_clips(native_row, self.page_dimensions()?)
         } else {
             None
@@ -448,8 +467,12 @@ impl CdpDriver {
         part_count: usize,
     ) -> Result<Option<Vec<RecordedSummaryRegion>>, DriverError> {
         let expression = format!("({SUMMARY_VIEWPORT})(({SUMMARY_INSPECTOR}),{row})");
-        let (root, binding) =
-            self.evaluate_recorded_summary(&capture.document, &expression, false)?;
+        let (root, binding) = self.evaluate_recorded_summary(
+            &capture.document,
+            capture.inline.as_ref(),
+            &expression,
+            false,
+        )?;
         let Some(object) = binding["objectId"].as_str() else {
             return Ok(None);
         };
@@ -508,7 +531,14 @@ impl CdpDriver {
                     return Ok(None);
                 };
                 require_summary_replay(self)?;
-                let image = self.screenshot_viewport_bounds(clip.quad(), [width, height], true)?;
+                let image = match &capture.inline {
+                    Some(inline) => self.screenshot_inline_viewport_bounds(
+                        inline,
+                        clip.quad(),
+                        [width, height],
+                    )?,
+                    None => self.screenshot_viewport_bounds(clip.quad(), [width, height], true)?,
+                };
                 let observed = self.call_summary_binding(
                     object,
                     "function(part){return this.observe(part)}",
@@ -527,7 +557,7 @@ impl CdpDriver {
                         "Summary detail exceeds the visual input budget".into(),
                     ));
                 }
-                let mode = if self.captured_scope.is_some() {
+                let mode = if self.captured_scope.is_some() || capture.inline.is_some() {
                     "embedded_viewport"
                 } else {
                     "viewport"
@@ -585,29 +615,50 @@ impl CdpDriver {
     pub(super) fn recorded_summary_before_image(
         &mut self,
         document: &RecordedDocument,
+        inline: Option<InlineRecordedScope>,
     ) -> Result<RecordedSummaryCapture, DriverError> {
         require_summary_replay(self)?;
-        let (root, native) = self.recorded_summary_native(document)?;
+        let (root, native) = self.recorded_summary_native(document, inline.as_ref())?;
         let digest = waypoint_domain::sha256_hex(
             &serde_json::to_vec(&json!({
                 "url":document.url,"frame":document.frame,"loader":document.loader,
-                "lease":document.lease,"root":root,"native":native
+                "lease":document.lease,"inline":inline,"root":root,"native":native
             }))
             .map_err(|_| DriverError("The native review summary could not be recorded".into()))?,
         );
         Ok(RecordedSummaryCapture {
             document: document.clone(),
+            inline,
             root,
             native,
             digest,
         })
     }
 
+    pub(super) fn recorded_summary_inline_overview(
+        &mut self,
+        capture: &RecordedSummaryCapture,
+    ) -> Result<Option<String>, DriverError> {
+        let Some(inline) = &capture.inline else {
+            return Ok(None);
+        };
+        let [_, _, width, height, _] = capture.native.viewport;
+        let clip = SummaryClip {
+            x: 0.0,
+            y: 0.0,
+            width,
+            height,
+        };
+        self.screenshot_inline_viewport_bounds(inline, clip.quad(), [width, height])
+            .map(Some)
+    }
+
     pub(super) fn verify_recorded_summary_native(
         &mut self,
         capture: &RecordedSummaryCapture,
     ) -> Result<(), DriverError> {
-        let (root, native) = self.recorded_summary_native(&capture.document)?;
+        let (root, native) =
+            self.recorded_summary_native(&capture.document, capture.inline.as_ref())?;
         if root != capture.root {
             return Err(summary_changed());
         }
@@ -659,9 +710,11 @@ impl CdpDriver {
     fn recorded_summary_native(
         &mut self,
         document: &RecordedDocument,
+        inline: Option<&InlineRecordedScope>,
     ) -> Result<((u64, u64), NativeSummary), DriverError> {
         let (root, data) = self.evaluate_recorded_summary(
             document,
+            inline,
             &format!("({SUMMARY_INSPECTOR})(null)"),
             true,
         )?;
@@ -673,6 +726,7 @@ impl CdpDriver {
     fn evaluate_recorded_summary(
         &mut self,
         document: &RecordedDocument,
+        inline: Option<&InlineRecordedScope>,
         expression: &str,
         return_by_value: bool,
     ) -> Result<((u64, u64), Value), DriverError> {
@@ -680,23 +734,24 @@ impl CdpDriver {
         if self.recorded_document()? != *document {
             return Err(summary_changed());
         }
-        let root = self
-            .cdp
-            .call("DOM.getDocument", json!({"depth":1,"pierce":false}))
-            .map_err(derr)?;
-        let document_id = root.pointer("/root/backendNodeId").and_then(Value::as_u64);
-        let element_id = root["root"]["children"].as_array().and_then(|children| {
-            children
-                .iter()
-                .find(|node| node["nodeType"] == 1)
-                .and_then(|node| node["backendNodeId"].as_u64())
-        });
-        let ids = document_id.zip(element_id).ok_or_else(summary_changed)?;
+        let (frame, ids) = match inline {
+            Some(inline) => (
+                inline.frame(),
+                summary_root_ids(&self.recorded_inline_root(inline)?)?,
+            ),
+            None => {
+                let root = self
+                    .cdp
+                    .call("DOM.getDocument", json!({"depth":1,"pierce":false}))
+                    .map_err(derr)?;
+                (document.frame.as_str(), summary_root_ids(&root["root"])?)
+            }
+        };
         let world = self
             .cdp
             .call(
                 "Page.createIsolatedWorld",
-                json!({"frameId":document.frame,"worldName":"Smart Jobseeker summary review"}),
+                json!({"frameId":frame,"worldName":"Smart Jobseeker summary review"}),
             )
             .map_err(derr)?;
         let context = world["executionContextId"]
@@ -714,8 +769,24 @@ impl CdpDriver {
         if result.get("exceptionDetails").is_some() || self.recorded_document()? != *document {
             return Err(summary_changed());
         }
+        if let Some(inline) = inline {
+            if summary_root_ids(&self.recorded_inline_root(inline)?)? != ids {
+                return Err(summary_changed());
+            }
+        }
         Ok((ids, result["result"].clone()))
     }
+}
+
+fn summary_root_ids(root: &Value) -> Result<(u64, u64), DriverError> {
+    let element = root["children"]
+        .as_array()
+        .and_then(|children| children.iter().find(|node| node["nodeType"] == 1));
+    root["backendNodeId"]
+        .as_u64()
+        .zip(element.and_then(|node| node["backendNodeId"].as_u64()))
+        .filter(|(document, html)| *document > 0 && *html > 0)
+        .ok_or_else(summary_changed)
 }
 
 #[cfg(test)]

@@ -176,9 +176,6 @@ pub(crate) fn parse_provider(
         let entries = data["results"]
             .as_array()
             .ok_or("Provider returned no results array")?;
-        if entries.len() > 500 {
-            return Err("Provider returned too many results".into());
-        }
         let approved: Vec<String> = url
             .query_pairs()
             .filter(|(key, _)| key == "engines")
@@ -212,8 +209,8 @@ pub(crate) fn parse_provider(
         if results.is_empty() && failures.as_array().is_some_and(|items| !items.is_empty()) {
             return Err("Local OpenSERP reported engine failures and returned no organic results; the search could not be established".into());
         }
-        let mut parsed = parse_excluding(
-            &json!({"results":results,"unresponsive_engines":failures}).to_string(),
+        let mut parsed = parse_result_set(
+            &json!({"results":results,"unresponsive_engines":failures}),
             excluded,
         )?;
         parsed["provider"] = json!("local_openserp");
@@ -232,11 +229,8 @@ pub(crate) fn parse_provider(
         let entries = data["results"]
             .as_array()
             .ok_or("Provider returned no results array")?;
-        if entries.len() > 500 {
-            return Err("Provider returned too many results".into());
-        }
         let results: Vec<Value> = entries.iter().map(|item| json!({"url":item.get("url"),"title":item.get("title"),"content":item.get("snippet"),"publishedDate":item.get("published_at"),"indexedDate":item.get("crawled_at"),"type":item.get("type"),"is_ad":item.get("is_ad"),"sponsored":item.get("sponsored"),"engine":"FreeSerp Global"})).collect();
-        let mut parsed = parse_excluding(&json!({"results":results}).to_string(), excluded)?;
+        let mut parsed = parse_result_set(&json!({"results":results}), excluded)?;
         parsed["provider"] = json!("freeserp");
         parsed["freshness_preferred"] = json!(url
             .query_pairs()
@@ -251,9 +245,6 @@ pub(crate) fn parse_provider(
     let entries = data
         .as_array()
         .ok_or("Provider returned no results array")?;
-    if entries.len() > 500 {
-        return Err("Provider returned too many results".into());
-    }
     let decode = |value: Option<&Value>| {
         value.and_then(Value::as_str).map(|text| {
             quick_xml::escape::unescape(text)
@@ -262,7 +253,7 @@ pub(crate) fn parse_provider(
         })
     };
     let results: Vec<Value> = entries.iter().map(|item| json!({"url":item.get("URL"),"title":decode(item.get("Title")),"content":decode(item.get("Snippet").or_else(|| item.get("Description"))),"engine":"Wiby"})).collect();
-    let mut parsed = parse_excluding(&json!({"results":results}).to_string(), excluded)?;
+    let mut parsed = parse_result_set(&json!({"results":results}), excluded)?;
     parsed["provider"] = json!("wiby");
     Ok(parsed)
 }
@@ -393,6 +384,13 @@ pub(crate) fn parse_excluding(
     }
     let data: Value =
         serde_json::from_str(payload).map_err(|_| "Provider returned invalid JSON")?;
+    parse_result_set(&data, excluded)
+}
+
+fn parse_result_set(
+    data: &Value,
+    excluded: &std::collections::HashSet<String>,
+) -> Result<Value, String> {
     let results = data
         .get("results")
         .and_then(Value::as_array)
@@ -400,15 +398,14 @@ pub(crate) fn parse_excluding(
     let mut links: Vec<Value> = Vec::new();
     let mut repeated: Vec<Value> = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    let mut examined = 0;
+    let examined = results.len();
     let mut previously_seen = 0;
     let mut within_page_duplicates = 0usize;
     let mut result_limit_omitted = 0usize;
     let mut advertisements_omitted = 0usize;
-    // A provider can repeat earlier pages before returning new results. Scan a
-    // larger bounded prefix while still retaining at most 100 new links.
-    for item in results.iter().take(500) {
-        examined += 1;
+    // The network caps the response at 2 MiB. Scan it completely: earlier
+    // repeated or rejected entries can precede the first useful posting.
+    for item in results {
         let explicitly_advertised = item["is_ad"] == true
             || item["type"].as_str().is_some_and(|kind| {
                 matches!(
@@ -608,7 +605,7 @@ pub(crate) fn parse_excluding(
         }
     }
     Ok(
-        json!({"results":links,"results_examined":examined,"results_reported":results.len(),"unresponsive_engines":unavailable.map(Vec::len),"unresponsive_engine_names":unavailable_names,"limited":examined < results.len() || result_limit_omitted > 0,"result_limit_omitted":result_limit_omitted,"advertisements_omitted":advertisements_omitted,"results_rejected":examined-links.len()-previously_seen-within_page_duplicates-result_limit_omitted-advertisements_omitted,"within_page_duplicates":within_page_duplicates,"previously_seen":previously_seen,"repeated_references":repeated,"repeated_references_omitted":previously_seen-repeated.len()}),
+        json!({"results":links,"results_examined":examined,"results_reported":results.len(),"unresponsive_engines":unavailable.map(Vec::len),"unresponsive_engine_names":unavailable_names,"limited":result_limit_omitted > 0,"result_limit_omitted":result_limit_omitted,"advertisements_omitted":advertisements_omitted,"results_rejected":examined-links.len()-previously_seen-within_page_duplicates-result_limit_omitted-advertisements_omitted,"within_page_duplicates":within_page_duplicates,"previously_seen":previously_seen,"repeated_references":repeated,"repeated_references_omitted":previously_seen-repeated.len()}),
     )
 }
 
@@ -1122,10 +1119,13 @@ mod tests {
         let complete = parse(&json!({"results":invalid}).to_string()).unwrap();
         assert_eq!(complete["results_examined"], 35);
         assert_eq!(complete["limited"], false);
-        let invalid = vec![json!({"title":"No URL"}); 501];
-        let bounded = parse(&json!({"results":invalid}).to_string()).unwrap();
-        assert_eq!(bounded["results_examined"], 500);
-        assert_eq!(bounded["limited"], true);
+        let mut rows = vec![json!({"title":"No URL"}); 501];
+        rows.push(json!({"title":"Late role","url":"https://example.org/late"}));
+        let complete = parse(&json!({"results":rows}).to_string()).unwrap();
+        assert_eq!(complete["results_examined"], 502);
+        assert_eq!(complete["results"][0]["url"], "https://example.org/late");
+        assert_eq!(complete["results_rejected"], 501);
+        assert_eq!(complete["limited"], false);
     }
 
     #[test]

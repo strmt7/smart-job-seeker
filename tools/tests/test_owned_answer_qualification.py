@@ -103,6 +103,19 @@ class OwnedAnswerQualification(unittest.TestCase):
             v2.write_bytes(b'changed active manifest')
             with self.assertRaises(ValueError): qualification.model_inventory(store, 'fictional:tiny', expected)
 
+    def test_owned_qualification_accepts_an_installed_namespaced_model(self):
+        with tempfile.TemporaryDirectory() as temp:
+            store, expected, checksum = self.stage(Path(temp))
+            legacy = store / 'manifests/registry.ollama.ai/library/fictional/tiny'
+            relative = Path('manifests-v2/ollama.com/smart-jobseeker/fictional/tiny')
+            manifest = store / relative
+            manifest.parent.mkdir(parents=True)
+            manifest.write_bytes(legacy.read_bytes())
+            files, _ = qualification.model_inventory(store, 'smart-jobseeker/fictional:tiny', expected)
+            self.assertEqual(files, {relative:expected, Path('blobs') / ('sha256-' + checksum):checksum})
+            with self.assertRaises(ValueError):
+                qualification.model_inventory(store, '../fictional:tiny', expected)
+
     def test_environment_is_private_and_does_not_mutate_the_host(self):
         before = dict(os.environ)
         with tempfile.TemporaryDirectory() as temp:

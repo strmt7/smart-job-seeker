@@ -34,6 +34,12 @@ static COMPLETED: Mutex<Option<(String, Value, bool)>> = Mutex::new(None);
 #[cfg(test)]
 pub(crate) static TEST_LOCK: Mutex<()> = Mutex::new(());
 
+// Leave room in the store's 12 MiB sealed record for the plan, coverage,
+// failures and the last page receipt. Short entries need not consume the
+// same share of this budget as long descriptions or multiple engine reports.
+const SAVED_PAGE_BUDGET: usize = 8 * 1024 * 1024;
+const PAGE_ENVELOPE_BYTES: usize = 256;
+
 /// Load only successfully collected pages from the user-sealed previous
 /// search. A retry must bind to the exact saved task, not arbitrary client data.
 pub fn previous_successful_history(
@@ -60,18 +66,14 @@ pub fn previous_successful_history(
         _ => return Err("Saved earlier search results are invalid".into()),
     };
     let mut groups = Vec::new();
-    let mut count = 0usize;
     for group in prior.iter().chain(history) {
         if group.get("error").is_some() {
             continue;
         }
-        let results = group["data"]["results"]
+        group["data"]["results"]
             .as_array()
             .ok_or("Saved search page is invalid")?;
-        count = count
-            .checked_add(results.len())
-            .ok_or("Too many earlier search results")?;
-        if groups.len() >= 50 || count > 600 {
+        if groups.len() >= 50 {
             return Err("Too many earlier results to carry into a retry".into());
         }
         groups.push(group.clone());
@@ -79,7 +81,7 @@ pub fn previous_successful_history(
     if serde_json::to_vec(&groups)
         .map_err(|_| "Could not serialize earlier search results")?
         .len()
-        > 8 * 1024 * 1024
+        > SAVED_PAGE_BUDGET
     {
         return Err("Earlier search results exceed the retry storage limit".into());
     }
@@ -208,17 +210,24 @@ fn tracking_comparison_key(raw: &str) -> String {
     url.into()
 }
 
-/// Keep the global result cap visible when the final provider page has more
-/// valid links than the remaining budget. Previously the page could appear
-/// complete even though some of its parsed links were discarded here.
 #[derive(Default)]
 struct BatchSeen {
     originals: HashSet<String>,
     comparison_keys: HashMap<String, String>,
+    saved_bytes: usize,
 }
 
 fn seen_from_prior(history: &[Value]) -> Result<BatchSeen, String> {
-    let mut seen = BatchSeen::default();
+    let saved_bytes = serde_json::to_vec(history)
+        .map_err(|_| "Could not serialize earlier search results")?
+        .len();
+    if saved_bytes > SAVED_PAGE_BUDGET {
+        return Err("Earlier search results exceed the search history size limit".into());
+    }
+    let mut seen = BatchSeen {
+        saved_bytes,
+        ..BatchSeen::default()
+    };
     for group in history {
         let results = group["data"]["results"]
             .as_array()
@@ -241,19 +250,20 @@ fn seen_from_prior(history: &[Value]) -> Result<BatchSeen, String> {
                     .entry(tracking_comparison_key(url))
                     .or_insert_with(|| url.to_owned());
             }
-            if seen.originals.len() > 600 {
-                return Err("Earlier search results exceed the 600-candidate limit".into());
-            }
         }
     }
     Ok(seen)
 }
 
-fn retain_batch_budget(data: &mut Value, seen: &mut BatchSeen) -> bool {
+fn retain_batch_budget(data: &mut Value, query: &str, seen: &mut BatchSeen) -> bool {
     let mut omitted = 0usize;
     let mut repeated = 0usize;
     let mut potentially_related = 0usize;
-    if let Some(items) = data["results"].as_array_mut() {
+    if let Some(Value::Array(mut items)) = data.get_mut("results").map(Value::take) {
+        data["results"] = json!([]);
+        let page_bytes =
+            data.to_string().len() + json!(query).to_string().len() + PAGE_ENVELOPE_BYTES;
+        seen.saved_bytes += page_bytes;
         items.retain_mut(|item| {
             let Some(url) = item["url"].as_str().map(str::to_owned) else {
                 return false;
@@ -262,20 +272,26 @@ fn retain_batch_budget(data: &mut Value, seen: &mut BatchSeen) -> bool {
                 repeated += 1;
                 return false;
             }
-            if seen.originals.len() >= 600 {
+            let comparison = tracking_comparison_key(&url);
+            let variant_of = seen.comparison_keys.get(&comparison);
+            if let Some(first) = variant_of {
+                item["possible_tracking_variant"] = json!(true);
+                item["possible_tracking_variant_of"] = json!(first);
+            }
+            let bytes = item.to_string().len() + 1;
+            if bytes > SAVED_PAGE_BUDGET.saturating_sub(seen.saved_bytes) {
                 omitted += 1;
                 return false;
             }
-            let comparison = tracking_comparison_key(&url);
-            if let Some(first) = seen.comparison_keys.get(&comparison) {
-                item["possible_tracking_variant"] = json!(true);
-                item["possible_tracking_variant_of"] = json!(first);
+            seen.saved_bytes += bytes;
+            if variant_of.is_some() {
                 potentially_related += 1;
             } else {
                 seen.comparison_keys.insert(comparison, url.clone());
             }
             seen.originals.insert(url)
         });
+        data["results"] = Value::Array(items);
     }
     if repeated > 0 {
         data["exact_repeated_omitted"] = json!(repeated);
@@ -287,7 +303,7 @@ fn retain_batch_budget(data: &mut Value, seen: &mut BatchSeen) -> bool {
         data["limited"] = json!(true);
         data["batch_limit_omitted"] = json!(omitted);
     }
-    seen.originals.len() >= 600
+    omitted > 0 || seen.saved_bytes >= SAVED_PAGE_BUDGET
 }
 
 #[cfg(test)]
@@ -391,8 +407,8 @@ fn start_requests(
     prior_history: Vec<Value>,
 ) -> Result<(), String> {
     let initial_seen = seen_from_prior(&prior_history)?;
-    if initial_seen.originals.len() >= 600 {
-        return Err("Earlier results already fill the 600-candidate search limit; start a new search after saving or reviewing them".into());
+    if initial_seen.saved_bytes >= SAVED_PAGE_BUDGET {
+        return Err("Earlier results fill the search history size limit; save or review them before starting a new search".into());
     }
     let mut task = TASK.lock().map_err(|_| "Web search unavailable")?;
     if task.is_some() {
@@ -400,7 +416,7 @@ fn start_requests(
     }
     // Every planned page can enqueue at most one result. Leave one slot for
     // completion so collecting pages is independent of the HTTP/UI loop.
-    // Both entry points bound the plan at 50 pages and results at 600 links.
+    // Both entry points bound the plan at 50 pages and size-limit the history.
     let total = requests.len();
     let (tx, rx) = mpsc::sync_channel(total + 1);
     let cancel = Arc::new(AtomicBool::new(false));
@@ -462,7 +478,7 @@ fn start_requests(
                     Err(error) => (Err(error.message), error.stop_batch),
                 });
             let result = result.map(|mut data| {
-                limit_reached = retain_batch_budget(&mut data, &mut seen);
+                limit_reached = retain_batch_budget(&mut data, &query, &mut seen);
                 data
             });
             if !send(
@@ -708,7 +724,7 @@ mod tests {
     }
 
     #[test]
-    fn retry_carries_forward_unique_urls_and_shared_candidate_budget() {
+    fn retry_keeps_unique_urls_beyond_the_old_batch_count() {
         let _lock = TEST_LOCK.lock().unwrap();
         let prior_results: Vec<_> = (0..599)
             .map(|i| json!({"url":format!("https://example.org/job/{i}")}))
@@ -721,25 +737,12 @@ mod tests {
             {"url":"https://example.org/new"},
             {"url":"https://example.org/over-limit"}
         ]});
-        assert!(retain_batch_budget(&mut data, &mut seen));
-        assert_eq!(data["results"].as_array().unwrap().len(), 1);
+        assert!(!retain_batch_budget(&mut data, "role", &mut seen));
+        assert_eq!(data["results"].as_array().unwrap().len(), 2);
         assert_eq!(data["results"][0]["url"], "https://example.org/new");
         assert_eq!(data["exact_repeated_omitted"], 1);
-        assert_eq!(data["batch_limit_omitted"], 1);
-        assert_eq!(seen.originals.len(), 600);
-        let full = vec![
-            json!({"data":{"results":(0..600).map(|i| json!({"url":format!("https://example.org/job/{i}")})).collect::<Vec<_>>()}}),
-        ];
-        let request = vec![(
-            "role".into(),
-            1,
-            url::Url::parse("https://example.org/search").unwrap(),
-        )];
-        assert!(
-            start_requests("full".into(), "https://example.org".into(), request, full)
-                .unwrap_err()
-                .contains("600-candidate")
-        );
+        assert!(data["batch_limit_omitted"].is_null());
+        assert_eq!(seen.originals.len(), 601);
         let pages = vec![json!({"data":{"results":[]}}); 50];
         assert!(start_selected_with_history(
             "too-many".into(),
@@ -755,7 +758,7 @@ mod tests {
             r#"{"results":[{"url":"https://example.org/job/0","title":"Repeated"},{"url":"https://example.org/new","title":"New"}]}"#,
             &seen.originals,
         ).unwrap();
-        assert!(!retain_batch_budget(&mut page, &mut seen));
+        assert!(!retain_batch_budget(&mut page, "role", &mut seen));
         assert_eq!(page["results"][0]["url"], "https://example.org/new");
         assert_eq!(
             page["repeated_references"][0]["url"],
@@ -1111,18 +1114,21 @@ mod tests {
         assert_eq!(result["history"][0], page);
     }
     #[test]
-    fn batch_cap_reports_links_dropped_from_a_provider_page() {
+    fn search_history_size_reports_links_that_cannot_be_saved() {
         let mut seen = BatchSeen {
-            originals: (0..598)
-                .map(|i| format!("https://example.org/{i}"))
-                .collect(),
+            saved_bytes: SAVED_PAGE_BUDGET - 4096,
             ..Default::default()
         };
-        let mut page = json!({"results":(598..602).map(|i| json!({"url":format!("https://example.org/{i}")})).collect::<Vec<_>>(),"limited":false});
-        assert!(retain_batch_budget(&mut page, &mut seen));
-        assert_eq!(seen.originals.len(), 600);
+        let mut page = json!({"results":[
+            {"url":"https://example.org/one"},
+            {"url":"https://example.org/large","snippet":"🗺".repeat(1000)},
+            {"url":"https://example.org/two"}
+        ],"limited":false});
+        assert!(retain_batch_budget(&mut page, "role", &mut seen));
+        assert_eq!(seen.originals.len(), 2);
+        assert!(!seen.originals.contains("https://example.org/large"));
         assert_eq!(page["results"].as_array().unwrap().len(), 2);
-        assert_eq!(page["batch_limit_omitted"], 2);
+        assert_eq!(page["batch_limit_omitted"], 1);
         assert_eq!(page["limited"], true);
         assert_eq!(coverage(1, &[json!({"data":page})])["limited_pages"], 1);
     }
@@ -1483,7 +1489,7 @@ mod tests {
             {"url":"https://example.org/job?id=1#other-role"},
             {"url":"https://example.org/job?id=1&ref=other"}
         ]});
-        assert!(!retain_batch_budget(&mut page, &mut seen));
+        assert!(!retain_batch_budget(&mut page, "role", &mut seen));
         assert_eq!(page["results"].as_array().unwrap().len(), 5);
         assert_eq!(
             page["results"][0]["url"],

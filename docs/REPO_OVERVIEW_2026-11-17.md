@@ -109,6 +109,11 @@ DOCX and final PDF are distinct artifacts. An uploaded document, converted PDF
 or visible filename alone does not establish factual correctness or acceptance
 by a website's upload widget.
 
+Template planning uses the resident context to compare complete eligible
+passages and job excerpts in successive requests. Coverage distinguishes
+uneditable passages from work that a run did not reach. The editor still
+checks the exact selected originals and reviews the exported PDF separately.
+
 Attempt records already retain source/page material, selected PDFs, answer
 proposals, screenshots, progress and source bindings. The complete required
 packet—original ad, final tailored documents, all answers, every filled field,
@@ -122,6 +127,11 @@ ranking, source capture and route inspection. This is broader than a job-board
 proxy, but current evidence does not demonstrate reliable, large-scale
 candidate-led discovery across the general web. Earlier provider refusals and
 HTTP 429 outcomes remain failures/degraded states, not successful coverage.
+
+Provider responses are examined through the transport's byte boundary, and
+the saved batch limit now depends on serialized history size. Durable
+per-page storage, continuation across providers and labeled live route
+coverage remain open.
 
 Hard constraints keep unknowns explicit. The simple evidence score is lexical;
 the separate fit task semantically selects facts and builds a source-bound
@@ -227,10 +237,13 @@ certify other detectors or the newer local dependency graph.
 3. **Structural identities are represented as prose.** Model-formatted section
    strings and narrow button names can block otherwise valid perception.
    Replace them with typed, native-bound proposals and independent verification.
-4. **Large source files combine concerns.** `main.rs` has 17,130 physical lines,
+4. **Large source files combine concerns.** At the initial review, `main.rs`
+   had 17,130 physical lines,
    `fit_task.rs` 10,441, browser `lib.rs` 8,793 and `form_preview.rs` 7,559,
-   including substantial inline tests. Extract stable contracts and handlers
-   incrementally; a wholesale rewrite would discard valuable failure knowledge.
+   including substantial inline tests. Extract stable contracts and handlers.
+   The current manifests contain no dependency on `smart_job_core`. Determine
+   whether external consumers rely on its public library surface before
+   changing its workspace membership or compatibility.
 5. **Coverage and budgets are fragmented.** Per-call, browser, model, helper and
    controller limits have produced avoidable partial runs. Use one coherent
    execution budget and preserve omission counts rather than hiding truncation.

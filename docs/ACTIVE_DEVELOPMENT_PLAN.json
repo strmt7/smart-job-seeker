@@ -5,7 +5,7 @@
   "goal": "Continue the existing active Smart Jobseeker product-development goal",
   "plan": "docs/IMPLEMENTATION_PLAN_2026-11-17.md",
   "assessment": "docs/REPO_OVERVIEW_2026-11-17.md",
-  "next_task": "R04",
+  "next_task": "R05",
   "boundaries": [
     "main only",
     "headless development only",
@@ -282,6 +282,7 @@
         "Local inference with evaluated bounded runtime public research; no PII query leakage, remote-model fallback or transfer of research network authority to candidate actions"
       ],
       "evidence": [
+        "docs/g1/WORKFLOW_LIMITS_2026-11-18.md",
         "docs/g1/SCROLLABLE_APPLICATION_REVIEW_2026-11-18.md",
         "docs/g1/MIXED_APPLICATION_WORKFLOW_2026-11-18.md",
         "docs/g1/FINAL_SUMMARY_VERIFICATION_2026-11-18.md",
@@ -325,7 +326,7 @@
         "Measure the local model on the frozen corpus; provide actionable review records rather than invented answers.",
         "Qualify native-supported inference profiles per role, including projector/renderer/parser and advertised effort. Retain actual thinking/final/tool observations and sufficient admitted budgets; do not force maximum effort onto every primitive or promote from component probes. Incorporate current primary-source research and the adapted catalog guidance without treating instructions as runtime implementation."
       ],
-      "next_action": "Bind the same-origin form's navigation census to its native child owner, frame, loader and document scope. Carry that scope to terminal review and rerun the unchanged embedded fixture. Extend the safe path to independently frozen application families, repeated/conditional controls and varied PDF layouts. Preserve server-managed and detached-file review outcomes and measure complete, uninterrupted journeys.",
+      "next_action": "Freeze new application families and exercise document-bound navigation on unfamiliar repeated and conditional layouts. Compare literal and deliberative reads on the unchanged file-label images, preserving conflicts and exact scope. Integrate the independent candidate isolation work from R05 before qualifying server-managed behavior.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package.",
       "start_requirements": [
         "The frozen schema2 known-source initial-control case and native mutation fixture admit investigation of the observed actuator failure. This does not admit broad planner promotion; that still requires the varied held-out tranche and full workflow truth.",
@@ -357,7 +358,7 @@
         "2026-11-14: native number entry with exact source/unit and native constraints;6contained native cases pass, schema4 independent truth keeps legacy criteria. Mixed contacts/two distinct placeholder PDFs/checked employment/qualification/native-number case verifies9/9 known,unknown0/2,zero critical/qualification-source mismatches after retained300s browser-budget failure. Bounded16entries/900s, immutable per-entry progress files9/9hashes checked; stop at no_forward_control, workflow not_qualified. Windows1448passed/618ignored, Clippy/build/fmt,31corpus tests and139fixture-onlybrowser cases pass. SetupAPI-driven, not full UI/discovery/tailoring or held-out qualification; performance remains open.",
         "2026-11-15: production capability probe now requires completed expected JSON and observable thinking with a separate exact final answer; retained old768-token baseline length stop, then2048-token/90sec/brief-arithmetic protocol passes2/2native baseline checks. Three adversarial tests and one nativeHTTP protocol matrix pass. Final Windowsworkspace1452passed/618ignored, warnings-deniedClippy/debugbuild pass. This is capability/configuration evidence, not universal workflow completion or maximum-effort profile promotion."
       ],
-      "open_checkpoint": "Qwen verifies three of three final-review answers and one retained PDF in each of the scrolling-panel and separately managed iframe fixtures. Native browser tests confirm exact scroll restoration and defer an answer mutated during scrolling. Corrected same-origin field crops verify both first-section fields before the retained no_forward_control stop. Same-origin navigation and terminal binding, fresh held-out workflow coverage, live server-dependent behavior and discovery-to-tailoring integration remain open."
+      "open_checkpoint": "The unchanged three-section same-origin replay now reaches final review. Qwen matched five of five summary answers, including two retained PDFs, and left the optional field untouched. Fresh held-out workflow coverage, safe server-dependent behavior and discovery-to-tailoring integration remain open."
     },
     {
       "id": "R05",
@@ -405,7 +406,7 @@
     {
       "id": "R06",
       "priority": "P1",
-      "status": "planned",
+      "status": "in_progress",
       "depends_on": [
         "R02"
       ],
@@ -413,6 +414,7 @@
       "paths": [
         "apps/web_app/src/candidate_task.rs",
         "apps/web_app/src/draft_task.rs",
+        "apps/web_app/src/template_plan.rs",
         "docs/TEMPLATE_TAILORING.md",
         "docs/DOCUMENT_PDF_JOURNEY.md"
       ],
@@ -422,6 +424,7 @@
         "Factual provenance, bounded repairs, exact exported attachment hashes"
       ],
       "evidence": [
+        "docs/g1/WORKFLOW_LIMITS_2026-11-18.md",
         "docs/g1/SELECTED_CANDIDATE_PDFS_2026-11-14.md",
         "docs/g1/NATIVE_FILE_LABEL_DETAILS_2026-11-14.md"
       ],
@@ -432,13 +435,13 @@
         "Convert every final attachment to PDF; independently check extracted text/order and render every page.",
         "Repair within the documented budget or require review; bind exact exported attachment hashes and provenance."
       ],
-      "next_action": "Import varied private authorized and fictional PDF/DOCX/scanned/multilingual histories and templates.",
+      "next_action": "Wire context-sized passage planning through a durable per-job draft, PDF conversion and independent visual/text acceptance. Qualify actual long, formatted, scanned and multilingual templates with frozen relevance and fidelity truth.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package."
     },
     {
       "id": "R07",
       "priority": "P1",
-      "status": "planned",
+      "status": "in_progress",
       "depends_on": [
         "R02"
       ],
@@ -455,6 +458,7 @@
         "Labeled retrieval and actual-route reachability evidence"
       ],
       "evidence": [
+        "docs/g1/WORKFLOW_LIMITS_2026-11-18.md",
         "docs/g1/UNSEEN_FAMILIES_AND_QUESTION_CONTEXT_2026-11-13.md",
         "docs/g1/MIXED_APPLICATION_WORKFLOW_2026-11-18.md"
       ],
@@ -465,7 +469,7 @@
         "Retain original ads and verify actual application routes; classify freshness, closure, login/challenge and email-only outcomes.",
         "Measure labeled retrieval and route reachability; add sources only for measured coverage benefit."
       ],
-      "next_action": "Build and qualify independently configured provider recovery and durable page cursors, then measure broad query expansion and application-route reachability through the UI. The bounded queue fetched four loopback pages before the first client poll. Earlier live provider batches attempted one of three pages each and failed on provider availability or HTTP 429.",
+      "next_action": "Persist admitted provider results as sealed pages with versioned continuation cursors and independent provider backoff. Replace the single sealed history snapshot and measure real route reachability and recall through the UI. The current collector has passed the old 600-candidate boundary under a byte budget.",
       "completion_rule": "All listed acceptance criteria need identity-bound evidence; a successful fixture or substep alone does not complete this package."
     },
     {
@@ -890,6 +894,15 @@
     "coverage_run": 43590957812,
     "coverage_conclusion": "success",
     "local_repair": "Session/URL/loader readiness, including same-URL reload, and a controlled inline-icon fixture pass the strengthened targeted case and full 139-case local selection. Historical hosted failure remains; no newer hosted conclusion is claimed."
+  },
+  "latest_workflow_limits_checkpoint": {
+    "date": "2026-11-18",
+    "baseline_head": "80be1c63493b256942134a0597f48d8297c8af6f",
+    "evidence": "docs/g1/WORKFLOW_LIMITS_2026-11-18.md",
+    "same_origin_final_review": {"expected": 5, "verified": 5, "retained_pdfs": 2, "external_delivery": false},
+    "document_planning": {"regression_passages_offered": 93, "live_model_result": "Qwen selected the exact editable DOCX passage for a requirement at listing byte 2400 after admission to a 16 GiB owned job", "live_model_passages_offered": 8},
+    "windows_workspace": {"passed": 1478, "ignored": 622, "ui_scripts": 172, "clippy": "passed", "canonical_build": "passed"},
+    "scope": "Development replay and bounded functional regressions. Universal coverage and release qualification are open."
   },
   "immediate_slices": [
     {

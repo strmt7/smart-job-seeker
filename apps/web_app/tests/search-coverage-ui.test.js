@@ -10,7 +10,7 @@ assert.match(render({results_examined: 30, results_reported: 100, unresponsive_e
 assert.match(render({results_examined: 0, results_reported: 0, unresponsive_engines: 0}), /0 engines reported unavailable/);
 assert.match(render({results_examined: 2, unresponsive_engines: 1}), /1 engine reported unavailable/);
 assert.match(render({results_examined: 2, unresponsive_engines: 3, unresponsive_engine_names:['Engine A','Engine B']}), /3 engines reported unavailable \(Engine A, Engine B; some entries not shown\)/);
-assert.match(render({results_examined:100,results_reported:100,limited:true,batch_limit_omitted:2,unresponsive_engines:0}), /2 omitted by the batch limit/);
+assert.match(render({results_examined:100,results_reported:100,limited:true,batch_limit_omitted:2,unresponsive_engines:0}), /2 omitted by the search history limit/);
 assert.match(render({results_examined:103,results_reported:103,limited:true,result_limit_omitted:1,within_page_duplicates:2,unresponsive_engines:0}), /1 omitted by the page limit; 2 repeated on this page/);
 assert.match(render({results_examined:6,results_reported:6,results_rejected:2,within_page_duplicates:1,unresponsive_engines:0}), /2 invalid or unsupported results omitted; 1 repeated on this page/);
 const batchStart = source.indexOf('function webBatchSummary(');

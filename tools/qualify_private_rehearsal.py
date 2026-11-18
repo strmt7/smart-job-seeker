@@ -106,6 +106,7 @@ def main():
         'apps/web_app/src/visual_review.rs', 'apps/web_app/src/recorded_summary.rs',
         'apps/web_app/src/rehearsal_facts.rs', 'apps/web_app/src/doc_suggest.rs', 'apps/web_app/src/job_capture.rs',
         'apps/web_app/src/main.rs', 'crates/waypoint_browser/src/lib.rs', 'crates/waypoint_browser/src/captured_frame.rs',
+        'crates/waypoint_browser/src/frame_identity.rs', 'crates/waypoint_browser/src/file_readback.rs',
         'crates/waypoint_browser/src/field_label_context.js',
         'crates/waypoint_browser/src/rehearsal.rs', 'crates/waypoint_browser/src/recorded_summary.rs',
         'crates/waypoint_browser/src/recorded_summary.js', 'crates/waypoint_browser/src/recorded_summary_viewport.js',

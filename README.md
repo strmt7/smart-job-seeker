@@ -8,7 +8,7 @@
 Smart Jobseeker is a Windows-first job-search and application-assistance
 prototype. Its Rust backend serves a local web workspace and can use Ollama for
 model-assisted work. The reviewed Qwen 3.8 27B default runs saved-form rehearsals.
-The [mixed application checkpoint](docs/g1/MIXED_APPLICATION_WORKFLOW_2026-11-18.md)
+The [application workflow checkpoint](docs/g1/WORKFLOW_LIMITS_2026-11-18.md)
 records review outcomes and the scope of current verification.
 
 The [repository overview](docs/REPO_OVERVIEW_2026-11-17.md) describes what works

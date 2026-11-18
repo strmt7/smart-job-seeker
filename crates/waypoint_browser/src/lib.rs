@@ -851,10 +851,18 @@ impl CdpDriver {
     pub fn page_controls(&mut self) -> Result<PageControls, DriverError> {
         self.refresh_captured_form()?;
         let root = self.document()?;
-        let references = button_references(&root);
+        self.page_controls_in(&root, "")
+    }
+
+    fn page_controls_in(
+        &mut self,
+        root: &Value,
+        prefix: &str,
+    ) -> Result<PageControls, DriverError> {
+        let references = button_references(root);
         let mut candidates = Vec::new();
         let mut incomplete = false;
-        walk_with_visibility(&root, false, false, &mut |node, _, hidden| {
+        walk_with_visibility(root, false, false, &mut |node, _, hidden| {
             let tag = node
                 .get("nodeName")
                 .and_then(Value::as_str)
@@ -922,7 +930,7 @@ impl CdpDriver {
                     controls.push(PageControl {
                         label,
                         disabled: disabled || !available,
-                        selector: self.captured_selector(&selector),
+                        selector: self.captured_selector(&format!("{prefix}{selector}")),
                     });
                 }
                 Ok(_) => (),
@@ -2695,10 +2703,14 @@ impl CdpDriver {
                 "This file field does not allow multiple files".into(),
             ));
         }
+        let context = pinned_hash
+            .is_some()
+            .then(|| self.recorded_file_inspection_context(selector))
+            .transpose()?;
         let node = self
             .node_id(selector)?
             .ok_or_else(|| DriverError("File field not found".into()))?;
-        let object = self.file_input_object(node, pinned_hash.is_some())?;
+        let object = self.file_review_object(json!({"nodeId":node}), context)?;
         let accepted = (|| {
             let available = self.cdp.call("Runtime.callFunctionOn", json!({"objectId":object,"functionDeclaration":"function() { return (this.isConnected && !this.closest('[aria-disabled=\"true\" i], [aria-readonly=\"true\" i]')) && this instanceof HTMLInputElement && this.type === 'file' && !this.matches(':disabled'); }","returnByValue":true})).map_err(derr)?;
             if available.get("exceptionDetails").is_some()
@@ -2772,13 +2784,6 @@ impl CdpDriver {
         self.verify_local_files_inner(selector, paths, pinned_hash)
     }
 
-    fn file_input_object(&mut self, node: u64, isolated: bool) -> Result<String, DriverError> {
-        let context = isolated
-            .then(|| self.file_inspection_context())
-            .transpose()?;
-        self.file_review_object(json!({"nodeId":node}), context)
-    }
-
     /// Check whether the selected input still holds the staged local file.
     pub fn verify_local_file(
         &mut self,
@@ -2809,13 +2814,13 @@ impl CdpDriver {
             .iter()
             .map(|path| FileExpectation::read(path, pinned_hash))
             .collect::<Result<Vec<_>, _>>()?;
+        let context = pinned_hash
+            .is_some()
+            .then(|| self.recorded_file_inspection_context(selector))
+            .transpose()?;
         let node = self
             .node_id(selector)?
             .ok_or_else(|| DriverError("File field not found".into()))?;
-        let context = pinned_hash
-            .is_some()
-            .then(|| self.file_inspection_context())
-            .transpose()?;
         let mut retained =
             self.with_file_review_object(json!({"nodeId":node}), context, |driver, input| {
                 driver.inspect_file_selections(&[FileInspection {

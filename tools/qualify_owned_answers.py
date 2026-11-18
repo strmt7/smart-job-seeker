@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path
 import re
+import runpy
 import shutil
 import socket
 import struct
@@ -26,6 +27,7 @@ import uuid
 from urllib.request import Request, build_opener, ProxyHandler
 
 from qualify_history_ui import RamSamples
+from owned_process import available_physical_bytes
 from qualify_rehearsal import run, ensure_host_reserve, test_denominator
 
 REPO = Path(__file__).resolve().parents[1]
@@ -37,6 +39,7 @@ REHEARSAL_VISION_TEST = 'recorded_preview::tests::owned_runtime_reviews_saved_co
 FRAME_VISION_SUITES = ('vision-frames','vision-frames-system','vision-frames-confirmed')
 TESTS = {'answers':TEST, 'vision':VISION_TEST, 'vision-system':VISION_TEST, **dict.fromkeys(FRAME_VISION_SUITES,FRAME_VISION_TEST)}
 TESTS[REHEARSAL_VISION_SUITE] = REHEARSAL_VISION_TEST
+TESTS['templates'] = 'template_plan::tests::owned_model_uses_requirements_late_in_the_listing'
 GIB = 1024**3
 PROMPT_CACHE_MIB = 512
 CONTEXT_CHECKPOINTS = 1
@@ -167,38 +170,9 @@ def resident_models(origin):
 
 
 def model_inventory(store, model, expected):
-    if not re.fullmatch(r'[a-zA-Z0-9_-]+:[a-zA-Z0-9_.-]+', model) or not re.fullmatch('[a-f0-9]{64}', expected):
-        raise ValueError('Use an explicit library model:tag and SHA-256 digest')
-    name, tag = model.split(':')
-    # Current Ollama resolves the v2 named manifest before its retained legacy
-    # downgrade anchor. Those can legitimately have different byte digests.
-    v2 = Path('manifests-v2/ollama.com/library') / name / tag
-    relative = v2 if (store / v2).exists() else Path('manifests/registry.ollama.ai/library') / name / tag
-    manifest = regular(store / relative)
-    with manifest.open('rb') as reader:
-        raw = reader.read(1024**2 + 1)
-    if len(raw) > 1024**2 or hashlib.sha256(raw).hexdigest() != expected:
-        raise ValueError('Selected manifest does not match the expected model digest')
-    value = json.loads(raw)
-    descriptors = [value['config'], *value['layers']]
-    if not 1 <= len(descriptors) <= 32:
-        raise ValueError('Unexpected selected-model descriptor count')
-    files = {relative: expected}
-    total = manifest.stat().st_size
-    for descriptor in descriptors:
-        checksum = descriptor.get('digest', '')
-        if not re.fullmatch('sha256:[a-f0-9]{64}', checksum):
-            raise ValueError('Invalid model blob digest')
-        relative_blob = Path('blobs') / checksum.replace(':', '-')
-        blob = regular(store / relative_blob)
-        if type(descriptor.get('size')) is not int or descriptor['size'] != blob.stat().st_size:
-            raise ValueError('Model blob size does not match its manifest')
-        if relative_blob not in files:
-            total += blob.stat().st_size
-            files[relative_blob] = checksum.split(':')[1]
-    if total > 12 * GIB:
-        raise ValueError('Selected model exceeds this qualification copy budget')
-    return files, total
+    worker = runpy.run_path(str(REPO / 'apps/web_app/src/local_model_worker.py'))
+    entries = worker['inventory'](worker['root'](str(store)), {'name':model, 'digest':expected})
+    return {Path(path):item['sha256'] for path, item in entries.items()}, sum(item['size'] for item in entries.values())
 
 
 def copy_model(store, destination, files):
@@ -428,6 +402,8 @@ def main():
     parser.add_argument('--model-store', type=Path, required=True)
     parser.add_argument('--model', default='gemma4:12b-it-q4_K_M')
     parser.add_argument('--digest', required=True)
+    parser.add_argument('--job-memory-gib', type=int, default=10,
+                        help='Aggregate job commit cap, subject to the host RAM reserve')
     parser.add_argument('--suite', choices=sorted(TESTS), default='answers')
     parser.add_argument('--browser', type=Path)
     parser.add_argument('--replay-result', type=Path, help='Retained fictional --frame-controls result for vision-frames')
@@ -446,6 +422,9 @@ def main():
     frame_input = recorded_frame_vision(args.replay_result, args.suite!='vision-frames', args.suite=='vision-frames-confirmed') if args.replay_result else None
     if os.name != 'nt' or not args.ollama.is_absolute() or not args.ollama.is_file():
         parser.error('Select an explicit existing Windows Ollama executable')
+    job_budget = args.job_memory_gib * GIB
+    if job_budget <= 0 or available_physical_bytes() < job_budget + 3 * GIB:
+        parser.error('Available RAM cannot admit the requested job and 3 GiB host reserve')
     if args.suite in ('vision','vision-system') and (not args.browser or not args.browser.is_absolute() or not args.browser.is_file()):
         parser.error('Vision qualification requires an explicit headless-capable browser executable')
     shell = shutil.which('pwsh') or shutil.which('powershell')
@@ -471,7 +450,12 @@ def main():
         REPO / 'Cargo.lock', REPO / 'Cargo.toml', REPO / 'apps/web_app/Cargo.toml',
         REPO / 'apps/web_app/scripts/build-windows.ps1', REPO / 'apps/web_app/src/visual_review.rs',
         REPO / 'apps/web_app/src/source_vision_qualification.rs', REPO / 'crates/waypoint_browser/src/lib.rs',
+        REPO / 'apps/web_app/src/local_model_worker.py',
         REPO / 'crates/waypoint_browser/src/cdp.rs']
+    if args.suite == 'templates':
+        paths.extend([REPO / 'apps/web_app/src/template_plan.rs',
+            REPO / 'apps/web_app/src/document_extract.rs', REPO / 'apps/web_app/src/docx_edit.rs',
+            REPO / 'crates/waypoint_inference/src/template_edit_plan.schema.json'])
     if rehearsal_input is not None:
         paths.extend([REPO / 'apps/web_app/src/recorded_preview.rs',
             REPO / 'apps/web_app/src/rehearsal-sample.pdf',
@@ -527,7 +511,8 @@ def main():
         config_path.write_text(json.dumps(config), encoding='utf-8')
         environment['WAYPOINT_OWNED_ANSWER_NONCE'] = config['nonce']
         receipt['run'] = run([sys.executable, '-B', str(Path(__file__).resolve()), '--worker', str(config_path)],
-            environment, folder / 'worker.private.log', 1200, memory_limit_bytes=10 * GIB)
+            environment, folder / 'worker.private.log', 1200, memory_limit_bytes=job_budget,
+            host_reserve_bytes=3 * GIB)
         if receipt['run']['exit_code']: raise RuntimeError('Private model qualification failed; inspect ' + str(folder))
         if hashes() != receipt['sources']: raise RuntimeError('Qualification sources changed during execution')
         if not json.loads((folder / 'runtime.private.json').read_text())['complete']:

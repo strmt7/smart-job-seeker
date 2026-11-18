@@ -459,10 +459,12 @@ wordings without production branches keyed to the test employer/ATS.
    redundant deadlines, caller wait requirements and counts that silently drop
    eligible work. Qualify each removal through its normal entry point.
 2. Keep request sizes bounded while continuing across all eligible work.
-   Qualification planning now batches questions in required-first order under
-   the workflow deadline. Apply the same contract to document passages and
-   search pages where a single request cannot cover the input. Keep counts for
-   offered, verified, deferred and failed items and retain actionable next steps.
+   Qualification planning batches questions in required-first order. Template
+   planning now compares later passages and job excerpts in resident-context
+   windows and reports coverage. Discovery examines complete capped responses
+   and uses serialized history size for admission. Next, use durable page-level
+   results and a common continuation contract for pending, verified and failed
+   work.
 3. Use a single task deadline and explicit cancellation across local inference,
    browser control and artifact writing. Estimate how many complete checked
    operations fit before reaching capacity. Checkpoint the last verified state
@@ -523,6 +525,10 @@ application-email send is part of development acceptance under current authority
 4. Tailor through the existing document tools. Preserve layout where native
    editing is reliable; show a review wall when a PDF replacement cannot fit or
    a conversion changes meaning. A regenerated layout must remain traceable.
+   Carry exact source offsets and compare shortlisted passages across context
+   windows. Record the scope of each review and retain partial work when a
+   model or document worker stops. Exercise long, multilingual and formatted
+   inputs through the application UI.
    Automate ordinary local planning/editing/conversion in a staged per-job packet
    under the user's saved preferences; do not require manual passage selection
    for every change. Keep originals immutable and finalize only after source,
@@ -555,6 +561,9 @@ an incompatible redistribution license merely for an ATS score.
 2. Use free permitted providers and direct employer pages with bounded queues,
    host concurrency, retry/backoff, pagination, cache TTLs and durable resume.
    Thousands of URLs must not mean thousands of browser/model processes.
+   Replace the single sealed history snapshot with sealed page records and a
+   versioned cursor. Read bounded review windows while keeping the entire
+   admitted run recoverable. Preserve exact URL provenance across retries.
 3. Prefer cheap deterministic filtering and metadata before expensive local
    reasoning or browser rendering. Track query/source coverage and degradation;
    a provider refusal is not zero jobs or successful global coverage.
