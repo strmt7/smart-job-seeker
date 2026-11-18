@@ -1,7 +1,8 @@
 //! Live CDP tests: a real browser, the real DOM, real input events — against
 //! local fixture pages, so nothing ever touches a third-party site.
 //!
-//! Run with: `cargo test -p waypoint_browser --test cdp_live -- --ignored --nocapture`
+//! Run the fixture selection in `.github/workflows/ci.yml` on a separate test runner.
+//! On a Windows desktop, use `tools/qualify_rehearsal.py` for pipe-only browser tests.
 //!
 //! This is the evidence that the submission engine works against an actual
 //! browser, not only against a scripted driver.

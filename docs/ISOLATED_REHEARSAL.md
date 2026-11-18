@@ -219,6 +219,20 @@ prompts in the event log. A direct Rust baseline invocation stopped at the
 session guard before launch. Private evidence is under
 `target/quiet-rehearsal-7cf70dfc` and
 `target/rehearsal-qualification-8ov6h4wb`.
+
+The Windows build helper requires isolated browser launches during desktop
+tests. The unrestricted CDP launcher checks that requirement before creating a
+profile. Run the raw `cdp_live` suite on a dedicated test runner.
+
+Interface and browser-zoom checks load their test extension over Playwright's
+existing pipe. On 18 November 2026 the owned Chrome 157 layout run verified the
+live browser's pipe-only debugging arguments, passed 302 layout checks and
+closed its application and browser. Windows recorded zero new browser firewall
+rule requests during the run. The native receipt is under
+`target/layout-check-run-k21ek4fa`. The visual follow-up run passed 70 cases
+and verified browser disconnection and application exit under
+`target/layout-check-run-5dq0i06t`.
+
 The fourteen portable protocol/ownership/storage tests also run in CI, alongside
 eighteen replay/archive checks. Opt-in live
 checks must not be counted as executed when skipped.

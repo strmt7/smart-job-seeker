@@ -23,6 +23,12 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use tungstenite::{Message, WebSocket};
 
+#[cfg(windows)]
+const ISOLATED_TEST_BROWSER_ONLY: &str = "WAYPOINT_ISOLATED_BROWSER_TESTS_ONLY";
+#[cfg(windows)]
+const ISOLATED_TEST_BROWSER_REQUIRED: &str =
+    "Windows desktop tests require the isolated browser rehearsal";
+
 // Only the DOM reply may use the deeper decoder, and only after a lexical
 // nesting check. The separate bounded stack avoids exhausting the caller's
 // stack during parsing; other uses of Value still require the depth ceiling.
@@ -519,6 +525,10 @@ impl BrowserProcess {
         timeout: Duration,
         visible: bool,
     ) -> Result<Self, CdpError> {
+        #[cfg(windows)]
+        if std::env::var_os(ISOLATED_TEST_BROWSER_ONLY).is_some() {
+            return err(ISOLATED_TEST_BROWSER_REQUIRED);
+        }
         if binaries.is_empty() {
             return err(NO_BROWSER);
         }
@@ -1236,6 +1246,38 @@ pub fn ensure_dir(path: &Path) -> Result<(), CdpError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn desktop_test_mode_refuses_unrestricted_browser_start() {
+        use std::os::windows::process::CommandExt;
+
+        if std::env::var_os(ISOLATED_TEST_BROWSER_ONLY).is_none() {
+            let output = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "cdp::tests::desktop_test_mode_refuses_unrestricted_browser_start",
+                ])
+                .env(ISOLATED_TEST_BROWSER_ONLY, "1")
+                .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+                .output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success() && stdout.contains("1 passed"),
+                "{stdout}"
+            );
+            return;
+        }
+
+        // Empty candidates make this test safe even if the desktop guard fails.
+        for visible in [false, true] {
+            let error = BrowserProcess::launch_candidates(&[], Duration::ZERO, visible)
+                .err()
+                .expect("unrestricted launch must be refused");
+            assert_eq!(error.0, ISOLATED_TEST_BROWSER_REQUIRED);
+        }
+    }
 
     #[cfg(windows)]
     #[test]

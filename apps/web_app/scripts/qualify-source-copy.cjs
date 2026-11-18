@@ -68,10 +68,9 @@ async function expand(page) {
     fs.mkdirSync(extensionPath);
     fs.writeFileSync(path.join(extensionPath, 'manifest.json'), JSON.stringify({ manifest_version: 3, name: 'Source copy layout qualification', version: '1.0', permissions: ['tabs'] }));
     fs.writeFileSync(path.join(extensionPath, 'control.html'), '<!doctype html><title>Layout controller</title>');
-    context = await chromium.launchPersistentContext(profile, { executablePath: browserPath, headless: true, viewport: { width: 1280, height: 900 }, args: ['--enable-unsafe-extension-debugging', '--remote-debugging-port=0'], ignoreDefaultArgs: ['--disable-extensions'] });
+    context = await chromium.launchPersistentContext(profile, { executablePath: browserPath, headless: true, viewport: { width: 1280, height: 900 }, args: ['--enable-unsafe-extension-debugging'], ignoreDefaultArgs: ['--disable-extensions'] });
     await context.route('**/*', route => new URL(route.request().url()).origin === origin || route.request().url().startsWith('chrome-extension:') ? route.continue() : route.abort());
-    const port = fs.readFileSync(path.join(profile, 'DevToolsActivePort'), 'utf8').split('\n')[0];
-    browser = await chromium.connectOverCDP('http://127.0.0.1:' + port);
+    browser = context.browser();
     const session = await browser.newBrowserCDPSession();
     const extension = await session.send('Extensions.loadUnpacked', { path: extensionPath });
     const page = await context.newPage(), errors = [];

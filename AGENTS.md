@@ -263,7 +263,7 @@ cargo fmt --all -- --check
 ./apps/web_app/scripts/build-windows.ps1 -Release # canonical Windows web/tray binary
 cargo deny check licenses bans sources
 cargo audit --deny warnings
-# real-browser submission tests (Edge/Chrome required; CI runs these too):
+# real-browser submission tests (Edge/Chrome required; dedicated CI runner only):
 cargo test -p waypoint_browser --test cdp_live -- --ignored --test-threads=1 --skip public_listing_navigation_probe --skip identified_public_navigation_probe --skip generic_click_can_trigger_scripted_form_submission_on_loopback --skip inert_private_form_structure_qualification
 #   set WAYPOINT_BROWSER_NO_SANDBOX=1 when the Chromium sandbox is unavailable (containers)
 # live ATS board fetch tests (network):
@@ -309,6 +309,10 @@ used by development tools and tests. Do not add WSL or Docker as product require
   non-interactive Windows session. On the user's desktop, the qualifier runs
   the pipe-backed isolated fixture and lifecycle checks. Preserve both scopes
   and their separate test counts. Leave host firewall settings intact.
+- Run the unrestricted `cdp_live` suite on a dedicated runner. The Windows
+  build helper rejects unrestricted browser launches during desktop tests.
+  Use Playwright's existing pipe connection for interface and browser-zoom
+  checks, including extension setup. Keep those checks in owned headless jobs.
 - Until script-triggered external writes are prevented and verified, do not
   click, type, upload, select, or otherwise interact with real application forms
   during development; even a non-submit control can trigger a submission. Use

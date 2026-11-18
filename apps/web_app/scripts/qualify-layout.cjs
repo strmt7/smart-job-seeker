@@ -132,13 +132,16 @@ async function bounded(operation, label, milliseconds = 15000) {
       viewport: { width: 1440, height: 900 },
       executablePath: browserExecutable,
       headless: true,
-      args: ['--enable-unsafe-extension-debugging', '--remote-debugging-port=0'],
+      args: ['--enable-automation', '--enable-unsafe-extension-debugging'],
       ignoreDefaultArgs: ['--disable-extensions'],
     });
-    const port = fs.readFileSync(path.join(profile, 'DevToolsActivePort'), 'utf8').split('\n')[0];
-    browser = await chromium.connectOverCDP('http://127.0.0.1:' + port);
-    const cdp = await browser.newBrowserCDPSession(),
-      extension = await cdp.send('Extensions.loadUnpacked', { path: extensionPath });
+    browser = context.browser();
+    const cdp = await browser.newBrowserCDPSession();
+    const { arguments: browserArgs } = await cdp.send('Browser.getBrowserCommandLine');
+    if (!browserArgs.includes('--remote-debugging-pipe') ||
+        browserArgs.some(arg => arg.startsWith('--remote-debugging-port')))
+      throw Error('Layout qualification requires pipe-only browser debugging');
+    const extension = await cdp.send('Extensions.loadUnpacked', { path: extensionPath });
     page = await context.newPage();
     page.on('pageerror', (error) => errors.push(error.message));
     const pdf = {
@@ -640,6 +643,7 @@ async function bounded(operation, label, milliseconds = 15000) {
         .update(fs.readFileSync(executable))
         .digest('hex'),
       browser: await cdp.send('Browser.getVersion'),
+      debuggingTransport: 'pipe',
       playwright: require(
         path.join(repo, 'target/layout-qa/node_modules/playwright-core/package.json'),
       ).version,
@@ -658,9 +662,8 @@ async function bounded(operation, label, milliseconds = 15000) {
   }
   finally {
     const cleanupErrors=[];
-    for(const [resource,label]of [[context,'Browser context'],[browser,'Browser connection']]){
-      if(resource)try{await bounded(resource.close(),label+' shutdown',10000);}catch(error){cleanupErrors.push(label+': '+error.message);}
-    }
+    try{if(context)await bounded(context.close(),'Browser context shutdown',10000);}catch(error){cleanupErrors.push('Browser context: '+error.message);}
+    try{if(browser?.isConnected())await bounded(browser.close(),'Browser process shutdown',10000);}catch(error){cleanupErrors.push('Browser process: '+error.message);}
     try{
       const exited=new Promise((resolve,reject)=>{
         if(child.exitCode!==null||child.signalCode!==null)return resolve();
